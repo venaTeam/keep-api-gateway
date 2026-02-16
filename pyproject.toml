@@ -1,9 +1,9 @@
 [tool.poetry]
-name = "keep"
-version = "0.1.0"
+name = "keep-api-gateway"
+version = "0.1.1"
 description = "Alerting. for developers, by developers."
 authors = ["Keep Alerting LTD"]
-packages = [{include = "keep"}]
+packages = [{include = "src"}]
 
 [tool.poetry.dependencies]
 python = ">=3.11,<3.14"
@@ -25,6 +25,7 @@ cloud-sql-python-connector = "1.12.0"
 pymysql = "^1.1.1"
 google-cloud-secret-manager = "^2.16.1"
 sqlalchemy = "^2.0.14"
+sqlalchemy-utils = "^0.41.0"
 openai = "1.37.1"
 opentelemetry-sdk = "1.29.0"
 opentelemetry-instrumentation-fastapi = "0.50b0"
@@ -54,6 +55,10 @@ urllib3 = "<2.4.0"
 prometheus-fastapi-instrumentator = "^7.0.0"
 slowapi = "^0.1.9"
 retry2 = "^0.9.5"
+pympler = "1.0.1"
+PyJWT = "^2.8.0"
+setuptools = "^75.0.0"
+pytz = "^2024.1"
 [tool.poetry.group.dev.dependencies]
 pre-commit = "^3.0.4"
 pre-commit-hooks = "^4.4.0"
@@ -80,7 +85,7 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
-keep = "keep.cli.cli:cli"
+keep = "src.utils.cli.cli:cli"
 
 [tool.ruff.lint]
 ignore = ["F405", "F811", "E712", "E711", "F403"]
