@@ -49,8 +49,8 @@ logger = logging.getLogger(__name__)
 
 def on_starting(server=None):
     """This function is called by the gunicorn server when it starts"""
-    from repositories.init import init_services
-    from routes.dashboard import provision_dashboards
+    from src.repositories.init import init_services
+    from src.routes.dashboard import provision_dashboards
     
     init_services(auth_type=AUTH_TYPE, provision_dashboards_func=provision_dashboards)
 
