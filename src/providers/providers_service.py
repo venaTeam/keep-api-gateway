@@ -404,7 +404,6 @@ class ProvidersService:
     ) -> bool:
         context_manager = ContextManager(
             tenant_id=tenant_id,
-            workflow_id="",  # this is not in a workflow scope
         )
         secret_manager = SecretManagerFactory.get_secret_manager(context_manager)
         provider_secret_name = f"{tenant_id}_{provider_type}_{provider_id}"

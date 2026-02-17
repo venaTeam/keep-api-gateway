@@ -33,7 +33,6 @@ from src.models.db.provider import *  # pylint: disable=unused-wildcard-import
 from src.models.db.rule import *  # pylint: disable=unused-wildcard-import
 from src.models.db.statistics import *  # pylint: disable=unused-wildcard-import
 from src.models.db.tenant import *  # pylint: disable=unused-wildcard-import
-from src.models.db.workflow import *  # pylint: disable=unused-wildcard-import
 
 # This import is required to create the tables
 from src.services.identity_manager.rbac import Admin as AdminRole

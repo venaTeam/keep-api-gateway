@@ -4,7 +4,7 @@ from typing import Any, TypedDict
 
 import click
 import json5
-from pympler.asizeof import asizeof
+
 
 from src.config.core import config
 from src.repositories.db import get_session
@@ -12,9 +12,8 @@ from src.models.alert import AlertDto
 from src.models.incident import IncidentDto
 
 
-class ForeachContext(TypedDict):
-    value: Any | None
-    items: list[Any] | None
+
+
 
 
 class ContextManager:
@@ -24,19 +23,10 @@ class ContextManager:
     ):
         self.logger = logging.getLogger(__name__)
         self.tenant_id = tenant_id
-        self.steps_context = {}
-        self.steps_context_size = 0
         self.providers_context = {}
-        self.actions_context = {}
         self.event_context: AlertDto = {}
         self.incident_context: IncidentDto | None = None
-        self.foreach_context: ForeachContext = {
-            "value": None,
-            "items": None,
-        }
         self.consts_context = {}
-        self.current_step_vars = {}
-        self.current_step_aliases = {}
         self.secret_context = {}
         # cli context
         try:
@@ -109,12 +99,10 @@ class ContextManager:
 
     def get_full_context(self, exclude_providers=False, exclude_env=False):
         """
-        Gets full context on the workflows
-
-        Usage: context injection used, for example, in iohandler
+        Gets full context
 
         Returns:
-            dict: dictinoary contains all context about this workflow
+            dict: dictinoary contains all context
                   providers - all context about providers (configuration, etc)
                   steps - all context about steps (output, conditions, etc)
                   foreach - all context about the current 'foreach'
@@ -125,15 +113,9 @@ class ContextManager:
                             anyway, this should be refactored to something more structured
         """
         full_context = {
-            "steps": self.steps_context,
-            "actions": self.steps_context,  # this is an alias for steps
-            "foreach": self.foreach_context,
             "event": self.event_context,
-            "alert": self.event_context,  # this is an alias so workflows will be able to use alert.source
-            "incident": self.incident_context,  # this is an alias so workflows will be able to use alert.source
+
             "consts": self.consts_context,
-            "vars": self.current_step_vars,
-            "aliases": self.current_step_aliases,
             "secrets": self.secret_context,
         }
 
@@ -143,107 +125,8 @@ class ContextManager:
         full_context.update(self.aliases)
         return full_context
 
-    def set_foreach_items(self, items: list[Any] | None = None):
-        self.foreach_context["items"] = items
 
-    def set_foreach_value(self, value: Any | None = None):
-        self.foreach_context["value"] = value
 
-    def reset_foreach_context(self):
-        self.foreach_context = {
-            "value": None,
-            "items": None,
-        }
-
-    def set_condition_results(
-        self,
-        action_id,
-        condition_name,
-        condition_type,
-        compare_to,
-        compare_value,
-        result,
-        condition_alias=None,
-        value=None,
-        **kwargs,
-    ):
-        """_summary_
-
-        Args:
-            action_id (_type_): id of the step
-            condition_type (_type_): type of the condition
-            compare_to (_type_): _description_
-            compare_value (_type_): _description_
-            result (_type_): _description_
-            condition_alias (_type_, optional): _description_. Defaults to None.
-            value (_type_): the raw value which the condition was compared to. this is relevant only for foreach conditions
-        """
-        if action_id not in self.steps_context:
-            self.steps_context[action_id] = {"conditions": {}, "results": {}}
-        if "conditions" not in self.steps_context[action_id]:
-            self.steps_context[action_id]["conditions"] = {condition_name: []}
-        if condition_name not in self.steps_context[action_id]["conditions"]:
-            self.steps_context[action_id]["conditions"][condition_name] = []
-
-        self.steps_context[action_id]["conditions"][condition_name].append(
-            {
-                "value": value,
-                "compare_value": compare_value,
-                "compare_to": compare_to,
-                "result": result,
-                "type": condition_type,
-                "alias": condition_alias,
-                **kwargs,
-            }
-        )
-        # update the current for each context
-        self.foreach_context.update(
-            {"compare_value": compare_value, "compare_to": compare_to, **kwargs}
-        )
-        if condition_alias:
-            self.aliases[condition_alias] = result
-
-    def set_step_provider_paremeters(self, step_id, provider_parameters):
-        if step_id not in self.steps_context:
-            self.steps_context[step_id] = {
-                "provider_parameters": {},
-                "results": [],
-                "vars": {},
-            }
-        self.steps_context[step_id]["provider_parameters"] = provider_parameters
-
-    def set_step_context(self, step_id, results, foreach=False):
-        if step_id not in self.steps_context:
-            self.steps_context[step_id] = {
-                "provider_parameters": {},
-                "results": [],
-                "vars": {},
-            }
-
-        # If this is a foreach step, we need to append the results to the list
-        # so we can iterate over them
-        if foreach:
-            self.steps_context[step_id]["results"].append(results)
-        else:
-            self.steps_context[step_id]["results"] = results
-        # this is an alias to the current step output
-        self.steps_context["this"] = self.steps_context[step_id]
-        self.steps_context_size = asizeof(self.steps_context)
-
-    def set_step_vars(self, step_id, _vars, _aliases):
-        if step_id not in self.steps_context:
-            self.steps_context[step_id] = {
-                "provider_parameters": {},
-                "results": [],
-                "vars": {},
-                "aliases": {},
-            }
-
-        self.current_step_vars = _vars
-        self.current_step_aliases = _aliases
-        self.steps_context[step_id]["vars"] = _vars
-        self.steps_context[step_id]["aliases"] = _aliases
-        self.secret_context = {**self.secret_context, **_vars}
 
 
 

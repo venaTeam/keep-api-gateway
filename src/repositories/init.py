@@ -20,7 +20,7 @@ def provision_resources(provision_dashboards_func=None):
     if PROVISION_RESOURCES:
         logger.info("Loading providers into cache")
         # provision providers from env. relevant only on single tenant.
-        logger.info("Provisioning providers and workflows")
+        logger.info("Provisioning providers")
         ProvidersService.provision_providers(SINGLE_TENANT_UUID)
         logger.info("Providers loaded successfully")
         if provision_dashboards_func:

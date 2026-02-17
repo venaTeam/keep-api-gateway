@@ -17,10 +17,6 @@ from src.config.core import config
 
 # In the OSS - you can overwrite the template ids
 class EmailTemplates(enum.Enum):
-    WORKFLOW_RUN_FAILED = config(
-        "WORKFLOW_FAILED_EMAIL_TEMPLATE_ID",
-        default="d-bb1b3bb30ce8460cbe6ed008701affb1",
-    )
     ALERT_ASSIGNED_TO_USER = config(
         "ALERT_ASSIGNED_TO_USER_EMAIL_TEMPLATE_ID",
         default="d-58ec64ed781e4c359e18da7ad97ac750",
