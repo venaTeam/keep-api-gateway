@@ -28,7 +28,7 @@ def patched_init(
     headers: dict = None,
     timeout: int = 60,
     verify: bool = None,
-    proxies: dict = None,
+    **kwargs,
 ):
     if verify is None:
         verify = os.environ.get("KEYCLOAK_VERIFY_CERT", "true").lower() == "true"
@@ -39,7 +39,7 @@ def patched_init(
 
     if headers is None:
         headers = {}
-    original_init(self, base_url, headers, timeout, verify, proxies)
+    original_init(self, base_url, headers=headers, timeout=timeout, verify=verify, **kwargs)
 
 
 ConnectionManager.__init__ = patched_init
