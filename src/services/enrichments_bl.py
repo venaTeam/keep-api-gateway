@@ -567,9 +567,9 @@ class EnrichmentsBl:
             authenticated_entity (AuthenticatedEntity): The authenticated entity that performed the enrichment
 
         Returns:
-            tuple[ActionType, str, bool, bool]: action_type, action_description, should_run_workflow, should_check_incidents_resolution
+            tuple[ActionType, str, bool]: action_type, action_description, should_check_incidents_resolution
         """
-        should_run_workflow = False
+
         should_check_incidents_resolution = False
         action_type = ActionType.GENERIC_ENRICH
         action_description = (
@@ -583,7 +583,6 @@ class EnrichmentsBl:
                 else ActionType.MANUAL_STATUS_CHANGE
             )
             action_description = f"Alert status was changed to {enrichments['status']} by {authenticated_entity.email}"
-            should_run_workflow = True
             if enrichments["status"] == "resolved":
                 should_check_incidents_resolution = True
         elif "status" in enrichments and authenticated_entity.api_key_name:
@@ -593,7 +592,6 @@ class EnrichmentsBl:
                 else ActionType.API_STATUS_CHANGE
             )
             action_description = f"Alert status was changed to {enrichments['status']} by API `{authenticated_entity.api_key_name}`"
-            should_run_workflow = True
             if enrichments["status"] == "resolved":
                 should_check_incidents_resolution = True
         elif "ticket_url" in enrichments:
@@ -617,7 +615,6 @@ class EnrichmentsBl:
         return (
             action_type,
             action_description,
-            should_run_workflow,
             should_check_incidents_resolution,
         )
 

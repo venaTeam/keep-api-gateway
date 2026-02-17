@@ -22,7 +22,6 @@ class Roles(enum.Enum):
     ADMIN = "admin"
     NOC = "noc"
     WEBHOOK = "webhook"
-    WORKFLOW_RUNNER = "workflowrunner"
 
 
 class Role:
@@ -54,7 +53,7 @@ class Role:
 
 # Noc has read permissions and it can assign itself to alert
 class Noc(Role):
-    SCOPES = ["read:*", "execute:workflows"]
+    SCOPES = ["read:*"]
     DESCRIPTION = "read permissions and assign itself to alert"
 
 
@@ -71,10 +70,6 @@ class Webhook(Role):
     DESCRIPTION = "write alerts using API keys"
 
 
-class WorkflowRunner(Role):
-    SCOPES = ["write:workflows", "execute:workflows"]
-    DESCRIPTION = "Run workflows using API keys"
-
 
 def get_role_by_role_name(role_name: str) -> list[str]:
     if role_name == Roles.ADMIN.value:
@@ -83,8 +78,7 @@ def get_role_by_role_name(role_name: str) -> list[str]:
         return Noc
     elif role_name == Roles.WEBHOOK.value:
         return Webhook
-    elif role_name == Roles.WORKFLOW_RUNNER.value:
-        return WorkflowRunner
+
     else:
         raise HTTPException(
             status_code=403,

@@ -10,7 +10,6 @@ from pydantic import BaseModel
 
 from src.repositories.db import (
     calc_incidents_mttr,
-    get_combined_workflow_execution_distribution,
     get_incidents_created_distribution,
     get_provider_distribution,
 )
@@ -175,10 +174,7 @@ def get_metric_widgets(
         data["ipd"] = get_incidents_created_distribution(
             tenant_id=tenant_id, timestamp_filter=time_stamp
         )
-    if wpd:
-        data["wpd"] = get_combined_workflow_execution_distribution(
-            tenant_id=tenant_id, timestamp_filter=time_stamp
-        )
+
     if mttr:
         data["mttr"] = calc_incidents_mttr(
             tenant_id=tenant_id, timestamp_filter=time_stamp

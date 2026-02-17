@@ -25,7 +25,6 @@ from src.models.db.statistics import *
 from src.models.db.tenant import *
 from src.models.db.topology import *
 from src.models.db.user import *
-from src.models.db.workflow import *
 
 target_metadata = SQLModel.metadata
 

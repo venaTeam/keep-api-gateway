@@ -110,13 +110,9 @@ class IncidentBl:
             "Client updated on incident change",
             extra={"incident_id": new_incident_dto.id, "tenant_id": self.tenant_id},
         )
-        self.send_workflow_event(new_incident_dto, "created")
-        self.logger.info(
-            "Workflows run on incident",
-            extra={"incident_id": new_incident_dto.id, "tenant_id": self.tenant_id},
-        )
-        return new_incident_dto
 
+
+        return new_incident_dto
     def sync_add_alerts_to_incident(self, *args, **kwargs) -> None:
         """
         Synchronous wrapper for the async add_alerts_to_incident method.
@@ -209,8 +205,7 @@ class IncidentBl:
                     extra={"incident_id": incident_id, "tenant_id": self.tenant_id},
                 )
 
-    def send_workflow_event(self, incident_dto: IncidentDto, action: str) -> None:
-        pass
+
 
     def delete_alerts_from_incident(
         self, incident_id: UUID, alert_fingerprints: List[str]
@@ -253,7 +248,7 @@ class IncidentBl:
             raise HTTPException(status_code=404, detail="Incident not found")
 
         self.update_client_on_incident_change()
-        self.send_workflow_event(incident_dto, "deleted")
+
 
     def bulk_delete_incidents(self, incident_ids: List[UUID]) -> None:
         for incident_id in incident_ids:
@@ -295,14 +290,8 @@ class IncidentBl:
             },
         )
         incident_dto = IncidentDto.from_db_incident(incident)
-        self.send_workflow_event(incident_dto, "updated")
-        self.logger.info(
-            "Workflows run on incident",
-            extra={
-                "incident_id": incident.id,
-                "alert_fingerprints": alert_fingerprints,
-            },
-        )
+
+
 
     def update_severity(
         self,
@@ -345,11 +334,8 @@ class IncidentBl:
             "Client updated on incident change",
             extra={"incident_id": incident.id},
         )
-        self.send_workflow_event(new_incident_dto, "updated")
-        self.logger.info(
-            "Workflows run on incident",
-            extra={"incident_id": incident.id},
-        )
+
+
         return new_incident_dto
 
     @staticmethod
@@ -462,7 +448,6 @@ class IncidentBl:
             (
                 action_type,
                 action_description,
-                should_run_workflow,
                 should_check_incidents_resolution,
             ) = enrichments_bl.get_enrichment_metadata(enrichments, change_by)
             enrichments_bl.batch_enrich(

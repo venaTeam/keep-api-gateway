@@ -24,9 +24,7 @@ from src.models.db.provider import ProviderExecutionLog
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-KEEP_STORE_WORKFLOW_LOGS = (
-    os.environ.get("KEEP_STORE_WORKFLOW_LOGS", "true").lower() == "true"
-)
+
 
 logger = logging.getLogger(__name__)
 
@@ -57,118 +55,10 @@ def get_gunicorn_log_level():
     return LOG_LEVEL
 
 
-class WorkflowContextFilter(logging.Filter):
-    """
-    This is part of the root logger configuration.
-
-    It filters out log records that don't have a workflow_id in the thread context.
-    """
-
-    def filter(self, record):
-        # Get workflow_id and debug flag from thread context
-        thread = threading.current_thread()
-        workflow_id = getattr(thread, "workflow_id", None)
-
-        # Early return if no workflow_id
-        if not workflow_id:
-            return False
-
-        # Skip DEBUG logs unless debug mode is enabled
-        if not getattr(thread, "workflow_debug", False) and record.levelname == "DEBUG":
-            return False
-
-        # Initialize record.extra if needed
-        if not hasattr(record, "extra"):
-            record.extra = {}
-
-        # Get thread context attributes
-        thread_attrs = {
-            "workflow_id": workflow_id,
-            "workflow_execution_id": getattr(thread, "workflow_execution_id", None),
-            "tenant_id": getattr(thread, "tenant_id", None),
-            "provider_type": getattr(thread, "provider_type", None),
-        }
-
-        # Set record attributes from thread context
-        for attr, value in thread_attrs.items():
-            if value is not None:
-                setattr(record, attr, value)
-
-        # Handle step_id
-        step_id = getattr(thread, "step_id", None)
-        if step_id is not None:
-            record.context = {"step_id": step_id}
-
-        # Handle event if present
-        if "event" in record.__dict__:
-            if hasattr(record, "context"):
-                record.context["event"] = record.event
-            else:
-                record.context = {"event": record.event}
-
-        return True
 
 
-class WorkflowDBHandler(logging.Handler):
-    def __init__(self, flush_interval: int = 2):
-        super().__init__()
-        logging.getLogger(__name__).info("Initializing WorkflowDBHandler")
-        self.records = []
-        self.flush_interval = flush_interval
-        self._stop_event = threading.Event()
-        # Start repeating timer in a separate thread
-        self._timer_thread = threading.Thread(target=self._timer_run)
-        self._timer_thread.daemon = (
-            True  # Make it a daemon so it stops when program exits
-        )
-        logging.getLogger(__name__).info("Starting WorkflowDBHandler timer thread")
-        self._timer_thread.start()
-        logging.getLogger(__name__).info("Started WorkflowDBHandler timer thread")
 
-    def _timer_run(self):
-        while not self._stop_event.is_set():
-            # logging.getLogger(__name__).info("Timer running")
-            self.flush()
-            # logging.getLogger(__name__).info("Timer sleeping")
-            self._stop_event.wait(self.flush_interval)  # Wait but can be interrupted
 
-    def close(self):
-        self._stop_event.set()  # Signal the timer to stop
-        # Wait for timer thread to finish with a timeout to prevent hanging during test teardown
-        if self._timer_thread.is_alive():
-            self._timer_thread.join(timeout=2.0)  # Wait up to 2 seconds
-        super().close()
-
-    def emit(self, record):
-        # we want to push only workflow logs to the DB
-        if not KEEP_STORE_WORKFLOW_LOGS:
-            return
-        if hasattr(record, "workflow_execution_id") and record.workflow_execution_id:
-            self.format(record)
-            self.records.append(record)
-
-    def push_logs_to_db(self):
-        # Convert log records to a list of dictionaries and clean the self.records buffer
-        log_entries, self.records = [record.__dict__ for record in self.records], []
-        # Push log entries to the database
-        push_logs_to_db(log_entries)
-
-    def flush(self):
-        if not self.records:
-            return
-
-        try:
-            logging.getLogger(__name__).info("Flushing workflow logs to DB")
-            self.push_logs_to_db()
-            logging.getLogger(__name__).info("Flushed workflow logs to DB")
-        except Exception as e:
-            # Use the parent logger to avoid infinite recursion
-            logging.getLogger(__name__).error(
-                f"Failed to flush workflow logs: {str(e)}"
-            )
-        finally:
-            # Clear the timer reference
-            self._flush_timer = None
 
 
 class ProviderDBHandler(logging.Handler):
@@ -414,25 +304,15 @@ CONFIG = {
             "class": "logging.StreamHandler",
             "stream": "ext://sys.stdout",
         },
-        "workflowhandler": {
-            "level": "DEBUG",
-            "formatter": (
-                "json" if LOG_FORMAT == LOG_FORMAT_OPEN_TELEMETRY else "dev_terminal"
-            ),
-            "class": "src.utils.logging.WorkflowDBHandler",
-            "filters": ["thread_context"],  # Add filter here
-        },
         "uvicorn_access": {  # Add new handler for uvicorn.access
             "class": "logging.StreamHandler",
             "formatter": "uvicorn_access",
         },
     },
-    "filters": {  # Add filters section
-        "thread_context": {"()": "src.utils.logging.WorkflowContextFilter"}
-    },
+    "filters": {},
     "loggers": {
         "": {
-            "handlers": ["workflowhandler", "default"],
+            "handlers": ["default"],
             "level": "DEBUG",
             "propagate": False,
         },

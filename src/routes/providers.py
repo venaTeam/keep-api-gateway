@@ -351,7 +351,6 @@ def test_provider(
     # 2. the provider config is valid
     context_manager = ContextManager(
         tenant_id=tenant_id,
-        workflow_id="",  # this is not in a workflow scope
     )
     provider = ProvidersFactory.get_provider(
         context_manager, provider_id, provider_type, provider_config

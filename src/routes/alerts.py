@@ -732,7 +732,6 @@ def batch_enrich_alerts(
         (
             action_type,
             action_description,
-            should_run_workflow,
             should_check_incidents_resolution,
         ) = enrichment_bl.get_enrichment_metadata(
             enrich_data.enrichments, authenticated_entity
@@ -897,7 +896,6 @@ def _enrich_alert(
         (
             action_type,
             action_description,
-            should_run_workflow,
             should_check_incidents_resolution,
         ) = enrichement_bl.get_enrichment_metadata(
             enrich_data.enrichments, authenticated_entity

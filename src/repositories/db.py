@@ -1263,61 +1263,7 @@ def update_user_role(tenant_id, username, role):
     return user
 
 
-def save_workflow_results(tenant_id, workflow_execution_id, workflow_results):
-    with Session(engine) as session:
-        workflow_execution = session.exec(
-            select(WorkflowExecution)
-            .where(WorkflowExecution.tenant_id == tenant_id)
-            .where(WorkflowExecution.id == workflow_execution_id)
-        ).one()
 
-        try:
-            # backward comptability - try to serialize the workflow results
-            json.dumps(workflow_results)
-            # if that's ok, use the original way
-            workflow_execution.results = workflow_results
-        except Exception:
-            # if that's not ok, use the Keep way (e.g. alerdto is not json serializable)
-            logger.warning(
-                "Failed to serialize workflow results, using fastapi encoder",
-            )
-            # use some other way to serialize the workflow results
-            workflow_execution.results = custom_serialize(workflow_results)
-        # commit the changes
-        session.commit()
-
-
-def get_workflow_by_name(tenant_id, workflow_name):
-    with Session(engine) as session:
-        workflow = session.exec(
-            select(Workflow)
-            .where(Workflow.tenant_id == tenant_id)
-            .where(Workflow.name == workflow_name)
-            .where(Workflow.is_deleted == False)
-            .where(Workflow.is_test == False)
-        ).first()
-
-        return workflow
-
-
-def get_previous_execution_id(tenant_id, workflow_id, workflow_execution_id):
-    with Session(engine) as session:
-        previous_execution = session.exec(
-            select(WorkflowExecution)
-            .where(WorkflowExecution.tenant_id == tenant_id)
-            .where(WorkflowExecution.workflow_id == workflow_id)
-            .where(WorkflowExecution.id != workflow_execution_id)
-            .where(WorkflowExecution.is_test_run == False)
-            .where(
-                WorkflowExecution.started >= datetime.now() - timedelta(days=1)
-            )  # no need to check more than 1 day ago
-            .order_by(WorkflowExecution.started.desc())
-            .limit(1)
-        ).first()
-        if previous_execution:
-            return previous_execution
-        else:
-            return None
 
 
 def create_rule(
@@ -2190,82 +2136,6 @@ def get_provider_distribution(
             return provider_distribution
 
 
-def get_combined_workflow_execution_distribution(
-    tenant_id: str, timestamp_filter: TimeStampFilter = None
-):
-    """
-    Calculate the distribution of WorkflowExecutions started over time, combined across all workflows for a specific tenant.
-
-    Args:
-        tenant_id (str): ID of the tenant whose workflow executions are being analyzed.
-        timestamp_filter (TimeStampFilter, optional): Filter to specify the time range.
-            - lower_timestamp (datetime): Start of the time range.
-            - upper_timestamp (datetime): End of the time range.
-
-    Returns:
-        List[dict]: A list of dictionaries representing the hourly distribution of workflow executions.
-            Each dictionary contains:
-            - 'timestamp' (str): Timestamp of the hour in "YYYY-MM-DD HH:00" format.
-            - 'number' (int): Number of workflow executions started in that hour.
-
-    Notes:
-        - If no timestamp_filter is provided, defaults to the last 24 hours.
-        - Supports MySQL, PostgreSQL, and SQLite for timestamp formatting.
-    """
-    with Session(engine) as session:
-        twenty_four_hours_ago = datetime.utcnow() - timedelta(hours=24)
-        time_format = "%Y-%m-%d %H"
-
-        filters = [WorkflowExecution.tenant_id == tenant_id]
-
-        if timestamp_filter:
-            if timestamp_filter.lower_timestamp:
-                filters.append(
-                    WorkflowExecution.started >= timestamp_filter.lower_timestamp
-                )
-            if timestamp_filter.upper_timestamp:
-                filters.append(
-                    WorkflowExecution.started <= timestamp_filter.upper_timestamp
-                )
-        else:
-            filters.append(WorkflowExecution.started >= twenty_four_hours_ago)
-
-        # Database-specific timestamp formatting
-        if session.bind.dialect.name == "mysql":
-            timestamp_format = func.date_format(WorkflowExecution.started, time_format)
-        elif session.bind.dialect.name == "postgresql":
-            timestamp_format = func.to_char(WorkflowExecution.started, "YYYY-MM-DD HH")
-        elif session.bind.dialect.name == "sqlite":
-            timestamp_format = func.strftime(time_format, WorkflowExecution.started)
-
-        # Query for combined execution count across all workflows
-        query = (
-            session.query(
-                timestamp_format.label("time"),
-                func.count().label("executions"),
-            )
-            .filter(*filters)
-            .group_by("time")
-            .order_by("time")
-        )
-
-        results = {str(time): executions for time, executions in query.all()}
-
-        distribution = []
-        current_time = timestamp_filter.lower_timestamp.replace(
-            minute=0, second=0, microsecond=0
-        )
-        while current_time <= timestamp_filter.upper_timestamp:
-            timestamp_str = current_time.strftime(time_format)
-            distribution.append(
-                {
-                    "timestamp": timestamp_str + ":00",
-                    "number": results.get(timestamp_str, 0),
-                }
-            )
-            current_time += timedelta(hours=1)
-
-        return distribution
 
 
 def get_incidents_created_distribution(
