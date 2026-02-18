@@ -26,6 +26,7 @@ ENV VIRTUAL_ENV="/venv"
 ENV PROMETHEUS_MULTIPROC_DIR="/tmp/prometheus"
 
 # Copy application code
+COPY alembic.ini /app/alembic.ini
 COPY src /app/src
 
 CMD ["gunicorn", "src.main:get_app", "--bind" , "0.0.0.0:8080" , "--workers", "1" , "-k" , "uvicorn.workers.UvicornWorker", "-c", "src/config/config.py"]
