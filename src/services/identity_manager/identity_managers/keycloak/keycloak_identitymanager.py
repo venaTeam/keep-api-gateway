@@ -92,6 +92,17 @@ class KeycloakIdentityManager(BaseIdentityManager):
             raise
         self.logger.info("Keycloak Identity Manager initialized")
 
+    def get_policies(self) -> list[dict]:
+        try:
+            policies = self.keycloak_admin.connection.raw_get(
+                f"{self.admin_url}/authz/resource-server/policy"
+            ).json()
+            return policies
+        except KeycloakGetError as e:
+            self.logger.error("Failed to fetch policies from Keycloak: %s", str(e))
+            raise HTTPException(status_code=500, detail="Failed to fetch policies")
+
+
     def on_start(self, app) -> None:
         # if the on start process is disabled:
         if os.environ.get("SKIP_KEYCLOAK_ONSTART", "false") == "true":
