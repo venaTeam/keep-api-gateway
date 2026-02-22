@@ -10,6 +10,12 @@ import sqlalchemy as sa
 import yaml
 from alembic import op
 
+# revision identifiers, used by Alembic.
+revision = "7ed12220a0d3"
+down_revision = "1c650a429672"
+branch_labels = None
+depends_on = None
+
 # Inlining parse_disabled logic from Parser
 def parse_disabled(workflow_dict: dict) -> bool:
     workflow_is_disabled_in_yml = workflow_dict.get("disabled")
