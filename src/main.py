@@ -252,10 +252,10 @@ def run(app: FastAPI):
     # call on starting to create the db and tables
     import src.config.config
 
-    keep.api.config.on_starting()
+    src.config.config.on_starting()
 
     uvicorn.run(
-        "keep.main:get_app",
+        "src.main:get_app",
         host=HOST,
         port=PORT,
         log_config=logging_config,
@@ -263,4 +263,9 @@ def run(app: FastAPI):
         workers=KEEP_WORKERS,
         limit_concurrency=KEEP_LIMIT_CONCURRENCY,
     )
+
+
+if __name__ == "__main__":
+    app = get_app()
+    run(app)
 

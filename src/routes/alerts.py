@@ -45,7 +45,7 @@ from src.repositories.dependencies import (
     get_pusher_client,
 )
 from src.services.producers.factory import get_event_producer
-from src.services.producers.base_event_handler import EventProducer
+from src.services.producers.base_event_handler import EventProducer, EventType
 from src.repositories.elastic import ElasticClient
 from src.models.action_type import ActionType
 from src.services.search_engine import SearchEngine
@@ -560,6 +560,7 @@ async def receive_event(
     # Use the abstract event producer (Redis or Kafka)
     task_name = await event_producer.produce(
         event=event,
+        event_type=EventType.ALERT,
         tenant_id=authenticated_entity.tenant_id,
         provider_type=provider_type,
         provider_id=provider_id,

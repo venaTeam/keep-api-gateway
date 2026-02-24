@@ -15,6 +15,9 @@ from fastapi import (
 from pusher import Pusher
 from sqlmodel import Session
 
+from src.services.producers.base_event_handler import EventProducer
+from src.services.producers.factory import get_event_producer
+
 from src.services.ai_suggestion_bl import AISuggestionBl
 from src.services.enrichments_bl import EnrichmentsBl
 from src.services.incident_reports import IncidentReportsBl
@@ -89,17 +92,20 @@ logger = logging.getLogger(__name__)
     status_code=202,
     response_model=IncidentDto,
 )
-def create_incident(
+async def create_incident(
     incident_dto: IncidentDtoIn,
     authenticated_entity: AuthenticatedEntity = Depends(
         IdentityManagerFactory.get_auth_verifier(["write:incident"])
     ),
     pusher_client: Pusher | None = Depends(get_pusher_client),
     session: Session = Depends(get_session),
+    event_producer: EventProducer = Depends(get_event_producer),
 ) -> IncidentDto:
     tenant_id = authenticated_entity.tenant_id
-    incident_bl = IncidentBl(tenant_id, session, pusher_client)
-    return incident_bl.create_incident(incident_dto)
+    incident_bl = IncidentBl(
+        tenant_id, session, pusher_client, event_producer=event_producer
+    )
+    return await incident_bl.create_incident(incident_dto)
 
 
 @router.get(
@@ -376,7 +382,7 @@ def get_incident(
     "/{incident_id}",
     description="Update incident by id",
 )
-def update_incident(
+async def update_incident(
     incident_id: UUID,
     updated_incident_dto: IncidentDtoIn,
     generated_by_ai: bool = Query(
@@ -389,9 +395,12 @@ def update_incident(
     ),
     pusher_client: Pusher | None = Depends(get_pusher_client),
     session: Session = Depends(get_session),
+    event_producer: EventProducer = Depends(get_event_producer),
 ) -> IncidentDto:
     tenant_id = authenticated_entity.tenant_id
-    incident_bl = IncidentBl(tenant_id, session=session, pusher_client=pusher_client)
+    incident_bl = IncidentBl(
+        tenant_id, session=session, pusher_client=pusher_client, event_producer=event_producer
+    )
 
     current_incident = get_incident_by_id(tenant_id, incident_id)
     if not current_incident:
@@ -409,7 +418,7 @@ def update_incident(
             f"Incident assigned to {updated_incident_dto.assignee}",
         )
 
-    new_incident_dto = incident_bl.update_incident(
+    new_incident_dto = await incident_bl.update_incident(
         incident_id, updated_incident_dto, generated_by_ai
     )
     return new_incident_dto
@@ -419,36 +428,49 @@ def update_incident(
     "/bulk",
     description="Delete incidents in bulk",
 )
-def bulk_delete_incidents(
+async def bulk_delete_incidents(
     incident_ids: List[UUID] = Body(..., embed=True),
     authenticated_entity: AuthenticatedEntity = Depends(
         IdentityManagerFactory.get_auth_verifier(["write:incident"])
     ),
     pusher_client: Pusher | None = Depends(get_pusher_client),
     session: Session = Depends(get_session),
+    event_producer: EventProducer = Depends(get_event_producer),
 ):
     tenant_id = authenticated_entity.tenant_id
-    incident_bl = IncidentBl(tenant_id, session, pusher_client)
-    incident_bl.bulk_delete_incidents(incident_ids)
-    return Response(status_code=202)
+    incident_bl = IncidentBl(
+        tenant_id, session=session, pusher_client=pusher_client, event_producer=event_producer
+    )
+    for incident_id in incident_ids:
+        await incident_bl.delete_incident(incident_id)
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=202, content={"message": "Incidents deleted successfully"}
+    )
 
 
 @router.delete(
     "/{incident_id}",
     description="Delete incident by incident id",
 )
-def delete_incident(
+async def delete_incident(
     incident_id: UUID,
     authenticated_entity: AuthenticatedEntity = Depends(
         IdentityManagerFactory.get_auth_verifier(["write:incident"])
     ),
     pusher_client: Pusher | None = Depends(get_pusher_client),
     session: Session = Depends(get_session),
+    event_producer: EventProducer = Depends(get_event_producer),
 ):
     tenant_id = authenticated_entity.tenant_id
-    incident_bl = IncidentBl(tenant_id, session, pusher_client)
-    incident_bl.delete_incident(incident_id)
-    return Response(status_code=202)
+    incident_bl = IncidentBl(
+        tenant_id, session=session, pusher_client=pusher_client, event_producer=event_producer
+    )
+    await incident_bl.delete_incident(incident_id)
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=202, content={"message": "Incident deleted successfully"}
+    )
 
 
 @router.post(

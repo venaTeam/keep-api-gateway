@@ -2,7 +2,7 @@ import json
 import logging
 from aiokafka import AIOKafkaProducer
 from src.config.core import config
-from src.services.producers.base_event_handler import EventProducer
+from src.services.producers.base_event_handler import EventProducer, EventType
 
 class KafkaEventProducer(EventProducer):
     def __init__(self):
@@ -61,7 +61,7 @@ class KafkaEventProducer(EventProducer):
             await self.producer.start()
             self._started = True
 
-    async def produce(self, event: dict, **kwargs):
+    async def produce(self, event: dict, event_type: EventType = EventType.ALERT, **kwargs):
         trace_id = kwargs.get("trace_id")
         self.logger.info(f"Producing event to Kafka: {trace_id}")
         await self._ensure_started()
@@ -70,6 +70,7 @@ class KafkaEventProducer(EventProducer):
         # We put everything in the payload for Kafka
         payload = {
             "event": event,
+            "event_type": event_type.value if hasattr(event_type, "value") else event_type,
             "tenant_id": kwargs.get("tenant_id"),
             "provider_type": kwargs.get("provider_type"),
             "provider_id": kwargs.get("provider_id"),
