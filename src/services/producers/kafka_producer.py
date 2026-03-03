@@ -81,6 +81,7 @@ class KafkaEventProducer(EventProducer):
         }
 
         try:
+            self.logger.info(f"PAYLOAD EVENT BEFORE DUMPS: {payload['event']}")
             # Serialize payload, handling Pydantic models (like AlertDto) and other objects
             val = json.dumps(
                 payload, default=lambda o: o.dict() if hasattr(o, "dict") else str(o)

@@ -13,7 +13,7 @@ from src.models.db.helpers import DATETIME_COLUMN_TYPE, NULL_FOR_DELETED_AT
 from src.models.db.incident import Incident
 from src.models.db.tenant import Tenant
 
-db_connection_string = config("DATABASE_CONNECTION_STRING", default=None)
+db_connection_string = config("DATABASE_CONNECTION_STRING", default="postgresql://keep:keep@localhost:5432/keep")
 logger = logging.getLogger(__name__)
 
 
