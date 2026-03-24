@@ -14,8 +14,8 @@ from dotenv import find_dotenv, load_dotenv
 from prettytable import PrettyTable
 
 
-from keep.functions import cyaml
-from keep.providers.providers_factory import ProviderEncoder, ProvidersFactory
+from src.functions import cyaml
+from src.providers.providers_factory import ProviderEncoder, ProvidersFactory
 
 load_dotenv(find_dotenv())
 

@@ -19,8 +19,6 @@ from src.repositories.db import (
     get_db_preset_by_name,
     get_session,
     update_preset_options,
-    # TODO: check
-    update_provider_last_pull_time,
 )
 from src.repositories.db import get_presets as get_presets_db
 from src.models.db.preset import (
@@ -30,8 +28,6 @@ from src.models.db.preset import (
     PresetTagLink,
     Tag,
     TagDto,
-
-    # TODO: check
     UserPresetColumnConfig,
 )
 from src.models.time_stamp import TimeStampFilter, _get_time_stamp_filter

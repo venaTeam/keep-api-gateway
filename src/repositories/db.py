@@ -1042,7 +1042,7 @@ def update_user_last_sign_in(tenant_id, username):
 
 def push_logs_to_db(log_entries):
     # avoid circular import
-    from keep.common.logging import LOG_FORMAT, LOG_FORMAT_OPEN_TELEMETRY
+    from src.utils.logging import LOG_FORMAT, LOG_FORMAT_OPEN_TELEMETRY
 
     db_log_entries = []
     if LOG_FORMAT == LOG_FORMAT_OPEN_TELEMETRY:
