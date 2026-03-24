@@ -8,7 +8,6 @@ from typing import List, Optional
 from uuid import UUID
 
 from fastapi import HTTPException
-from pusher import Pusher
 from sqlalchemy.orm.exc import StaleDataError
 from sqlmodel import Session
 
@@ -40,6 +39,7 @@ from src.models.incident import IncidentDto, IncidentDtoIn, IncidentSorting
 from src.utils.enrichment_helpers import convert_db_alerts_to_dto_alerts
 from src.utils.pagination import IncidentsPaginatedResultsDto
 from src.services.identity_manager.authenticatedentity import AuthenticatedEntity
+from src.services.sse import notify_sse
 
 
 MIN_INCIDENT_ALERTS_FOR_SUMMARY_GENERATION = int(
@@ -61,20 +61,16 @@ class IncidentBl:
         self,
         tenant_id: str,
         session: Session,
-        pusher_client: Optional[Pusher] = None,
         user: str = None,
-        event_producer=None,
     ):
         self.tenant_id = tenant_id
         self.user = user
         self.session = session
-        self.pusher_client = pusher_client
-        self.event_producer = event_producer
         self.logger = logging.getLogger(__name__)
         self.ee_enabled = os.environ.get("EE_ENABLED", "false").lower() == "true"
+        self.redis = os.environ.get("REDIS", "false") == "true"
 
-
-    async def create_incident(
+    def create_incident(
         self,
         incident_dto: [IncidentDtoIn | IncidentDto],
         generated_from_ai: bool = False,
@@ -90,46 +86,20 @@ class IncidentBl:
             IncidentDto: The newly created incident object, containing details of the incident.
         """
         self.logger.info(
-            "Creating incident via Kafka if available",
+            "Creating incident",
             extra={"incident_dto": incident_dto.dict(), "tenant_id": self.tenant_id},
         )
-        
-        import uuid
-        import json
-        from datetime import datetime
-        
-        incident_id = uuid.uuid4()
-        incident_dict = incident_dto.dict()
-        incident_dict["id"] = incident_id
-        incident_dict["creation_time"] = datetime.utcnow()
-        incident_dict["alerts_count"] = 0
-        incident_dict["alert_sources"] = []
-        incident_dict["status"] = IncidentStatus.FIRING.value
-        incident_dict["services"] = []
-        incident_dict["is_predicted"] = False
-        incident_dict["is_candidate"] = False
-
-        new_incident_dto = IncidentDto(**incident_dict)
-        new_incident_dto._tenant_id = self.tenant_id
-
-        if not self.event_producer:
-            self.logger.error("Kafka producer is not configured, cannot create incident")
-            raise HTTPException(
-                status_code=500, detail="Kafka producer is not configured."
-            )
-
-        # Publish to kafka
-        safe_event = json.loads(new_incident_dto.json())
-        await self.event_producer.produce(
-            event=safe_event,
-            event_type=EventType.INCIDENT,
-            tenant_id=self.tenant_id,
-            provider_type=None,
-            provider_id=None,
-            fingerprint=str(incident_id),
-            trace_id=str(incident_id),
+        incident = create_incident_from_dto(
+            self.tenant_id,
+            incident_dto,
+            generated_from_ai=generated_from_ai,
+            session=self.session,
         )
-
+        self.logger.info(
+            "Incident created",
+            extra={"incident_id": incident.id, "tenant_id": self.tenant_id},
+        )
+        new_incident_dto = IncidentDto.from_db_incident(incident)
         self.logger.info(
             "Incident DTO created",
             extra={"incident_id": new_incident_dto.id, "tenant_id": self.tenant_id},
@@ -141,6 +111,7 @@ class IncidentBl:
         )
 
         return new_incident_dto
+
     def sync_add_alerts_to_incident(self, *args, **kwargs) -> None:
         """
         Synchronous wrapper for the async add_alerts_to_incident method.
@@ -183,6 +154,7 @@ class IncidentBl:
             },
         )
         self.__postprocess_alerts_change(incident, alert_fingerprints)
+        await self.__generate_summary(incident_id, incident)
         self.logger.info(
             "Summary generated",
             extra={
@@ -212,26 +184,25 @@ class IncidentBl:
             raise
 
     def update_client_on_incident_change(self, incident_id: Optional[UUID] = None):
-        if self.pusher_client is not None:
+        self.logger.info(
+            "Pushing incident change to client",
+            extra={"incident_id": incident_id, "tenant_id": self.tenant_id},
+        )
+        try:
+            notify_sse(
+                self.tenant_id,
+                "incident-change",
+                {"incident_id": str(incident_id) if incident_id else None},
+            )
             self.logger.info(
-                "Pushing incident change to client",
+                "Incident change pushed to client",
                 extra={"incident_id": incident_id, "tenant_id": self.tenant_id},
             )
-            try:
-                self.pusher_client.trigger(
-                    f"private-{self.tenant_id}",
-                    "incident-change",
-                    {"incident_id": str(incident_id) if incident_id else None},
-                )
-                self.logger.info(
-                    "Incident change pushed to client",
-                    extra={"incident_id": incident_id, "tenant_id": self.tenant_id},
-                )
-            except Exception:
-                self.logger.exception(
-                    "Failed to push incident change to client",
-                    extra={"incident_id": incident_id, "tenant_id": self.tenant_id},
-                )
+        except Exception:
+            self.logger.exception(
+                "Failed to push incident change to client",
+                extra={"incident_id": incident_id, "tenant_id": self.tenant_id},
+            )
 
 
 
@@ -254,7 +225,7 @@ class IncidentBl:
         )
         self.__postprocess_alerts_change(incident, alert_fingerprints)
 
-    async def delete_incident(self, incident_id: UUID) -> None:
+    def delete_incident(self, incident_id: UUID) -> None:
         self.logger.info(
             "Fetching incident",
             extra={
@@ -266,36 +237,23 @@ class IncidentBl:
         incident = get_incident_by_id(tenant_id=self.tenant_id, incident_id=incident_id)
         if not incident:
             raise HTTPException(status_code=404, detail="Incident not found")
-            
-        if not self.event_producer:
-            self.logger.error("Kafka producer is not configured, cannot delete incident")
-            raise HTTPException(
-                status_code=500, detail="Kafka producer is not configured."
-            )
 
-        import json
-        safe_event = {
-            "id": str(incident_id),
-            "action": "delete"
-        }
-        await self.event_producer.produce(
-            event=safe_event,
-            event_type=EventType.INCIDENT,
-            tenant_id=self.tenant_id,
-            provider_type=None,
-            provider_id=None,
-            fingerprint=str(incident_id),
-            trace_id=str(incident_id),
+        incident_dto = IncidentDto.from_db_incident(incident)
+
+        deleted = delete_incident_by_id(
+            tenant_id=self.tenant_id, incident_id=incident_id
         )
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Incident not found")
 
         self.update_client_on_incident_change()
-
+        self.send_workflow_event(incident_dto, "deleted")
 
     def bulk_delete_incidents(self, incident_ids: List[UUID]) -> None:
         for incident_id in incident_ids:
             self.delete_incident(incident_id)
 
-    async def update_incident(
+    def update_incident(
         self,
         incident_id: UUID,
         updated_incident_dto: IncidentDtoIn,
@@ -308,36 +266,10 @@ class IncidentBl:
                 "tenant_id": self.tenant_id,
             },
         )
-        # Fetch current to ensure it exists
-        incident = get_incident_by_id(self.tenant_id, incident_id)
-        if not incident:
-            raise HTTPException(status_code=404, detail="Incident not found")
-            
-        if not self.event_producer:
-            self.logger.error("Kafka producer is not configured, cannot update incident")
-            raise HTTPException(
-                status_code=500, detail="Kafka producer is not configured."
-            )
-
-        import json
-        # We'll publish the updated fields along with action="update"
-        safe_event = {
-            "id": str(incident_id),
-            "action": "update",
-            "update_data": updated_incident_dto.dict(),
-            "generated_by_ai": generated_by_ai
-        }
-        await self.event_producer.produce(
-            event=safe_event,
-            event_type=EventType.INCIDENT,
-            tenant_id=self.tenant_id,
-            provider_type=None,
-            provider_id=None,
-            fingerprint=str(incident_id),
-            trace_id=str(incident_id),
+        incident = update_incident_from_dto_by_id(
+            self.tenant_id, incident_id, updated_incident_dto, generated_by_ai
         )
-        # Mock return object for immediate 202 response
-        return IncidentDto.from_db_incident(incident)
+        return self.__postprocess_incident_change(incident)
 
     def __postprocess_alerts_change(self, incident, alert_fingerprints):
         self.__update_elastic(alert_fingerprints)
@@ -488,6 +420,7 @@ class IncidentBl:
         incident_id: UUID | str,
         new_status: IncidentStatus,
         change_by: AuthenticatedEntity,
+        dispose_on_new_alert: bool = False,
     ) -> IncidentDto:
         self.logger.info(
             "Fetching incident",
@@ -515,6 +448,7 @@ class IncidentBl:
             (
                 action_type,
                 action_description,
+                should_run_workflow,
                 should_check_incidents_resolution,
             ) = enrichments_bl.get_enrichment_metadata(enrichments, change_by)
             enrichments_bl.batch_enrich(
@@ -523,7 +457,7 @@ class IncidentBl:
                 action_type,
                 change_by.email,
                 action_description,
-                dispose_on_new_alert=True,
+                dispose_on_new_alert=dispose_on_new_alert,
             )
 
         if new_status == IncidentStatus.RESOLVED:
@@ -556,5 +490,3 @@ class IncidentBl:
         self.session.commit()
 
         return self.__postprocess_incident_change(incident)
-
-

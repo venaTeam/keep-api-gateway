@@ -19,6 +19,8 @@ from src.repositories.db import (
     get_db_preset_by_name,
     get_session,
     update_preset_options,
+    # TODO: check
+    update_provider_last_pull_time,
 )
 from src.repositories.db import get_presets as get_presets_db
 from src.models.db.preset import (
@@ -28,6 +30,9 @@ from src.models.db.preset import (
     PresetTagLink,
     Tag,
     TagDto,
+
+    # TODO: check
+    UserPresetColumnConfig,
 )
 from src.models.time_stamp import TimeStampFilter, _get_time_stamp_filter
 from src.services.identity_manager.authenticatedentity import AuthenticatedEntity
@@ -36,9 +41,6 @@ from src.services.search_engine import SearchEngine
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-
-
-
 
 
 @router.get(
@@ -170,7 +172,11 @@ def delete_preset(
 ):
     tenant_id = authenticated_entity.tenant_id
     logger.info("Deleting preset", extra={"uuid": preset_id})
-    # Delete links
+    # Delete per-user column configurations
+    session.query(UserPresetColumnConfig).filter(
+        UserPresetColumnConfig.preset_id == preset_id
+    ).delete()
+    # Delete tag links
     session.query(PresetTagLink).filter(PresetTagLink.preset_id == preset_id).delete()
 
     statement = (
@@ -442,7 +448,7 @@ class ColumnConfigurationDto(BaseModel):
 
 @router.put(
     "/{preset_id}/column-config",
-    description="Update column configuration for a preset",
+    description="Update per-user column configuration for a preset",
 )
 def update_preset_column_config(
     preset_id: uuid.UUID,
@@ -451,10 +457,15 @@ def update_preset_column_config(
         IdentityManagerFactory.get_auth_verifier(["write:presets"])
     ),
     session: Session = Depends(get_session),
-) -> PresetDto:
+) -> ColumnConfigurationDto:
     tenant_id = authenticated_entity.tenant_id
-    logger.info("Updating preset column configuration", extra={"preset_id": preset_id})
+    user_email = authenticated_entity.email
+    logger.info(
+        "Updating per-user preset column configuration",
+        extra={"preset_id": preset_id, "user_email": user_email},
+    )
 
+    # Verify preset exists
     statement = (
         select(Preset)
         .where(Preset.tenant_id == tenant_id)
@@ -464,56 +475,62 @@ def update_preset_column_config(
     if not preset:
         raise HTTPException(404, "Preset not found")
 
-    # Get current options and remove any existing column config options
-    current_options = [
-        option
-        for option in preset.options
-        if option.get("label", "").lower()
-        not in [
-            "column_visibility",
-            "column_order",
-            "column_rename_mapping",
-            "column_time_formats",
-            "column_list_formats",
-        ]
-    ]
-
-    # Add new column configuration options
-    if body.column_visibility:
-        current_options.append(
-            {"label": "column_visibility", "value": body.column_visibility}
+    # Upsert per-user column configuration
+    user_config = (
+        session.query(UserPresetColumnConfig)
+        .filter(
+            UserPresetColumnConfig.tenant_id == tenant_id,
+            UserPresetColumnConfig.preset_id == preset_id,
+            UserPresetColumnConfig.user_email == user_email,
         )
+        .first()
+    )
 
-    if body.column_order:
-        current_options.append({"label": "column_order", "value": body.column_order})
-
-    if body.column_rename_mapping:
-        current_options.append(
-            {"label": "column_rename_mapping", "value": body.column_rename_mapping}
+    if user_config:
+        # Update existing per-user config
+        if body.column_visibility:
+            user_config.column_visibility = body.column_visibility
+        if body.column_order:
+            user_config.column_order = body.column_order
+        if body.column_rename_mapping:
+            user_config.column_rename_mapping = body.column_rename_mapping
+        if body.column_time_formats:
+            user_config.column_time_formats = body.column_time_formats
+        if body.column_list_formats:
+            user_config.column_list_formats = body.column_list_formats
+    else:
+        # Create new per-user config
+        user_config = UserPresetColumnConfig(
+            tenant_id=tenant_id,
+            preset_id=preset_id,
+            user_email=user_email,
+            column_visibility=body.column_visibility or {},
+            column_order=body.column_order or [],
+            column_rename_mapping=body.column_rename_mapping or {},
+            column_time_formats=body.column_time_formats or {},
+            column_list_formats=body.column_list_formats or {},
         )
+        session.add(user_config)
 
-    if body.column_time_formats:
-        current_options.append(
-            {"label": "column_time_formats", "value": body.column_time_formats}
-        )
-
-    if body.column_list_formats:
-        current_options.append(
-            {"label": "column_list_formats", "value": body.column_list_formats}
-        )
-
-    # Update the preset options
-    preset.options = current_options
     session.commit()
-    session.refresh(preset)
+    session.refresh(user_config)
 
-    logger.info("Updated preset column configuration", extra={"preset_id": preset_id})
-    return PresetDto(**preset.to_dict())
+    logger.info(
+        "Updated per-user preset column configuration",
+        extra={"preset_id": preset_id, "user_email": user_email},
+    )
+    return ColumnConfigurationDto(
+        column_visibility=user_config.column_visibility or {},
+        column_order=user_config.column_order or [],
+        column_rename_mapping=user_config.column_rename_mapping or {},
+        column_time_formats=user_config.column_time_formats or {},
+        column_list_formats=user_config.column_list_formats or {},
+    )
 
 
 @router.get(
     "/{preset_id}/column-config",
-    description="Get column configuration for a preset",
+    description="Get per-user column configuration for a preset",
 )
 def get_preset_column_config(
     preset_id: uuid.UUID,
@@ -523,8 +540,37 @@ def get_preset_column_config(
     session: Session = Depends(get_session),
 ) -> ColumnConfigurationDto:
     tenant_id = authenticated_entity.tenant_id
-    logger.info("Getting preset column configuration", extra={"preset_id": preset_id})
+    user_email = authenticated_entity.email
+    logger.info(
+        "Getting per-user preset column configuration",
+        extra={"preset_id": preset_id, "user_email": user_email},
+    )
 
+    # First, try to find user-specific configuration
+    user_config = (
+        session.query(UserPresetColumnConfig)
+        .filter(
+            UserPresetColumnConfig.tenant_id == tenant_id,
+            UserPresetColumnConfig.preset_id == preset_id,
+            UserPresetColumnConfig.user_email == user_email,
+        )
+        .first()
+    )
+
+    if user_config:
+        logger.info(
+            "Found per-user column configuration",
+            extra={"preset_id": preset_id, "user_email": user_email},
+        )
+        return ColumnConfigurationDto(
+            column_visibility=user_config.column_visibility or {},
+            column_order=user_config.column_order or [],
+            column_rename_mapping=user_config.column_rename_mapping or {},
+            column_time_formats=user_config.column_time_formats or {},
+            column_list_formats=user_config.column_list_formats or {},
+        )
+
+    # Fall back to preset-level configuration (backward compatibility)
     statement = (
         select(Preset)
         .where(Preset.tenant_id == tenant_id)
@@ -536,6 +582,10 @@ def get_preset_column_config(
 
     preset_dto = PresetDto(**preset.to_dict())
 
+    logger.info(
+        "No per-user config found, falling back to preset-level config",
+        extra={"preset_id": preset_id, "user_email": user_email},
+    )
     return ColumnConfigurationDto(
         column_visibility=preset_dto.column_visibility,
         column_order=preset_dto.column_order,
@@ -543,5 +593,3 @@ def get_preset_column_config(
         column_time_formats=preset_dto.column_time_formats,
         column_list_formats=preset_dto.column_list_formats,
     )
-
-

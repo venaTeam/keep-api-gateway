@@ -22,6 +22,7 @@ from src.models.db.rule import ResolveOn, Rule
 class IncidentStatusChangeDto(BaseModel):
     status: IncidentStatus
     comment: str | None
+    dispose_on_new_alert: bool = False
     tagged_users: list[str] = []
 
     @validator("tagged_users")

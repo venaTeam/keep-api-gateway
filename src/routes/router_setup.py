@@ -16,12 +16,13 @@ from src.routes import (
     preset,
     provider_images,
     providers,
-    pusher,
     rules,
     rum,
     settings,
+    sse_routes,
     status,
     tags,
+    topology,
     whoami,
 )
 from src.routes.auth import groups as auth_groups
@@ -30,13 +31,14 @@ from src.routes.auth import permissions, roles, users
 
 def setup_routers(app: FastAPI):
     app.include_router(providers.router, prefix="/providers", tags=["providers"])
+    app.include_router(actions.router, prefix="/actions", tags=["actions"])
     app.include_router(ai.router, prefix="/ai", tags=["ai"])
     app.include_router(healthcheck.router, prefix="/healthcheck", tags=["healthcheck"])
     app.include_router(alerts.router, prefix="/alerts", tags=["alerts"])
     app.include_router(incidents.router, prefix="/incidents", tags=["incidents"])
     app.include_router(settings.router, prefix="/settings", tags=["settings"])
     app.include_router(whoami.router, prefix="/whoami", tags=["whoami"])
-    app.include_router(pusher.router, prefix="/pusher", tags=["pusher"])
+    app.include_router(sse_routes.router, prefix="/sse", tags=["sse"])
     app.include_router(status.router, prefix="/status", tags=["status"])
     app.include_router(rules.router, prefix="/rules", tags=["rules"])
     app.include_router(preset.router, prefix="/preset", tags=["preset"])
@@ -59,6 +61,7 @@ def setup_routers(app: FastAPI):
     app.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
     app.include_router(tags.router, prefix="/tags", tags=["tags"])
     app.include_router(maintenance.router, prefix="/maintenance", tags=["maintenance"])
+    app.include_router(topology.router, prefix="/topology", tags=["topology"])
     app.include_router(
         deduplications.router, prefix="/deduplications", tags=["deduplications"]
     )

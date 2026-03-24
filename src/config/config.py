@@ -40,7 +40,16 @@ KEEP_PROVIDER_DISTRIBUTION_ENABLED = starlette_config("KEEP_PROVIDER_DISTRIBUTIO
 KEEP_PLATFORM_URL = starlette_config("KEEP_PLATFORM_URL", default="https://platform.keephq.dev")
 
 
-
+# CORS: comma-separated list of trusted browser origins allowed to make credentialed requests.
+# Defaults to KEEP_PLATFORM_URL. Override with e.g.:
+#   KEEP_CORS_TRUSTED_ORIGINS=https://app.example.com,https://staging.example.com
+_cors_origins_raw = starlette_config(
+    "KEEP_CORS_TRUSTED_ORIGINS",
+    default=KEEP_PLATFORM_URL,
+)
+KEEP_CORS_TRUSTED_ORIGINS: list[str] = [
+    o.strip() for o in _cors_origins_raw.split(",") if o.strip()
+]
 
 src.utils.logging.setup_logging()
 logger = logging.getLogger(__name__)
