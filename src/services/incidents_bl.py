@@ -247,7 +247,6 @@ class IncidentBl:
             raise HTTPException(status_code=404, detail="Incident not found")
 
         self.update_client_on_incident_change()
-        self.send_workflow_event(incident_dto, "deleted")
 
     def bulk_delete_incidents(self, incident_ids: List[UUID]) -> None:
         for incident_id in incident_ids:
@@ -448,7 +447,6 @@ class IncidentBl:
             (
                 action_type,
                 action_description,
-                should_run_workflow,
                 should_check_incidents_resolution,
             ) = enrichments_bl.get_enrichment_metadata(enrichments, change_by)
             enrichments_bl.batch_enrich(

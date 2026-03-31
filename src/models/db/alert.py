@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 from pydantic import PrivateAttr
 from sqlalchemy import ForeignKey, ForeignKeyConstraint, UniqueConstraint
 from sqlalchemy_utils import UUIDType
+from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
 from sqlmodel import JSON, TEXT, Column, Field, Index, Relationship, SQLModel
 
 from src.config.core import config

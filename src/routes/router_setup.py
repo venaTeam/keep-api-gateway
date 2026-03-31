@@ -22,7 +22,6 @@ from src.routes import (
     sse_routes,
     status,
     tags,
-    topology,
     whoami,
 )
 from src.routes.auth import groups as auth_groups
@@ -31,7 +30,7 @@ from src.routes.auth import permissions, roles, users
 
 def setup_routers(app: FastAPI):
     app.include_router(providers.router, prefix="/providers", tags=["providers"])
-    app.include_router(actions.router, prefix="/actions", tags=["actions"])
+    # app.include_router(actions.router, prefix="/actions", tags=["actions"])
     app.include_router(ai.router, prefix="/ai", tags=["ai"])
     app.include_router(healthcheck.router, prefix="/healthcheck", tags=["healthcheck"])
     app.include_router(alerts.router, prefix="/alerts", tags=["alerts"])
@@ -61,7 +60,7 @@ def setup_routers(app: FastAPI):
     app.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
     app.include_router(tags.router, prefix="/tags", tags=["tags"])
     app.include_router(maintenance.router, prefix="/maintenance", tags=["maintenance"])
-    app.include_router(topology.router, prefix="/topology", tags=["topology"])
+    # app.include_router(topology.router, prefix="/topology", tags=["topology"])
     app.include_router(
         deduplications.router, prefix="/deduplications", tags=["deduplications"]
     )

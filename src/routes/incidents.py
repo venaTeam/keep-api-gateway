@@ -39,7 +39,7 @@ from src.repositories.db import (
     merge_incidents_to_id,
 )
 
-from src.repositories.dependencies import get_pusher_client
+from src.repositories.dependencies import extract_generic_body
 from src.repositories.incidents import (
     get_incident_facets,
     get_incident_facets_data,
@@ -1004,6 +1004,8 @@ async def enrich_incident(
         IdentityManagerFactory.get_auth_verifier(["write:incident"])
     ),
     db_session: Session = Depends(get_session),
+    event_producer: EventProducer = Depends(get_event_producer),
+
 ) -> Response:
     """Enrich incident with additional data."""
     tenant_id = authenticated_entity.tenant_id
@@ -1014,9 +1016,9 @@ async def enrich_incident(
         raise HTTPException(status_code=404, detail="Incident not found")
 
     # Use the existing enrichment infrastructure
-    enrichment_bl = EnrichmentsBl(tenant_id, db_session)
+    enrichment_bl = EnrichmentsBl(tenant_id, db_session, event_producer=event_producer)
 
-    enrichment_bl.enrich_entity(
+    await enrichment_bl.enrich_entity(
         fingerprint=incident_id,
         enrichments=enrichment.enrichments,
         action_type=ActionType.INCIDENT_ENRICH,
@@ -1048,6 +1050,8 @@ async def unenrich_incident(
     authenticated_entity: AuthenticatedEntity = Depends(
         IdentityManagerFactory.get_auth_verifier(["write:incident"])
     ),
+    event_producer: EventProducer = Depends(get_event_producer),
+
 ) -> Response:
     """Unenrich incident additional data."""
     tenant_id = authenticated_entity.tenant_id
@@ -1069,8 +1073,8 @@ async def unenrich_incident(
     }
 
     # Use the existing enrichment infrastructure
-    enrichment_bl = EnrichmentsBl(tenant_id)
-    enrichment_bl.enrich_entity(
+    enrichment_bl = EnrichmentsBl(tenant_id, event_producer=event_producer)
+    await enrichment_bl.enrich_entity(
         fingerprint=enrichment.fingerprint,
         enrichments=new_enrichments,
         action_type=ActionType.INCIDENT_UNENRICH,

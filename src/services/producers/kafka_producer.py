@@ -8,7 +8,7 @@ class KafkaEventProducer(EventProducer):
     def __init__(self):
         self.logger = logging.getLogger(__name__)
         bootstrap_servers = config(
-            "KAFKA_BOOTSTRAP_SERVERS", default="localhost:9092"
+            "KAFKA_BOOTSTRAP_SERVERS", default="localhost:29092"
         )
         try:
             self.bootstrap_servers = json.loads(bootstrap_servers)

@@ -3860,8 +3860,8 @@ def get_alerts_metrics_by_provider(
         func.sum(
             case(
                 (
-                    (func.json_extract(Alert.event, f"$.{field}").isnot(None))
-                    & (func.json_extract(Alert.event, f"$.{field}") != False),
+                    get_json_extract_field(session, Alert.event, field).isnot(None)
+                    & (get_json_extract_field(session, Alert.event, field) != "false"),
                     1,
                 ),
                 else_=0,

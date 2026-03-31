@@ -185,7 +185,7 @@ pass_info = click.make_pass_decorator(Info, ensure=True)
     required=False,
     default=f"{get_default_conf_file_path()}",
 )
-@pass_infoq
+@pass_info
 @click.pass_context
 def cli(ctx, info: Info, verbose: int, json: bool, keep_config: str):
     """Run Keep CLI."""
@@ -325,7 +325,7 @@ def whoami(info: Info):
 )
 def api(multi_tenant: bool, port: int, host: str):
     """Start the API."""
-    from keep.api import api
+    import src.main as api
 
     ctx = click.get_current_context()
 

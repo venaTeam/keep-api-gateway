@@ -38,13 +38,12 @@ from src.repositories.db import (
     is_all_alerts_resolved,
 )
 
-from src.services.core.sse import notify_sse
+from src.services.sse import notify_sse
 
 from src.repositories.db import get_alert_audit as get_alert_audit_db
 from src.repositories.db import get_error_alerts as get_error_alerts_db
 from src.repositories.dependencies import (
     extract_generic_body,
-    get_pusher_client,
 )
 from src.services.producers.factory import get_event_producer
 from src.services.producers.base_event_handler import EventProducer, EventType
@@ -199,11 +198,6 @@ def query_alerts(
     # Gathering alerts may take a while and we don't care if it will finish before we return the response.
     # In the worst case, gathered alerts will be pulled in the next request.
     # This approach is not good. We should continuesly pull alerts without relying on whether request is done or not.
-    bg_tasks.add_task(
-        pull_data_from_providers,
-        authenticated_entity.tenant_id,
-        request.state.trace_id,
-    )
 
     tenant_id = authenticated_entity.tenant_id
     logger.info(
@@ -304,11 +298,13 @@ def get_alert_history(
 
 
 @router.delete("", description="Delete alert by finerprint and last received time")
-def delete_alert(
+async def delete_alert(
     delete_alert: DeleteRequestBody,
     authenticated_entity: AuthenticatedEntity = Depends(
         IdentityManagerFactory.get_auth_verifier(["delete:alert"])
     ),
+    event_producer: EventProducer = Depends(get_event_producer),
+
 ) -> dict[str, str]:
     tenant_id = authenticated_entity.tenant_id
     user_email = authenticated_entity.email
@@ -350,8 +346,8 @@ def delete_alert(
         assignees_last_receievd[delete_alert.lastReceived] = user_email
 
     # overwrite the enrichment
-    enrichment_bl = EnrichmentsBl(tenant_id)
-    enrichment_bl.enrich_entity(
+    enrichment_bl = EnrichmentsBl(tenant_id, event_producer=event_producer)
+    await enrichment_bl.enrich_entity(
         fingerprint=delete_alert.fingerprint,
         enrichments={
             "deletedAt": deleted_last_received,
@@ -376,7 +372,7 @@ def delete_alert(
 @router.post(
     "/{fingerprint}/assign/{last_received}", description="Assign alert to user"
 )
-def assign_alert(
+async def assign_alert(
     fingerprint: str,
     last_received: str,
     unassign: bool = False,
@@ -387,6 +383,8 @@ def assign_alert(
         IdentityManagerFactory.get_auth_verifier(["read:alert"])
     ),
     session: Session = Depends(get_session),
+    event_producer: EventProducer = Depends(get_event_producer),
+
 ) -> dict[str, str]:
     tenant_id = authenticated_entity.tenant_id
     user_email = authenticated_entity.email
@@ -423,9 +421,9 @@ def assign_alert(
     if note:
         action_description += f" - With note: {note}"
 
-    enrichments_bl = EnrichmentsBl(tenant_id, session)
+    enrichments_bl = EnrichmentsBl(tenant_id, session, event_producer=event_producer)
     if dispose_on_new_alert:
-        enrichments_bl.enrich_entity(
+        await enrichments_bl.enrich_entity(
             fingerprint=fingerprint,
             enrichments={
                 "assignees": {last_received: user_email},
@@ -437,7 +435,7 @@ def assign_alert(
             dispose_on_new_alert=True,
         )
         if note:
-            enrichments_bl.enrich_entity(
+            await enrichments_bl.enrich_entity(
                 fingerprint=fingerprint,
                 enrichments={
                     "note": note,
@@ -448,7 +446,7 @@ def assign_alert(
                 dispose_on_new_alert=False,
             )
     else:
-        enrichments_bl.enrich_entity(
+        await enrichments_bl.enrich_entity(
             fingerprint=fingerprint,
             enrichments={
                 "assignees": {last_received: user_email},
@@ -617,23 +615,26 @@ def get_alert(
 
 
 @router.post("/enrich/note", description="Enrich an alert note")
-def enrich_alert_note(
+async def enrich_alert_note(
     enrich_data: EnrichAlertNoteRequestBody,
     authenticated_entity: AuthenticatedEntity = Depends(
         IdentityManagerFactory.get_auth_verifier(["read:alert"])  # also NOC
     ),
     session: Session = Depends(get_session),
+    event_producer: EventProducer = Depends(get_event_producer),
+
 ) -> dict[str, str]:
     logger.info("Enriching alert note", extra={"fingerprint": enrich_data.fingerprint})
     enriched_data = EnrichAlertRequestBody(
         enrichments={"note": enrich_data.note},
         fingerprint=enrich_data.fingerprint,
     )
-    return _enrich_alert(
+    return await _enrich_alert(
         enriched_data,
         authenticated_entity=authenticated_entity,
         dispose_on_new_alert=False,
         session=session,
+        event_producer=event_producer
     )
 
 
@@ -641,7 +642,7 @@ def enrich_alert_note(
     "/batch_enrich",
     description="Enrich alerts by providing either a list of fingerprints or a CEL expression to select alerts. Examples for CEL: \"name.contains('CPU')\", \"labels.severity == 'critical'\", \"name.contains('Memory') && labels.region == 'us-east-1'\"",
 )
-def batch_enrich_alerts(
+async def batch_enrich_alerts(
     enrich_data: BatchEnrichAlertRequestBody,
     authenticated_entity: AuthenticatedEntity = Depends(
         IdentityManagerFactory.get_auth_verifier(["write:alert"])
@@ -650,6 +651,8 @@ def batch_enrich_alerts(
         False, description="Dispose on new alert"
     ),
     session: Session = Depends(get_session),
+    event_producer: EventProducer = Depends(get_event_producer),
+
 ):
     tenant_id = authenticated_entity.tenant_id
     logger.info(
@@ -737,7 +740,7 @@ def batch_enrich_alerts(
 
     # Common enrichment processing
     try:
-        enrichment_bl = EnrichmentsBl(tenant_id, db=session)
+        enrichment_bl = EnrichmentsBl(tenant_id, db=session, event_producer=event_producer)
         (
             action_type,
             action_description,
@@ -754,7 +757,7 @@ def batch_enrich_alerts(
                     fingerprint, dispose_keys=["assignees"]
                 )
 
-        enrichment_bl.batch_enrich(
+        await enrichment_bl.batch_enrich(
             fingerprints=fingerprints,
             enrichments=enrichments,
             action_type=action_type,
@@ -778,7 +781,7 @@ def batch_enrich_alerts(
                 )
                 for alert_id in alert_ids
             ]
-            enrichment_bl.batch_enrich(
+            await enrichment_bl.batch_enrich(
                 fingerprints=formatted_alert_ids,
                 enrichments=enrichments,
                 action_type=action_type,
@@ -843,7 +846,7 @@ def batch_enrich_alerts(
     "/enrich",
     description="Enrich an alert",
 )
-def enrich_alert(
+async def enrich_alert(
     enrich_data: EnrichAlertRequestBody,
     authenticated_entity: AuthenticatedEntity = Depends(
         IdentityManagerFactory.get_auth_verifier(["write:alert"])
@@ -852,6 +855,8 @@ def enrich_alert(
         False, description="Dispose on new alert"
     ),
     session: Session = Depends(get_session),
+    event_producer: EventProducer = Depends(get_event_producer),
+
 ) -> dict[str, str]:
     if "dismissed" in enrich_data.enrichments:
         if enrich_data.enrichments["dismissed"].lower() == "true":
@@ -871,19 +876,22 @@ def enrich_alert(
         },
     )
 
-    return _enrich_alert(
+    return await _enrich_alert(
         enrich_data,
         authenticated_entity=authenticated_entity,
         dispose_on_new_alert=dispose_on_new_alert,
         session=session,
+        event_producer=event_producer
     )
 
 
-def _enrich_alert(
+async def _enrich_alert(
     enrich_data: EnrichAlertRequestBody,
     authenticated_entity: AuthenticatedEntity,
     session: Session,
     dispose_on_new_alert: bool = False,
+    event_producer: EventProducer = None,
+
 ) -> dict[str, str]:
     tenant_id = authenticated_entity.tenant_id
     logger.info(
@@ -895,11 +903,10 @@ def _enrich_alert(
     )
 
     try:
-        enrichement_bl = EnrichmentsBl(tenant_id, db=session)
+        enrichement_bl = EnrichmentsBl(tenant_id, db=session, event_producer=event_producer)
         (
             action_type,
             action_description,
-            should_run_workflow,
             should_check_incidents_resolution,
         ) = enrichement_bl.get_enrichment_metadata(
             enrich_data.enrichments, authenticated_entity
@@ -921,9 +928,9 @@ def _enrich_alert(
         }
 
         if dispose_on_new_alert:
-            enrichement_bl.disposable_enrich_entity(**enrichment_kwargs)
+            await enrichement_bl.disposable_enrich_entity(**enrichment_kwargs)
         else:
-            enrichement_bl.enrich_entity(**enrichment_kwargs)
+            await enrichement_bl.enrich_entity(**enrichment_kwargs)
 
         # get the alert with the new enrichment
         alert = get_alerts_by_fingerprint(
@@ -975,11 +982,13 @@ def _enrich_alert(
     "/unenrich",
     description="Un-Enrich an alert",
 )
-def unenrich_alert(
+async def unenrich_alert(
     enrich_data: UnEnrichAlertRequestBody,
     authenticated_entity: AuthenticatedEntity = Depends(
         IdentityManagerFactory.get_auth_verifier(["write:alert"])
     ),
+    event_producer: EventProducer = Depends(get_event_producer),
+
 ) -> dict[str, str]:
     tenant_id = authenticated_entity.tenant_id
     logger.info(
@@ -1003,7 +1012,7 @@ def unenrich_alert(
         return {"status": "failed"}
 
     try:
-        enrichement_bl = EnrichmentsBl(tenant_id)
+        enrichement_bl = EnrichmentsBl(tenant_id, event_producer=event_producer)
         if "status" in enrich_data.enrichments:
             action_type = ActionType.STATUS_UNENRICH
             action_description = (
@@ -1020,6 +1029,9 @@ def unenrich_alert(
             action_description = f"Alert en-enriched by {authenticated_entity.email}"
 
         enrichments_object = get_enrichment(tenant_id, enrich_data.fingerprint)
+        if not enrichments_object:
+            return {"status": "failed", "message": "No enrichments found for this alert"}
+
         enrichments = enrichments_object.enrichments
 
         # Build the set of keys to remove, including disposable_ variants
@@ -1033,7 +1045,7 @@ def unenrich_alert(
             if key not in keys_to_remove
         }
 
-        enrichement_bl.enrich_entity(
+        await enrichement_bl.enrich_entity(
             fingerprint=enrich_data.fingerprint,
             enrichments=new_enrichments,
             action_type=action_type,
