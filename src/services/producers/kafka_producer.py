@@ -1,15 +1,13 @@
-import abc
 import json
 import logging
 from typing import Optional
 import ssl
 
 from aiokafka import AIOKafkaProducer
-from arq import ArqRedis
 from aiokafka.errors import KafkaConnectionError
 
 from src.config.core import config
-from src.services.producers.base_event_handler import EventProducer, EventType
+from src.services.producers.base_event_handler import EventProducer
 
 logger = logging.getLogger(__name__)
 
