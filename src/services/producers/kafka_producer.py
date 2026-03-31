@@ -7,7 +7,7 @@ from aiokafka import AIOKafkaProducer
 from aiokafka.errors import KafkaConnectionError
 
 from src.config.core import config
-from src.services.producers.base_event_handler import EventProducer
+from src.services.producers.base_event_handler import EventProducer, EventType
 
 logger = logging.getLogger(__name__)
 
@@ -104,10 +104,10 @@ class KafkaEventProducer(EventProducer):
         return "kafka-async-task-dlq"
 
 
-    def _build_payload(self, event: dict, **kwargs)-> dict:
-
+    def _build_payload(self, event: dict, event_type: EventType, **kwargs)-> dict:
         return {
             "event": event,
+            "event_type": event_type.value if hasattr(event_type, "value") else event_type,
             "tenant_id": kwargs.get("tenant_id"),
             "provider_type": kwargs.get("provider_type"),
             "provider_id": kwargs.get("provider_id"),
@@ -138,9 +138,9 @@ class KafkaEventProducer(EventProducer):
                 logger.warning(f"Failed to produce to Kafka main topic {self.topic} (attempt {attempt+1}/{self.max_retries}): {e}")
         return None
 
-    async def produce(self, event: dict, **kwargs) -> str:
+    async def produce(self, event: dict, event_type: EventType = EventType.ALERT, **kwargs) -> str:
         trace_id = kwargs.get("trace_id", "unknown")
-        payload = self._build_payload(event, **kwargs)
+        payload = self._build_payload(event, event_type, **kwargs)
         value = self._serialize_payload(payload)
 
         try:
