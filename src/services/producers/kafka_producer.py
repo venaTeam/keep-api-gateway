@@ -8,8 +8,8 @@ from aiokafka import AIOKafkaProducer
 from arq import ArqRedis
 from aiokafka.errors import KafkaConnectionError
 
-from keep.common.consts import KEEP_ARQ_QUEUE_BASIC
-from keep.common.core.config import config
+from src.config.core import config
+from src.services.producers.base_event_handler import EventProducer, EventType
 
 logger = logging.getLogger(__name__)
 
@@ -34,45 +34,6 @@ def _create_ssl_context(security_protocol: str, cafile: Optional[str], certfile:
     if certfile and keyfile:
         ssl_context.load_cert_chain(certfile=certfile, keyfile=keyfile)
     return ssl_context
-
-
-class EventProducer(abc.ABC):
-    @abc.abstractmethod
-    async def produce(self, event: dict, **kwargs):
-        pass
-
-
-class RedisEventProducer(EventProducer):
-    def __init__(self, arq_pool: ArqRedis):
-        self.arq_pool = arq_pool
-
-    async def produce(self, event: dict, **kwargs):
-        trace_id = kwargs.get("trace_id")
-        logger.info(f"Producing event to Redis ARQ: {trace_id}")
-        # Extract arguments expected by the worker
-        tenant_id = kwargs.get("tenant_id")
-        provider_type = kwargs.get("provider_type")
-        provider_id = kwargs.get("provider_id")
-        fingerprint = kwargs.get("fingerprint")
-        api_key_name = kwargs.get("api_key_name")
-        provider_name = kwargs.get("provider_name")
-
-        # Enqueue job matching the signature in alerts.py
-        job = await self.arq_pool.enqueue_job(
-            "process_event_in_worker",
-            tenant_id,
-            provider_type,
-            provider_id,
-            fingerprint,
-            api_key_name,
-            trace_id,
-            event,
-            _queue_name=KEEP_ARQ_QUEUE_BASIC,
-            provider_name=provider_name,
-        )
-        logger.info(f"Successfully produced event to Redis ARQ: {trace_id}")
-        return job.job_id
-
 
 class KafkaEventProducer(EventProducer):
     def __init__(self):
