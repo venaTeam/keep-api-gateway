@@ -9,14 +9,17 @@ on:
       - "poetry.lock"
       - "pyproject.toml"
       - ".github/workflows/**"
+      - "tests/**"
   push:
     branches:
       - main
+      - dev
     paths:
       - "src/**"
       - "poetry.lock"
       - "pyproject.toml"
       - ".github/workflows/**"
+      - "tests/**"
 
 permissions:
   contents: read
@@ -78,6 +81,10 @@ jobs:
           else
             poetry run playwright install-deps
           fi
+      - name: Run Tests
+        run: poetry run pytest --timeout 20 -n auto --non-integration --ignore=tests/e2e_tests/ tests/
+        env:
+          PYTHONPATH: .
 
   build-backend:
     runs-on: ubuntu-latest
