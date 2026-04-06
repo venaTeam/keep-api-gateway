@@ -79,8 +79,19 @@ jobs:
             poetry run playwright install-deps
           fi
 
-      - name: Run unit tests
-        run: poetry run pytest tests/ -v
+      - name: Run unit tests and report coverage
+        run: |
+          poetry run coverage run --omit="*/test*" --branch -m pytest --timeout 20 -v tests/
+
+      - name: Convert coverage results to JSON
+        run: poetry run coverage json --omit="src/providers/*"
+
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          fail_ci_if_error: false
+          files: coverage.json
+          verbose: true
 
   build-backend:
     runs-on: ubuntu-latest
