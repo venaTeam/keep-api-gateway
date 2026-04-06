@@ -418,6 +418,17 @@ def elastic_container(docker_ip, docker_services):
         print("Tearing down Elasticsearch")
 
 
+
+@pytest.fixture(scope="session")
+def docker_compose_file(pytestconfig):
+    import os
+    return os.path.join(
+        str(pytestconfig.rootdir),
+        "tests",
+        "docker-compose-elastic.yml",
+    )
+
+
 @pytest.fixture
 def elastic_client(request):
     if hasattr(request, "param") and request.param is False:
@@ -433,7 +444,7 @@ def elastic_client(request):
         env_vars["ELASTIC_INDEX_SUFFIX"] = "test"
 
         with patch.dict(os.environ, env_vars):
-            # request.getfixturevalue("elastic_container")
+            request.getfixturevalue("elastic_container")
             elastic_client = ElasticClient(
                 tenant_id=SINGLE_TENANT_UUID,
             )

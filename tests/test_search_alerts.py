@@ -1,6 +1,5 @@
 import datetime
 import pytest
-pytestmark = pytest.mark.skip(reason="Tests require Elasticsearch which is not available in unit tests")
 import os
 import time
 from unittest.mock import MagicMock, patch

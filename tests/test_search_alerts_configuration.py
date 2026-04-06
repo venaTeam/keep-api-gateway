@@ -1,5 +1,4 @@
 import pytest
-pytestmark = pytest.mark.skip(reason='Requires Elasticsearch')
 # need to tests that:
 # 1. On multiple tenants, the search mode is set to internal if elastic is disabled
 # 2. On multiple tenants, the search mode is set to the tenant configuration
