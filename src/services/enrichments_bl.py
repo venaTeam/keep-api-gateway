@@ -649,6 +649,8 @@ class EnrichmentsBl:
                         tz=datetime.timezone.utc
                     ).timestamp(),  # timestamp for disposal [for future use]
                 }
+            enrichments.update(disposable_enrichments)
+            
         # Publish to kafka
         safe_event = enrichments.copy()
         safe_event.update({
