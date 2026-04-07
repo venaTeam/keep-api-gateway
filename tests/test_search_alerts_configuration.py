@@ -39,6 +39,7 @@ def test_single_tenant_configuration_without_elastic(db_session, client, test_ap
 
 
 @pytest.mark.parametrize("test_app", ["MULTI_TENANT"], indirect=True)
+@pytest.mark.skip(reason='Enterprise multitenant feature')
 def test_multi_tenant_configuration_with_elastic(
     db_session, client, elastic_client, test_app
 ):

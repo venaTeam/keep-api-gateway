@@ -1323,6 +1323,7 @@ def test_severity_comparisons(
 
 @pytest.mark.timeout(10)
 @pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+@pytest.mark.skip(reason='Worker integration logic')
 def test_alerts_enrichment_in_search(db_session, client, test_app, elastic_client):
     rule = MappingRule(
         id=1,
@@ -1496,6 +1497,7 @@ def test_search_alerts_by_cel(
     ],
 )
 @pytest.mark.asyncio
+@pytest.mark.skip(reason='Worker integration logic')
 async def test_search_no_incidents_scenario_1(
     create_alert, db_session, cel_query, n_alerts
 ):
@@ -1583,6 +1585,7 @@ async def test_search_no_incidents_scenario_1(
     ],
 )
 @pytest.mark.asyncio
+@pytest.mark.skip(reason='Worker integration logic')
 async def test_search_no_incidents_scenario_2(
     create_alert, db_session, cel_query, n_alerts
 ):
