@@ -33,6 +33,17 @@ env:
 jobs:
   prepare-test-environment:
     runs-on: ubuntu-latest
+    services:
+      elasticsearch:
+        image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
+        ports:
+          - 9200:9200
+        env:
+          ELASTIC_PASSWORD: "keeptests"
+          bootstrap.memory_lock: "true"
+          discovery.type: "single-node"
+          ES_JAVA_OPTS: "-Xms2g -Xmx2g"
+          xpack.security.enabled: "true"
     steps:
       - name: Checkout
         uses: actions/checkout@v3
