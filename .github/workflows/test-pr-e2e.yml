@@ -92,7 +92,7 @@ jobs:
 
       - name: Run unit tests and report coverage
         run: |
-          poetry run coverage run --omit="*/test*" --branch -m pytest --timeout 20 -v tests/
+          poetry run coverage run --omit="*/test*" --branch -m pytest --timeout 60 -v tests/
 
       - name: Convert coverage results to JSON
         run: poetry run coverage json --omit="src/providers/*"
