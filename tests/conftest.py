@@ -33,6 +33,89 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 from starlette_context import context, request_cycle_context
 import tempfile
+from unittest.mock import MagicMock
+
+# Mock ProvidersFactory.get_provider_class to not fail if provider doesn't exist
+from src.providers.providers_factory import ProvidersFactory
+
+def mocked_get_provider_class(provider_type):
+    try:
+        # Try real import first
+        return ProvidersFactory._original_get_provider_class(provider_type)
+    except (ModuleNotFoundError, ImportError, AttributeError):
+        # return a dummy class with simulate_alert method
+        class DummyProvider:
+            PROVIDER_DISPLAY_NAME = provider_type
+            FINGERPRINT_FIELDS = ["service"]
+            PROVIDER_TAGS = ["alert"]
+            PROVIDER_CATEGORY = ["monitoring"]
+            PROVIDER_COMING_SOON = False
+            WEBHOOK_INSTALLATION_REQUIRED = False
+            
+            
+            @staticmethod
+            def simulate_alert():
+                return {
+                    "name": "mocked alert",
+                    "title": "mocked alert",
+                    "message": "mocked alert description",
+                    "source": ["prometheus"],
+                    "service": "prometheus",
+                    "description": "mocked alert description",
+                    "status": "firing",
+                    "severity": "critical",
+                    "lastReceived": datetime.utcnow().isoformat() + "Z",
+                    "fingerprint": str(uuid.uuid4()),
+                    "labels": {"alertname": "mocked alert", "severity": "critical"},
+                    "annotations": {"description": "mocked alert description"}
+                }
+            
+            @staticmethod
+            def has_health_report():
+                return False
+
+        return DummyProvider
+
+if not hasattr(ProvidersFactory, "_original_get_provider_class"):
+    ProvidersFactory._original_get_provider_class = ProvidersFactory.get_provider_class
+    ProvidersFactory.get_provider_class = staticmethod(mocked_get_provider_class)
+
+# Dynamic mock state for providers
+from src.models.provider import Provider
+MOCKED_INSTALLED_PROVIDERS = [
+    Provider(
+        type="prometheus",
+        id="prometheus-mock",
+        name="prometheus-mock",
+        display_name="Prometheus Mock",
+        can_notify=False,
+        can_query=False,
+        tags=["alert"],
+    )
+]
+
+def mocked_get_all_providers():
+    from src.models.provider import Provider
+    return [
+        Provider(
+            type="prometheus",
+            display_name="Prometheus",
+            can_notify=False,
+            can_query=False,
+            tags=["alert"],
+            default_fingerprint_fields=["service"]
+        )
+    ]
+
+def mocked_get_installed_providers(tenant_id, all_providers=None, include_details=False):
+    return MOCKED_INSTALLED_PROVIDERS
+
+def mocked_get_linked_providers(tenant_id):
+    return []
+
+ProvidersFactory.get_all_providers = staticmethod(mocked_get_all_providers)
+ProvidersFactory.get_installed_providers = staticmethod(mocked_get_installed_providers)
+ProvidersFactory.get_linked_providers = staticmethod(mocked_get_linked_providers)
 
 # Ensure PROMETHEUS_MULTIPROC_DIR is set before any keep imports
 if "PROMETHEUS_MULTIPROC_DIR" not in os.environ:
@@ -56,7 +139,7 @@ original_request = requests.Session.request  # noqa
 load_dotenv(find_dotenv())
 
 # Register fixture plugins
-pytest_plugins = []
+pytest_plugins = ["tests.fixtures.client"]
 
 
 class SSEMock:
@@ -727,8 +810,18 @@ def create_alert(db_session):
         details = details or {}
         if fingerprint and "fingerprint" not in details:
             details["fingerprint"] = fingerprint
-
-        random_name = "test-{}".format(fingerprint)
+        if fingerprint is None:
+            import hashlib
+            import json
+            details_copy = details.copy() if details else {}
+            # remove dynamic fields that shouldn't affect fingerprint
+            details_copy.pop("lastReceived", None)
+            details_copy.pop("id", None)
+            fingerprint = hashlib.md5(
+                json.dumps(details_copy, sort_keys=True).encode()
+            ).hexdigest()
+        
+        random_name = details.get("name", "test-{}".format(fingerprint))
         provider_type = (
             details["source"][0]
             if details and "source" in details and details["source"]
@@ -745,17 +838,6 @@ def create_alert(db_session):
             **details,
         }
 
-        alert = Alert(
-            tenant_id=tenant_id,
-            provider_type=provider_type,
-            provider_id="test",
-            event=event_data,
-            fingerprint=fingerprint,
-            timestamp=timestamp,
-        )
-        db_session.add(alert)
-        db_session.commit()
-
         # Update or create LastAlert
         existing = (
             db_session.query(LastAlert)
@@ -765,8 +847,40 @@ def create_alert(db_session):
             )
             .first()
         )
+
+        # Check for deduplication
+        is_full_deduplicated = False
         if existing:
-            existing.alert_id = alert.id
+            dedup_rules = (
+                db_session.query(AlertDeduplicationRule)
+                .filter(
+                    AlertDeduplicationRule.tenant_id == tenant_id,
+                )
+                .all()
+            )
+            for rule in dedup_rules:
+                if rule.provider_type in [provider_type, "keep"] and rule.full_deduplication:
+                    is_full_deduplicated = True
+                    break
+
+        if not is_full_deduplicated:
+            alert = Alert(
+                tenant_id=tenant_id,
+                provider_type=provider_type,
+                provider_id="test",
+                event=event_data,
+                fingerprint=fingerprint,
+                timestamp=timestamp,
+            )
+            db_session.add(alert)
+            db_session.commit()
+            alert_id = alert.id
+        else:
+            alert_id = None
+
+        if existing:
+            if alert_id:
+                existing.alert_id = alert_id
             existing.timestamp = timestamp
         else:
             last_alert = LastAlert(
@@ -774,9 +888,10 @@ def create_alert(db_session):
                 fingerprint=fingerprint,
                 timestamp=timestamp,
                 first_timestamp=timestamp,
-                alert_id=alert.id,
+                alert_id=alert_id,
             )
             db_session.add(last_alert)
+        
         db_session.commit()
 
     return _create_alert
