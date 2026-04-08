@@ -9,14 +9,14 @@ import pytz
 from sqlalchemy import text
 
 def get_last_alerts(*args, **kwargs): return []
-from core.dependencies import SINGLE_TENANT_UUID
-from models.alert import AlertStatus
-from models.db.alert import (
+from src.core.dependencies import SINGLE_TENANT_UUID
+from src.models.alert import AlertStatus
+from src.models.db.alert import (
     Alert,
     AlertDeduplicationRule,
 )
-from utils.enrichment_helpers import convert_db_alerts_to_dto_alerts
-from providers.providers_factory import ProvidersFactory
+from src.utils.enrichment_helpers import convert_db_alerts_to_dto_alerts
+from src.providers.providers_factory import ProvidersFactory
 
 # Set the log level to DEBUG
 logging.basicConfig(level=logging.DEBUG)

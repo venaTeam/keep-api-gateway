@@ -4,11 +4,11 @@ from uuid import UUID
 
 import pytest
 
-from alert_deduplicator.deduplication_rules_provisioning import (
+from src.alert_deduplicator.deduplication_rules_provisioning import (
     provision_deduplication_rules_from_env,
 )
-from models.db.alert import AlertDeduplicationRule
-from models.provider import Provider
+from src.models.db.alert import AlertDeduplicationRule
+from src.models.provider import Provider
 
 
 @pytest.fixture
@@ -117,24 +117,24 @@ def setup(monkeypatch):
 
     with (
         patch(
-            "core.db.db.get_all_deduplication_rules",
+            "src.core.db.db.get_all_deduplication_rules",
             return_value=deduplication_rules_in_db,
         ) as mock_get_all,
         patch(
-            "core.db.db.delete_deduplication_rule", return_value=None
+            "src.core.db.db.delete_deduplication_rule", return_value=None
         ) as mock_delete,
         patch(
-            "core.db.db.update_deduplication_rule", return_value=None
+            "src.core.db.db.update_deduplication_rule", return_value=None
         ) as mock_update,
         patch(
-            "core.db.db.create_deduplication_rule", return_value=None
+            "src.core.db.db.create_deduplication_rule", return_value=None
         ) as mock_create,
         patch(
-            "providers.providers_factory.ProvidersFactory.get_installed_providers",
+            "src.providers.providers_factory.ProvidersFactory.get_installed_providers",
             return_value=installed_providers,
         ) as mock_get_providers,
         patch(
-            "providers.providers_factory.ProvidersFactory.get_linked_providers",
+            "src.providers.providers_factory.ProvidersFactory.get_linked_providers",
             return_value=linked_providers,
         ) as mock_get_linked_providers,
     ):
