@@ -4,7 +4,7 @@ from uuid import UUID
 
 import pytest
 
-from src.alert_deduplicator.deduplication_rules_provisioning import (
+from src.services.alert_deduplicator.deduplication_rules_provisioning import (
     provision_deduplication_rules_from_env,
 )
 from src.models.db.alert import AlertDeduplicationRule
@@ -117,17 +117,17 @@ def setup(monkeypatch):
 
     with (
         patch(
-            "src.core.db.db.get_all_deduplication_rules",
+            "src.repositories.db.get_all_deduplication_rules",
             return_value=deduplication_rules_in_db,
         ) as mock_get_all,
         patch(
-            "src.core.db.db.delete_deduplication_rule", return_value=None
+            "src.repositories.db.delete_deduplication_rule", return_value=None
         ) as mock_delete,
         patch(
-            "src.core.db.db.update_deduplication_rule", return_value=None
+            "src.repositories.db.update_deduplication_rule", return_value=None
         ) as mock_update,
         patch(
-            "src.core.db.db.create_deduplication_rule", return_value=None
+            "src.repositories.db.create_deduplication_rule", return_value=None
         ) as mock_create,
         patch(
             "src.providers.providers_factory.ProvidersFactory.get_installed_providers",

@@ -9,7 +9,7 @@ import pytz
 from sqlalchemy import text
 
 def get_last_alerts(*args, **kwargs): return []
-from src.core.dependencies import SINGLE_TENANT_UUID
+from src.repositories.dependencies import SINGLE_TENANT_UUID
 from src.models.alert import AlertStatus
 from src.models.db.alert import (
     Alert,
