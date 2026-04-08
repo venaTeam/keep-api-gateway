@@ -124,61 +124,66 @@ class MockEventProducer(EventProducer):
                     if any(vals):
                         dedup_fingerprint = hashlib.sha256("".join(vals).encode()).hexdigest()
                 
-                # Create Alert
-                new_alert = Alert(
-                    tenant_id=tenant_id,
-                    provider_type=provider_type,
-                    provider_id=provider_id,
-                    event=evt_dict,
-                    fingerprint=evt_fingerprint,
-                    timestamp=datetime.utcnow()
-                )
-                self.db_session.add(new_alert)
-                self.db_session.flush() # get id
-                
-                # Update LastAlert
-                last_alert = self.db_session.query(LastAlert).filter_by(
-                    tenant_id=tenant_id,
-                    fingerprint=evt_fingerprint
-                ).first()
-                
-                if last_alert:
-                    last_alert.alert_id = new_alert.id
-                    last_alert.timestamp = new_alert.timestamp
-                    last_alert.alert_hash = kwargs.get("alert_hash")
-                else:
-                    last_alert = LastAlert(
+                # Only create Alert record for simple single-fingerprint events
+                # Batch enrichment involves multiple fingerprints (a list) and shouldn't create a single Alert record
+                if not isinstance(evt_fingerprint, list) and kwargs.get("event_type") != "BATCH_ENRICH":
+                    # Create Alert
+                    new_alert = Alert(
                         tenant_id=tenant_id,
+                        provider_type=provider_type or "keep",
+                        provider_id=provider_id or "keep",
+                        event=evt_dict,
                         fingerprint=evt_fingerprint,
-                        alert_id=new_alert.id,
-                        timestamp=new_alert.timestamp,
-                        first_timestamp=new_alert.timestamp,
-                        alert_hash=kwargs.get("alert_hash")
+                        timestamp=datetime.utcnow()
                     )
-                    self.db_session.add(last_alert)
-                # Add DeduplicationEvent for stats
-                # Determine deduplication type based on history
-                # Track history per rule AND dedup_fingerprint to be precise
-                history_key = (tenant_id, str(rule_id), dedup_fingerprint)
-                count = self.fingerprint_history.get(history_key, 0) + 1
-                self.fingerprint_history[history_key] = count
+                    self.db_session.add(new_alert)
+                    self.db_session.flush() # get id
+                    
+                    # Update LastAlert
+                    last_alert = self.db_session.query(LastAlert).filter_by(
+                        tenant_id=tenant_id,
+                        fingerprint=evt_fingerprint
+                    ).first()
+                    
+                    if last_alert:
+                        last_alert.alert_id = new_alert.id
+                        last_alert.timestamp = new_alert.timestamp
+                        last_alert.alert_hash = kwargs.get("alert_hash")
+                    else:
+                        last_alert = LastAlert(
+                            tenant_id=tenant_id,
+                            fingerprint=evt_fingerprint,
+                            alert_id=new_alert.id,
+                            timestamp=new_alert.timestamp,
+                            first_timestamp=new_alert.timestamp,
+                            alert_hash=kwargs.get("alert_hash")
+                        )
+                        self.db_session.add(last_alert)
+                    self.db_session.flush()
                 
-                # Logic: odd counts are "none" (ingested), even counts are "full" (deduplicated)
-                # This ensures that for every 2 alerts, we get 1 dedup, which is 50% ratio.
-                if count % 2 == 1:
-                    deduplication_type = "none"
-                else:
-                    deduplication_type = "full"
-                
-                dedup_event = AlertDeduplicationEvent(
-                    tenant_id=tenant_id,
-                    deduplication_rule_id=rule_id,
-                    deduplication_type=deduplication_type,
-                    provider_id=provider_id,
-                    provider_type=provider_type,
-                    timestamp=new_alert.timestamp
-                )
-                self.db_session.add(dedup_event)
+                    # Add DeduplicationEvent for stats
+                    # Determine deduplication type based on history
+                    # Track history per rule AND dedup_fingerprint to be precise
+                    history_key = (tenant_id, str(rule_id), dedup_fingerprint)
+                    count = self.fingerprint_history.get(history_key, 0) + 1
+                    self.fingerprint_history[history_key] = count
+                    
+                    # Logic: odd counts are "none" (ingested), even counts are "full" (deduplicated)
+                    # This ensures that for every 2 alerts, we get 1 dedup, which is 50% ratio.
+                    if count % 2 == 1:
+                        deduplication_type = "none"
+                    else:
+                        deduplication_type = "full"
+                    
+                    dedup_event = AlertDeduplicationEvent(
+                        tenant_id=tenant_id,
+                        deduplication_rule_id=rule_id,
+                        deduplication_type=deduplication_type,
+                        provider_id=provider_id,
+                        provider_type=provider_type,
+                        timestamp=new_alert.timestamp
+                    )
+                    self.db_session.add(dedup_event)
             
             self.db_session.commit()
             
