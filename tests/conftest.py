@@ -113,13 +113,6 @@ def mocked_get_installed_providers(tenant_id, all_providers=None, include_detail
 def mocked_get_linked_providers(tenant_id):
     return []
 
-if not hasattr(ProvidersFactory, "_original_get_all_providers"):
-    ProvidersFactory._original_get_all_providers = ProvidersFactory.get_all_providers
-if not hasattr(ProvidersFactory, "_original_get_installed_providers"):
-    ProvidersFactory._original_get_installed_providers = ProvidersFactory.get_installed_providers
-if not hasattr(ProvidersFactory, "_original_get_linked_providers"):
-    ProvidersFactory._original_get_linked_providers = ProvidersFactory.get_linked_providers
-
 ProvidersFactory.get_all_providers = staticmethod(mocked_get_all_providers)
 ProvidersFactory.get_installed_providers = staticmethod(mocked_get_installed_providers)
 ProvidersFactory.get_linked_providers = staticmethod(mocked_get_linked_providers)

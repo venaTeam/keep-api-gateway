@@ -963,7 +963,6 @@ def test_full_deduplication_last_received(db_session, create_alert):
     ],
     indirect=True,
 )
-@pytest.mark.skip(reason="Fails due to reordered labels and Pydantic validation; skipping as requested")
 def test_sort_keys_deduplication_fix(db_session, client, test_app):
     """
     Test that alerts with same content but different key ordering are properly deduplicated.

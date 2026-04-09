@@ -664,8 +664,8 @@ class EnrichmentsBl:
             event=safe_event,
             event_type=EventType.BATCH_ENRICH,
             tenant_id=self.tenant_id,
-            provider_type="keep",
-            provider_id="keep",
+            provider_type=None,
+            provider_id=None,
             fingerprint=fingerprints,
         )
 
@@ -769,8 +769,8 @@ class EnrichmentsBl:
             event=safe_event,
             event_type=EventType.ENRICH,
             tenant_id=self.tenant_id,
-            provider_type="keep",
-            provider_id="keep",
+            provider_type=None,
+            provider_id=None,
             fingerprint=fingerprint,
         )
 

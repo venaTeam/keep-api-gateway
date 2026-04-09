@@ -4,9 +4,6 @@ on:
   workflow_dispatch:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-    branches:
-      - main
-      - dev
     paths:
       - "src/**"
       - "poetry.lock"
@@ -15,7 +12,6 @@ on:
   push:
     branches:
       - main
-      - dev
     paths:
       - "src/**"
       - "poetry.lock"
@@ -109,9 +105,8 @@ jobs:
           verbose: true
 
   build-backend:
-    needs: prepare-test-environment
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' || github.event.pull_request.base.ref == 'main' || github.event.pull_request.base.ref == 'dev'
+    if: github.event_name != 'pull_request' || github.event.pull_request.base.ref == 'main'
     outputs:
       image_name: ${{ steps.set-image-name.outputs.image_name }}
     permissions:

@@ -245,17 +245,6 @@ class AlertDto(BaseModel):
         if not values.get("id"):
             values["id"] = str(uuid.uuid4())
 
-        # FALLBACK for name
-        if not values.get("name"):
-            values["name"] = (
-                values.get("summary")
-                or values.get("ruleName")
-                or values.get("alertname")
-                or values.get("title")
-                or values.get("message")
-                or "N/A"
-            )
-
         # Check and set default severity
         severity = values.get("severity")
         try:
