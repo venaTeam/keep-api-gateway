@@ -111,7 +111,7 @@ jobs:
   build-backend:
     needs: prepare-test-environment
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' || github.event.pull_request.base.ref == 'main' || github.event.pull_request.base.ref == 'dev'
+    if: github.event_name != 'pull_request' || contains(fromJSON('["main", "dev"]'), github.event.pull_request.base.ref)
     outputs:
       image_name: ${{ steps.set-image-name.outputs.image_name }}
     permissions:
