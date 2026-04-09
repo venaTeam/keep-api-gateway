@@ -45,7 +45,14 @@ class TestProviderFactoryMethodParam:
         assert ProvidersFactory._get_method_param_type(param) == "str"
 
 
-def test_provider_factory_is_using_config_key_from_db(db_session):
+def test_provider_factory_is_using_config_key_from_db(db_session, monkeypatch):
+    # Restore the original method that was globally mocked in conftest
+    if hasattr(ProvidersFactory, "_original_get_installed_providers"):
+        monkeypatch.setattr(
+            ProvidersFactory,
+            "get_installed_providers",
+            ProvidersFactory._original_get_installed_providers,
+        )
     custom_configuration_key = "custom_secret_name"
     provider = DbProvider(
         id="test_provider_id",
