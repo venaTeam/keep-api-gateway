@@ -1,4 +1,4 @@
-﻿import json
+import json
 import logging
 import os
 import time
@@ -25,7 +25,7 @@ from src.models.provider import Provider as ProviderModel
 from src.utils.tenant_utils import get_or_create_api_key
 from src.services.context_manager import ContextManager
 from src.services.producers.event_subscriber import EventSubscriber
-from src.utils import cyaml
+from src.functions import cyaml
 from src.providers.base.base_provider import BaseProvider
 from src.providers.providers_factory import ProvidersFactory
 from src.services.secret_manager.secretmanagerfactory import SecretManagerFactory
@@ -151,6 +151,7 @@ class ProvidersService:
         provider_config: Dict[str, Any],
         provisioned: bool = False,
         validate_scopes: bool = True,
+        pulling_enabled: bool = True,
     ) -> Dict[str, Any]:
         provider_unique_id = uuid.uuid4().hex
         logger.info(
@@ -205,6 +206,7 @@ class ProvidersService:
                 validatedScopes=validated_scopes,
                 consumer=provider.is_consumer,
                 provisioned=provisioned,
+                pulling_enabled=pulling_enabled,
                 provider_metadata=provider_metadata,
             )
             try:
@@ -266,7 +268,11 @@ class ProvidersService:
             if provider.provisioned and not allow_provisioned:
                 raise HTTPException(403, detail="Cannot update a provisioned provider")
 
+            pulling_enabled = provider_info.pop("pulling_enabled", True)
 
+            # if pulling_enabled is "true" or "false" cast it to boolean
+            if isinstance(pulling_enabled, str):
+                pulling_enabled = pulling_enabled.lower() == "true"
 
             provider_config = {
                 "authentication": provider_info,
@@ -291,6 +297,7 @@ class ProvidersService:
 
             provider.installed_by = updated_by
             provider.validatedScopes = validated_scopes
+            provider.pulling_enabled = pulling_enabled
             session.commit()
 
             logger.info(
@@ -404,6 +411,7 @@ class ProvidersService:
     ) -> bool:
         context_manager = ContextManager(
             tenant_id=tenant_id,
+            workflow_id="",  # this is not in a workflow scope
         )
         secret_manager = SecretManagerFactory.get_secret_manager(context_manager)
         provider_secret_name = f"{tenant_id}_{provider_type}_{provider_id}"
@@ -512,59 +520,12 @@ class ProvidersService:
 
         ### Provisioning from env var
         if provisioned_providers_json is not None:
-            # Inline logic to parse providers from env to avoid using the deleted Parser class
+            # Avoid circular import
+            from src.parser.parser import Parser
+
+            parser = Parser()
             context_manager = ContextManager(tenant_id=tenant_id)
-            # Parse KEEP_PROVIDERS
-            providers_json = os.environ.get("KEEP_PROVIDERS")
-            if providers_json:
-                import re
-                if re.compile(r"^(\/|\.\/|\.\.\/).*\.json$").match(providers_json):
-                    with open(file=providers_json, mode="r", encoding="utf8") as file:
-                        providers_json = file.read()
-                try:
-                    logger.debug("Parsing providers from KEEP_PROVIDERS environment variable")
-                    providers_dict = json.loads(providers_json)
-                    # Inject env vars
-                    def inject_env_variables(config):
-                        if isinstance(config, dict):
-                            for key, value in config.items():
-                                config[key] = inject_env_variables(value)
-                        elif isinstance(config, list):
-                            return [inject_env_variables(item) for item in config]
-                        elif isinstance(config, str) and config.startswith("$(") and config.endswith(")"):
-                            env_var = config[2:-1]
-                            return os.environ.get(env_var, config)
-                        return config
-                    
-                    inject_env_variables(providers_dict)
-                    context_manager.providers_context.update(providers_dict)
-                except json.JSONDecodeError:
-                    logger.error("Error parsing providers from KEEP_PROVIDERS environment variable")
-
-            # Parse KEEP_PROVIDER_*
-            for env in os.environ.keys():
-                if env.startswith("KEEP_PROVIDER_"):
-                    try:
-                        provider_name = env.replace("KEEP_PROVIDER_", "").replace("_", "-").lower()
-                        provider_config = json.loads(os.environ.get(env))
-                        # Inject env vars (reusing helper if possible or duplicating strictly for this scope)
-                        # redefining here for safety if above block didn't run or to keep it self contained
-                        def inject_env_variables_inner(config):
-                            if isinstance(config, dict):
-                                for key, value in config.items():
-                                    config[key] = inject_env_variables_inner(value)
-                            elif isinstance(config, list):
-                                return [inject_env_variables_inner(item) for item in config]
-                            elif isinstance(config, str) and config.startswith("$(") and config.endswith(")"):
-                                env_var = config[2:-1]
-                                return os.environ.get(env_var, config)
-                            return config
-                            
-                        inject_env_variables_inner(provider_config)
-                        context_manager.providers_context[provider_name] = provider_config
-                    except json.JSONDecodeError:
-                        logger.error(f"Error parsing provider config from environment variable {env}")
-
+            parser._parse_providers_from_env(context_manager)
             env_providers = context_manager.providers_context
 
             # Un-provisioning other providers.
@@ -785,5 +746,3 @@ class ProvidersService:
             raise HTTPException(404, detail="Provider logs are not enabled")
 
         return get_provider_logs(tenant_id, provider_id)
-
-
