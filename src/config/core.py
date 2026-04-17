@@ -1,24 +1,14 @@
-import os
 import pathlib
 
 from starlette.config import Config
 
-# Current file: src/config/core.py
-current_file = pathlib.Path(__file__).resolve()
-# parent: src/config/
-# parent.parent: src/
-# parent.parent.parent: . (root)
-ROOT_DIR = current_file.parent.parent.parent
+ROOT = pathlib.Path(__file__).resolve().parent.parent  # app/
+BASE_DIR = ROOT.parent  # ./
 
-env_file = ROOT_DIR / ".env"
-# fallback to src/.env if root .env not found
-if not env_file.exists():
-    env_file = ROOT_DIR / "src" / ".env"
-
-if env_file.exists():
-    starlette_config = Config(str(env_file))
-else:
+try:
+    starlette_config = Config(BASE_DIR / ".env")
+except FileNotFoundError:
     starlette_config = Config()
 
-# Alias for backward compatibility
+# Alias for backward compatibility if needed, but we should migrate
 config = starlette_config
