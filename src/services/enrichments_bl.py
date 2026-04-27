@@ -649,6 +649,8 @@ class EnrichmentsBl:
                         tz=datetime.timezone.utc
                     ).timestamp(),  # timestamp for disposal [for future use]
                 }
+            enrichments.update(disposable_enrichments)
+            
         # Publish to kafka
         safe_event = enrichments.copy()
         safe_event.update({
@@ -662,8 +664,8 @@ class EnrichmentsBl:
             event=safe_event,
             event_type=EventType.BATCH_ENRICH,
             tenant_id=self.tenant_id,
-            provider_type=None,
-            provider_id=None,
+            provider_type="keep",
+            provider_id="keep",
             fingerprint=fingerprints,
         )
 
@@ -767,8 +769,8 @@ class EnrichmentsBl:
             event=safe_event,
             event_type=EventType.ENRICH,
             tenant_id=self.tenant_id,
-            provider_type=None,
-            provider_id=None,
+            provider_type="keep",
+            provider_id="keep",
             fingerprint=fingerprint,
         )
 

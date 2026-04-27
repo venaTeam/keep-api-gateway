@@ -109,18 +109,12 @@ class IdentityManagerFactory:
             )
             try:
                 module = importlib.import_module(
-                    f"keep.identitymanager.identity_managers.{manager_type}.{manager_type}_{manager_class}"
+                    f"src.services.identity_manager.identity_managers.{manager_type}.{manager_type}_{manager_class}"
                 )
-            # look for the module in ee
             except ModuleNotFoundError:
-                try:
-                    module = importlib.import_module(
-                        f"src.services.identity_manager.identity_managers.{manager_type}.{manager_type}_{manager_class}"
-                    )
-                except ModuleNotFoundError:
-                    raise NotImplementedError(
-                        f"{manager_class} for {manager_type} not implemented"
-                    )
+                raise NotImplementedError(
+                    f"{manager_class} for {manager_type} not implemented"
+                )
 
             logger.debug(
                 f"Loaded {manager_class} for {manager_type} in {time.time() - t} seconds"
