@@ -1,4 +1,4 @@
-﻿"""
+"""
 The providers factory module.
 """
 
@@ -285,6 +285,7 @@ class ProvidersFactory:
             "base_provider",
             "mock_provider",
             "file_provider",
+            "github_workflows_provider",
         ]
 
         for provider_directory in os.listdir(
@@ -706,5 +707,3 @@ class ProviderEncoder(json.JSONEncoder):
         elif isinstance(o, _MISSING_TYPE):
             return None
         return o.dict()
-
-

@@ -265,8 +265,8 @@ def run(app: FastAPI):
         limit_concurrency=KEEP_LIMIT_CONCURRENCY,
     )
 
+app = get_app()
 
 if __name__ == "__main__":
-    app = get_app()
     run(app)
 
