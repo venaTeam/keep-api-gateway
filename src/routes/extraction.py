@@ -123,7 +123,7 @@ def delete_extraction_rule(
         },
     },
 )
-def execute_rule(
+async def execute_rule(
     rule_id: int,
     alert_id: UUID,
     authenticated_entity: AuthenticatedEntity = Depends(
@@ -143,7 +143,7 @@ def execute_rule(
     if not alert:
         raise HTTPException(status_code=404, detail="Alert not found")
 
-    enriched = enrichment_bl.run_extraction_rule_by_id(rule_id, alert)
+    enriched = await enrichment_bl.run_extraction_rule_by_id(rule_id, alert)
     if enriched:
         logger.info(
             "Extraction rule executed successfully",

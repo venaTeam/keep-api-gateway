@@ -264,7 +264,7 @@ def get_enrichment_event_logs(
         403: {"description": "User does not have permission to execute mapping rule"},
     },
 )
-def execute_rule(
+async def execute_rule(
     rule_id: int,
     alert_id: UUID,
     authenticated_entity: AuthenticatedEntity = Depends(
@@ -280,7 +280,7 @@ def execute_rule(
         },
     )
     enrichment_bl = EnrichmentsBl(tenant_id=authenticated_entity.tenant_id)
-    enriched = enrichment_bl.run_mapping_rule_by_id(rule_id, alert_id)
+    enriched = await enrichment_bl.run_mapping_rule_by_id(rule_id, alert_id)
     if enriched:
         logger.info(
             "Mapping rule executed successfully",

@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 from pydantic import PrivateAttr
 from sqlalchemy import ForeignKey, ForeignKeyConstraint, UniqueConstraint
 from sqlalchemy_utils import UUIDType
+from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
 from sqlmodel import JSON, TEXT, Column, Field, Index, Relationship, SQLModel
 
 from src.config.core import config
@@ -13,7 +14,7 @@ from src.models.db.helpers import DATETIME_COLUMN_TYPE, NULL_FOR_DELETED_AT
 from src.models.db.incident import Incident
 from src.models.db.tenant import Tenant
 
-db_connection_string = config("DATABASE_CONNECTION_STRING", default=None)
+db_connection_string = config("DATABASE_CONNECTION_STRING", default="postgresql://keep:keep@localhost:5432/keep")
 logger = logging.getLogger(__name__)
 
 
@@ -119,7 +120,7 @@ class Alert(SQLModel, table=True):
     )
     provider_type: str
     provider_id: str | None
-    event: dict = Field(sa_column=Column(JSON))
+    event: dict = Field(sa_column=Column(JSON().with_variant(PG_JSONB, "postgresql")))
     fingerprint: str = Field(index=True)  # Add the fingerprint field with an index
 
     # alert_hash is different than fingerprint, it is a hash of the alert itself
@@ -185,7 +186,7 @@ class AlertEnrichment(SQLModel, table=True):
     tenant_id: str = Field(foreign_key="tenant.id")
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     alert_fingerprint: str = Field(unique=True)
-    enrichments: dict = Field(sa_column=Column(JSON))
+    enrichments: dict = Field(sa_column=Column(JSON().with_variant(PG_JSONB, "postgresql")))
 
     # @tb: we need to think what to do about this relationship.
     alerts: list[Alert] = Relationship(
@@ -213,9 +214,9 @@ class AlertDeduplicationRule(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     created_by: str
     enabled: bool = Field(default=True)
-    fingerprint_fields: list[str] = Field(sa_column=Column(JSON), default=[])
+    fingerprint_fields: list[str] = Field(sa_column=Column(JSON().with_variant(PG_JSONB, "postgresql")), default=[])
     full_deduplication: bool = Field(default=False)
-    ignore_fields: list[str] = Field(sa_column=Column(JSON), default=[])
+    ignore_fields: list[str] = Field(sa_column=Column(JSON().with_variant(PG_JSONB, "postgresql")), default=[])
     priority: int = Field(default=0)  # for future use
     is_provisioned: bool = Field(default=False)
 
@@ -290,7 +291,7 @@ class AlertField(SQLModel, table=True):
 class AlertRaw(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     tenant_id: str = Field(foreign_key="tenant.id", index=True)
-    raw_alert: dict = Field(sa_column=Column(JSON))
+    raw_alert: dict = Field(sa_column=Column(JSON().with_variant(PG_JSONB, "postgresql")))
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     provider_type: str | None = Field(default=None)
     error: bool = Field(default=False, index=True)
@@ -357,4 +358,3 @@ class CommentMention(SQLModel, table=True):
         Index("ix_comment_mention_tenant_id", "tenant_id"),
         UniqueConstraint("comment_id", "mentioned_user_id", name="uq_comment_mention"),
     )
-

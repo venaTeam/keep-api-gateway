@@ -25,7 +25,7 @@ def get_fingerprint(fingerprint, values):
         # if the alert name is None, than use the entire payload
         if not fingerprint_payload:
             logger.warning("No name to alert, using the entire payload")
-            fingerprint_payload = json.dumps(values)
+            fingerprint_payload = json.dumps(values, sort_keys=True)
         fingerprint = hashlib.sha256(fingerprint_payload.encode()).hexdigest()
     # take only the first 255 characters
     else:
@@ -422,4 +422,3 @@ class EnrichIncidentRequestBody(BaseModel):
 class UnEnrichIncidentRequestBody(BaseModel):
     enrichments: list[str]
     fingerprint: str
-

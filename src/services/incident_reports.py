@@ -89,7 +89,7 @@ class IncidentReportsBl:
     def __init__(self, tenant_id: str):
         self.tenant_id = tenant_id
         self.incidents_bl = IncidentBl(
-            tenant_id=tenant_id, session=None, pusher_client=None, user=None
+            tenant_id=tenant_id, session=None, user=None
         )
 
     def get_incident_reports(
