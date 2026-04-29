@@ -237,7 +237,7 @@ def get_ticket_count(
         new_query = urlencode(merged_qs)
         composed_url = urlunparse(parsed._replace(query=new_query))
 
-        response = requests.get(composed_url, timeout=10)
+        response = requests.get(composed_url, timeout=10, verify=False)
         response.raise_for_status()
         data = response.json()
 
