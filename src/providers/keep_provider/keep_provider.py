@@ -138,7 +138,9 @@ class KeepProvider(BaseProvider):
                 for alert in db_alerts:
                     if fingerprints.get(alert.fingerprint) and distinct is True:
                         continue
-                    alert_event = alert.event
+                    alert_event = alert.dict()
+                    if alert.extra_data:
+                        alert_event.update(alert.extra_data)
                     if alert.alert_enrichment:
                         alert_event["enrichments"] = alert.alert_enrichment.enrichments
                     alerts.append(alert_event)

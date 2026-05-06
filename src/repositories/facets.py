@@ -130,10 +130,11 @@ def get_facet_options(
                 grouped_by_id_dict[facet_data.facet_id].append(facet_data)
 
             for facet in facets:
+                facet_queries = facet_options_query.facet_queries or {}
                 facet_key = get_facet_key(
                     facet.property_path,
                     facet_options_query.cel,
-                    facet_options_query.facet_queries[facet.id],
+                    facet_queries.get(facet.id),
                 )
                 property_mapping = properties_metadata.get_property_metadata_for_str(
                     facet.property_path

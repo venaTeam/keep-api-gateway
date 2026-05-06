@@ -1,4 +1,4 @@
-﻿import base64
+import base64
 import hashlib
 import hmac
 import json
@@ -421,12 +421,22 @@ async def assign_alert(
     if note:
         action_description += f" - With note: {note}"
 
+    # Normalize last_received to the standard format used by AlertDto
+    # This ensures the key in the "assignees" dict matches alert.lastReceived
+    try:
+        # Use a more robust parsing that handles various formats
+        import datetime
+        dt = datetime.datetime.fromisoformat(last_received.replace("Z", ""))
+        normalized_last_received = dt.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+    except Exception:
+        normalized_last_received = last_received
+
     enrichments_bl = EnrichmentsBl(tenant_id, session, event_producer=event_producer)
     if dispose_on_new_alert:
         await enrichments_bl.enrich_entity(
             fingerprint=fingerprint,
             enrichments={
-                "assignees": {last_received: user_email},
+                "assignees": {normalized_last_received: user_email},
                 "status": AlertStatus.ACKNOWLEDGED.value,
             },
             action_type=ActionType.ACKNOWLEDGE,
@@ -449,7 +459,7 @@ async def assign_alert(
         await enrichments_bl.enrich_entity(
             fingerprint=fingerprint,
             enrichments={
-                "assignees": {last_received: user_email},
+                "assignees": {normalized_last_received: user_email},
                 "note": note,
                 "status": AlertStatus.ACKNOWLEDGED.value,
             },
@@ -788,6 +798,7 @@ async def batch_enrich_alerts(
                 action_callee=authenticated_entity.email,
                 action_description=action_description,
                 audit_enabled=False,
+                produce_event=False,
             )
 
         alerts = get_alerts_by_ids(tenant_id, alert_ids, session=session)
