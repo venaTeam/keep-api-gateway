@@ -127,14 +127,23 @@ class MockEventProducer(EventProducer):
                 # Only create Alert record for simple single-fingerprint events
                 # Batch enrichment involves multiple fingerprints (a list) and shouldn't create a single Alert record
                 if not isinstance(evt_fingerprint, list) and kwargs.get("event_type") != "BATCH_ENRICH":
-                    # Create Alert
+                    # Create Alert with flattened columns
                     new_alert = Alert(
                         tenant_id=tenant_id,
                         provider_type=provider_type or "keep",
                         provider_id=provider_id or "keep",
-                        event=evt_dict,
+                        extra_data=evt_dict,
                         fingerprint=evt_fingerprint,
-                        timestamp=datetime.utcnow()
+                        timestamp=datetime.utcnow(),
+                        # Map known fields to columns
+                        source=evt_dict.get("source", ["unknown"])[0] if isinstance(evt_dict.get("source"), list) else evt_dict.get("source"),
+                        severity=evt_dict.get("severity"),
+                        status=evt_dict.get("status", "firing"),
+                        message=evt_dict.get("message"),
+                        description=evt_dict.get("description"),
+                        application=evt_dict.get("application"),
+                        service=evt_dict.get("service"),
+                        name=evt_dict.get("name"),
                     )
                     self.db_session.add(new_alert)
                     self.db_session.flush() # get id

@@ -646,7 +646,25 @@ class EnrichmentsBl:
                 action_description=action_description,
                 dispose_on_new_alert=dispose_on_new_alert,
                 audit_enabled=audit_enabled,
-                produce_event=produce_event,
+                produce_event=False,  # Don't produce individual ENRICH events
+            )
+
+        if produce_event:
+            # Produce a single BATCH_ENRICH event for the entire batch
+            safe_event = enrichments.copy()
+            safe_event.update({
+                "action_type": action_type.value,
+                "action_callee": action_callee,
+                "action_description": action_description,
+                "audit_enabled": audit_enabled,
+            })
+            await self.event_producer.produce(
+                event=safe_event,
+                event_type=EventType.BATCH_ENRICH,
+                tenant_id=self.tenant_id,
+                provider_type="keep",
+                provider_id="keep",
+                fingerprint=fingerprints,  # List of fingerprints
             )
 
 

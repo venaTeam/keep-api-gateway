@@ -95,11 +95,33 @@ alert_field_configurations = [
         ],
         data_type=DataType.STRING,
     ),
+    FieldMappingConfiguration(
+        map_from_pattern="severity_order",
+        map_to=[
+            "CASE alert.severity "
+            "WHEN 'critical' THEN 5 "
+            "WHEN 'high' THEN 4 "
+            "WHEN 'warning' THEN 3 "
+            "WHEN 'info' THEN 2 "
+            "WHEN 'low' THEN 1 "
+            "ELSE 0 END"
+        ],
+        data_type=DataType.INTEGER,
+    ),
+    FieldMappingConfiguration(
+        map_from_pattern="labels.severity",
+        map_to=[
+            "alert.severity",
+            "JSON(alertenrichment.enrichments).labels.severity",
+            "JSON(alert.extra_data).labels.severity",
+        ],
+        data_type=DataType.STRING,
+    ),
 ]
 
 _INFRA_COLUMNS = {
     "id", "tenant_id", "timestamp", "provider_type", "provider_id",
-    "fingerprint", "alert_hash", "extra_data"
+    "fingerprint", "alert_hash", "extra_data", "source"
 }
 
 _SPECIAL_FIELDS = {

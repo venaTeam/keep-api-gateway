@@ -687,15 +687,27 @@ def setup_alerts(elastic_client, db_session, request):
         # sleep to avoid same lastReceived
         time.sleep(0.02)
         detail["fingerprint"] = f"test-{i}"
-        if "source" in detail:
-            source = detail["source"][0]
+        source = detail.get("source", ["unknown"])[0]
+        # Create valid event (extra_data)
+        event = _create_valid_event(detail)
+        # Extract flattened fields from detail/event
         alerts.append(
             Alert(
                 tenant_id=SINGLE_TENANT_UUID,
                 provider_type=source,
                 provider_id="test",
-                event=_create_valid_event(detail),
+                extra_data=event,
                 fingerprint=detail["fingerprint"],
+                source=source,
+                severity=detail.get("severity"),
+                status=detail.get("status", "firing"),
+                message=detail.get("message"),
+                description=detail.get("description"),
+                application=detail.get("application"),
+                service=detail.get("service"),
+                name=detail.get("name"),
+                startedAt=detail.get("lastReceived") or datetime.utcnow().isoformat(),
+                lastReceived=detail.get("lastReceived") or datetime.utcnow().isoformat(),
             )
         )
     db_session.add_all(alerts)
@@ -875,9 +887,20 @@ def create_alert(db_session):
                 tenant_id=tenant_id,
                 provider_type=provider_type,
                 provider_id="test",
-                event=event_data,
+                extra_data=event_data,
                 fingerprint=fingerprint,
                 timestamp=timestamp,
+                # Flattened columns
+                source=event_data.get("source", ["unknown"])[0] if isinstance(event_data.get("source"), list) else event_data.get("source"),
+                severity=event_data.get("severity"),
+                status=event_data.get("status", "firing"),
+                message=event_data.get("message"),
+                description=event_data.get("description"),
+                application=event_data.get("application"),
+                service=event_data.get("service"),
+                name=event_data.get("name"),
+                startedAt=timestamp.isoformat() if timestamp else None,
+                lastReceived=timestamp.isoformat() if timestamp else None,
             )
             db_session.add(alert)
             db_session.commit()
