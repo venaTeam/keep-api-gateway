@@ -113,15 +113,20 @@ class AlertDto(BaseModel):
 
     @validator("source", pre=True)
     def parse_source(cls, value):
+        if value is None:
+            return []
         if isinstance(value, str):
             try:
+                import json
                 return json.loads(value)
-            except json.JSONDecodeError:
+            except Exception:
                 return [value]
         return value
 
     @validator("enriched_fields", pre=True)
     def parse_enriched_fields(cls, v):
+        if v is None:
+            return []
         if isinstance(v, dict):
             return list(v.keys())
         return v

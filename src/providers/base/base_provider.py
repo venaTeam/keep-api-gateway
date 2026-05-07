@@ -791,7 +791,7 @@ class BaseProvider(metaclass=abc.ABCMeta):
             event_id=alert_data.get("event_id", str(uuid.uuid4())),
             url=alert_data.get("url", None),
             fingerprint=alert_data.get("fingerprint", None),
-            providerId=self.provider_id,
+            provider_id=self.provider_id,
         )
         # push the alert to the provider
         url = f"{os.environ['KEEP_API_URL']}/alerts/event"
