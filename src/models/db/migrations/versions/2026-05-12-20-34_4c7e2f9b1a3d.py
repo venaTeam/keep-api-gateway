@@ -71,39 +71,17 @@ def upgrade() -> None:
         )
 
     # --- Task 1.2: Add indexes ---
-    if conn.dialect.name == "postgresql":
-        # CONCURRENTLY cannot run inside a transaction; use autocommit mode.
-        with conn.execution_options(isolation_level="AUTOCOMMIT"):
-            conn.execute(
-                text(
-                    "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_lastalert_tenant_status "
-                    "ON lastalert (tenant_id, status)"
-                )
-            )
-            conn.execute(
-                text(
-                    "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_lastalert_tenant_assignee "
-                    "ON lastalert (tenant_id, assignee)"
-                )
-            )
-            conn.execute(
-                text(
-                    "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_lastalert_tenant_dismissed_until "
-                    "ON lastalert (tenant_id, dismissed_until)"
-                )
-            )
-    else:
-        op.create_index(
-            "idx_lastalert_tenant_status", "lastalert", ["tenant_id", "status"]
-        )
-        op.create_index(
-            "idx_lastalert_tenant_assignee", "lastalert", ["tenant_id", "assignee"]
-        )
-        op.create_index(
-            "idx_lastalert_tenant_dismissed_until",
-            "lastalert",
-            ["tenant_id", "dismissed_until"],
-        )
+    op.create_index(
+        "idx_lastalert_tenant_status", "lastalert", ["tenant_id", "status"]
+    )
+    op.create_index(
+        "idx_lastalert_tenant_assignee", "lastalert", ["tenant_id", "assignee"]
+    )
+    op.create_index(
+        "idx_lastalert_tenant_dismissed_until",
+        "lastalert",
+        ["tenant_id", "dismissed_until"],
+    )
 
     # --- Task 1.3: Backfill tracking fields from alert.event JSON ---
     _backfill_from_alert(conn)
@@ -329,25 +307,9 @@ def _backfill_from_alertenrichment(conn) -> None:
 
 
 def downgrade() -> None:
-    conn = op.get_bind()
-
-    if conn.dialect.name == "postgresql":
-        with conn.execution_options(isolation_level="AUTOCOMMIT"):
-            conn.execute(
-                text("DROP INDEX CONCURRENTLY IF EXISTS idx_lastalert_tenant_status")
-            )
-            conn.execute(
-                text("DROP INDEX CONCURRENTLY IF EXISTS idx_lastalert_tenant_assignee")
-            )
-            conn.execute(
-                text(
-                    "DROP INDEX CONCURRENTLY IF EXISTS idx_lastalert_tenant_dismissed_until"
-                )
-            )
-    else:
-        op.drop_index("idx_lastalert_tenant_status", table_name="lastalert")
-        op.drop_index("idx_lastalert_tenant_assignee", table_name="lastalert")
-        op.drop_index("idx_lastalert_tenant_dismissed_until", table_name="lastalert")
+    op.drop_index("idx_lastalert_tenant_status", table_name="lastalert")
+    op.drop_index("idx_lastalert_tenant_assignee", table_name="lastalert")
+    op.drop_index("idx_lastalert_tenant_dismissed_until", table_name="lastalert")
 
     with op.batch_alter_table("lastalert", schema=None) as batch_op:
         batch_op.drop_column("firing_start_time_since_last_resolved")
