@@ -721,7 +721,7 @@ def get_last_alerts(
 
         # Build the base query using select()
         stmt = (
-            select(Alert, LastAlert.first_timestamp.label("startedAt"))
+            select(Alert, LastAlert.first_timestamp.label("started_at"))
             .select_from(LastAlert)
             .join(Alert, LastAlert.alert_id == Alert.id)
             .where(LastAlert.tenant_id == tenant_id)
@@ -828,9 +828,9 @@ def get_last_alerts(
         alerts = []
         for alert_data in alerts_with_start:
             alert = alert_data[0]
-            startedAt = alert_data[1]
-            if not alert.startedAt:
-                alert.startedAt = str(startedAt)
+            started_at = alert_data[1]
+            if not alert.started_at:
+                alert.started_at = str(started_at)
 
             if with_incidents:
                 incident_id = alert_data[2]
@@ -3070,7 +3070,7 @@ def add_alerts_to_incident(
             else:
                 alerts_count = alerts_data_for_incident["count"]
 
-            last_received_field = Alert.lastReceived
+            last_received_field = Alert.last_received
 
             started_at, last_seen_at = session.exec(
                 select(func.min(last_received_field), func.max(last_received_field))
@@ -3297,7 +3297,7 @@ def remove_alerts_to_incident_by_incident_id(
             if source not in sources_existed
         ]
 
-        last_received_field = Alert.lastReceived
+        last_received_field = Alert.last_received
 
         started_at, last_seen_at = session.exec(
             select(func.min(last_received_field), func.max(last_received_field))

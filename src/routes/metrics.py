@@ -86,8 +86,7 @@ def get_metrics(
         try:
             last_alert = last_alerts_for_incidents[str(incident.id)][0]
             payload = last_alert.dict()
-            if last_alert.extra_data:
-                payload.update(last_alert.extra_data)
+
             last_alert_dto = AlertDto(**payload)
         except IndexError:
             last_alert_dto = None

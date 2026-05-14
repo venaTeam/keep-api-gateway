@@ -16,20 +16,22 @@ ALTER TABLE alert ADD COLUMN key_field VARCHAR(255);
 ALTER TABLE alert ADD COLUMN name VARCHAR(255);
 ALTER TABLE alert ADD COLUMN status VARCHAR(50);
 ALTER TABLE alert ADD COLUMN description TEXT;
-ALTER TABLE alert ADD COLUMN lastReceived VARCHAR(255);
-ALTER TABLE alert ADD COLUMN isFullDuplicate BOOLEAN DEFAULT FALSE;
-ALTER TABLE alert ADD COLUMN isPartialDuplicate BOOLEAN DEFAULT FALSE;
-ALTER TABLE alert ADD COLUMN duplicateReason VARCHAR(255);
+ALTER TABLE alert ADD COLUMN last_received VARCHAR(255);
+ALTER TABLE alert ADD COLUMN is_full_duplicate BOOLEAN DEFAULT FALSE;
+ALTER TABLE alert ADD COLUMN is_partial_duplicate BOOLEAN DEFAULT FALSE;
+ALTER TABLE alert ADD COLUMN duplicate_reason VARCHAR(255);
 ALTER TABLE alert ADD COLUMN note TEXT;
 ALTER TABLE alert ADD COLUMN assignee VARCHAR(255);
 ALTER TABLE alert ADD COLUMN incident VARCHAR(255);
-ALTER TABLE alert ADD COLUMN dismissUntil VARCHAR(255);
+ALTER TABLE alert ADD COLUMN dismiss_until VARCHAR(255);
 ALTER TABLE alert ADD COLUMN dismissed BOOLEAN DEFAULT FALSE;
-ALTER TABLE alert ADD COLUMN startedAt VARCHAR(255);
-ALTER TABLE alert ADD COLUMN firingCounter INTEGER DEFAULT 0;
-ALTER TABLE alert ADD COLUMN unresolvedCounter INTEGER DEFAULT 0;
-ALTER TABLE alert ADD COLUMN firingStartTime VARCHAR(255);
-ALTER TABLE alert ADD COLUMN firingStartTimeSinceLastResolved VARCHAR(255);
+ALTER TABLE alert ADD COLUMN started_at VARCHAR(255);
+ALTER TABLE alert ADD COLUMN firing_counter INTEGER DEFAULT 0;
+ALTER TABLE alert ADD COLUMN unresolved_counter INTEGER DEFAULT 0;
+ALTER TABLE alert ADD COLUMN firing_start_time VARCHAR(255);
+ALTER TABLE alert ADD COLUMN firing_start_time_since_last_resolved VARCHAR(255);
+ALTER TABLE alert ADD COLUMN previous_status VARCHAR(50);
+ALTER TABLE alert ADD COLUMN maintenance_windows_trace JSONB;
 
 -- STEP 2: Backfill data (Batched, Safe)
 DO $$
@@ -56,20 +58,20 @@ BEGIN
             name = event->>'name',
             status = event->>'status',
             description = event->>'description',
-            lastReceived = event->>'lastReceived',
-            isFullDuplicate = (event->>'isFullDuplicate')::BOOLEAN,
-            isPartialDuplicate = (event->>'isPartialDuplicate')::BOOLEAN,
-            duplicateReason = event->>'duplicateReason',
+            last_received = event->>'lastReceived',
+            is_full_duplicate = (event->>'isFullDuplicate')::BOOLEAN,
+            is_partial_duplicate = (event->>'isPartialDuplicate')::BOOLEAN,
+            duplicate_reason = event->>'duplicateReason',
             note = event->>'note',
             assignee = event->>'assignee',
             incident = event->>'incident',
-            dismissUntil = event->>'dismissUntil',
+            dismiss_until = event->>'dismissUntil',
             dismissed = (event->>'dismissed')::BOOLEAN,
-            startedAt = event->>'startedAt',
-            firingCounter = (event->>'firingCounter')::INTEGER,
-            unresolvedCounter = (event->>'unresolvedCounter')::INTEGER,
-            firingStartTime = event->>'firingStartTime',
-            firingStartTimeSinceLastResolved = event->>'firingStartTimeSinceLastResolved',
+            started_at = event->>'startedAt',
+            firing_counter = (event->>'firingCounter')::INTEGER,
+            unresolved_counter = (event->>'unresolvedCounter')::INTEGER,
+            firing_start_time = event->>'firingStartTime',
+            firing_start_time_since_last_resolved = event->>'firingStartTimeSinceLastResolved',
             -- Move everything else into extra_data
             extra_data = event - '{application, object, node_name, severity, message, operator, time_created, network, timezone, custom_key, expiry_in_minutes, source, service, key_field, name, status, description, lastReceived, isFullDuplicate, isPartialDuplicate, duplicateReason, note, assignee, incident, dismissUntil, dismissed, startedAt, firingCounter, unresolvedCounter, firingStartTime, firingStartTimeSinceLastResolved}'::text[]
         WHERE id IN (

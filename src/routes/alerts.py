@@ -314,7 +314,7 @@ async def delete_alert(
         extra={
             "fingerprint": delete_alert.fingerprint,
             "restore": delete_alert.restore,
-            "lastReceived": delete_alert.lastReceived,
+            "last_received": delete_alert.last_received,
             "tenant_id": tenant_id,
         },
     )
@@ -330,20 +330,20 @@ async def delete_alert(
 
     if (
         delete_alert.restore is True
-        and delete_alert.lastReceived in deleted_last_received
+        and delete_alert.last_received in deleted_last_received
     ):
         # Restore deleted alert
-        deleted_last_received.remove(delete_alert.lastReceived)
+        deleted_last_received.remove(delete_alert.last_received)
     elif (
         delete_alert.restore is False
-        and delete_alert.lastReceived not in deleted_last_received
+        and delete_alert.last_received not in deleted_last_received
     ):
         # Delete the alert if it's not already deleted (wtf basically, shouldn't happen)
-        deleted_last_received.append(delete_alert.lastReceived)
+        deleted_last_received.append(delete_alert.last_received)
 
-    if delete_alert.lastReceived not in assignees_last_receievd:
+    if delete_alert.last_received not in assignees_last_receievd:
         # auto-assign the deleting user to the alert
-        assignees_last_receievd[delete_alert.lastReceived] = user_email
+        assignees_last_receievd[delete_alert.last_received] = user_email
 
     # overwrite the enrichment
     enrichment_bl = EnrichmentsBl(tenant_id, event_producer=event_producer)
@@ -422,7 +422,7 @@ async def assign_alert(
         action_description += f" - With note: {note}"
 
     # Normalize last_received to the standard format used by AlertDto
-    # This ensures the key in the "assignees" dict matches alert.lastReceived
+    # This ensures the key in the "assignees" dict matches alert.last_received
     try:
         # Use a more robust parsing that handles various formats
         import datetime

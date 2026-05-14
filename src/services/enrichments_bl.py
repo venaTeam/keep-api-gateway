@@ -121,8 +121,7 @@ class EnrichmentsBl:
         )
 
         alert_payload = alert.dict()
-        if alert.extra_data:
-            alert_payload.update(alert.extra_data)
+
         alert_payload["event_id"] = str(alert.id)
 
         if not rule:
@@ -656,7 +655,7 @@ class EnrichmentsBl:
                 "action_type": action_type.value,
                 "action_callee": action_callee,
                 "action_description": action_description,
-                "audit_enabled": audit_enabled,
+                "audit_enabled": False,  # Audit already created locally by API Gateway
             })
             await self.event_producer.produce(
                 event=safe_event,
@@ -775,7 +774,7 @@ class EnrichmentsBl:
                 "action_type": action_type.value,
                 "action_callee": action_callee,
                 "action_description": action_description,
-                "audit_enabled": audit_enabled,
+                "audit_enabled": False,  # Audit already created locally by API Gateway
                 "force": force,
             })
             
@@ -894,9 +893,9 @@ class EnrichmentsBl:
             # Ensure alerts are explicitly marked as not dismissed after disposal.
             # Some alert payloads may still carry the dismissed flag, so we reset it here.
             new_enrichments["dismissed"] = False
-        if "dismissUntil" in disposed_keys:
+        if "dismiss_until" in disposed_keys:
             # Clear any lingering dismissal deadline metadata.
-            new_enrichments["dismissUntil"] = None
+            new_enrichments["dismiss_until"] = None
         if disposed:
             enrich_alert_db(
                 self.tenant_id,
@@ -921,14 +920,12 @@ class EnrichmentsBl:
 
                     if latest_alert:
                         alert_data = latest_alert.dict()
-                        if latest_alert.extra_data:
-                            alert_data.update(latest_alert.extra_data)
                         alert_data.update(
                             {
                                 key: value
                                 for key, value in new_enrichments.items()
                                 if value is not None
-                                or key in {"dismissed", "dismissUntil"}
+                                or key in {"dismissed", "dismiss_until"}
                             }
                         )
                         alert_dto = AlertDto(**alert_data)
@@ -1013,8 +1010,6 @@ class EnrichmentsBl:
 
                     if latest_alert:
                         alert_data = latest_alert.dict()
-                        if latest_alert.extra_data:
-                            alert_data.update(latest_alert.extra_data)
                         alert_data.update(new_enrichments)
                         alert_dto = AlertDto(**alert_data)
                         self.elastic_client.index_alert(alert_dto)
