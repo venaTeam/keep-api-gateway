@@ -64,7 +64,7 @@ def mocked_get_provider_class(provider_type):
                     "description": "mocked alert description",
                     "status": "firing",
                     "severity": "critical",
-                    "lastReceived": datetime.utcnow().isoformat() + "Z",
+                    "last_received": datetime.utcnow().isoformat() + "Z",
                     "fingerprint": str(uuid.uuid4()),
                     "labels": {"alertname": "mocked alert", "severity": "critical"},
                     "annotations": {"description": "mocked alert description"}
@@ -664,14 +664,14 @@ def auth_page(browser: Page):
     auth_context.close()
 
 
-def _create_valid_event(d, lastReceived=None):
+def _create_valid_event(d, last_received=None):
     event = {
         "id": str(uuid.uuid4()),
         "name": "some-test-event",
         "status": "firing",
-        "lastReceived": (
-            str(lastReceived)
-            if lastReceived
+        "last_received": (
+            str(last_received)
+            if last_received
             else datetime.now(tz=timezone.utc).isoformat()
         ),
     }
@@ -683,20 +683,20 @@ def _create_valid_event(d, lastReceived=None):
 def setup_alerts(elastic_client, db_session, request):
     alert_details = request.param.get("alert_details")
     alerts = []
+    enrichments = []
     for i, detail in enumerate(alert_details):
-        # sleep to avoid same lastReceived
+        # sleep to avoid same last_received
         time.sleep(0.02)
         detail["fingerprint"] = f"test-{i}"
         source = detail.get("source", ["unknown"])[0]
-        # Create valid event (extra_data)
+        # Build event payload (carries non-native fields for AlertEnrichment)
         event = _create_valid_event(detail)
-        # Extract flattened fields from detail/event
+        last_received = detail.get("last_received") or detail.get("last_received") or datetime.utcnow().isoformat()
         alerts.append(
             Alert(
                 tenant_id=SINGLE_TENANT_UUID,
                 provider_type=source,
                 provider_id="test",
-                extra_data=event,
                 fingerprint=detail["fingerprint"],
                 source=source,
                 severity=detail.get("severity"),
@@ -706,11 +706,19 @@ def setup_alerts(elastic_client, db_session, request):
                 application=detail.get("application"),
                 service=detail.get("service"),
                 name=detail.get("name"),
-                startedAt=detail.get("lastReceived") or datetime.utcnow().isoformat(),
-                lastReceived=detail.get("lastReceived") or datetime.utcnow().isoformat(),
+                started_at=last_received,
+                last_received=last_received,
+            )
+        )
+        enrichments.append(
+            AlertEnrichment(
+                tenant_id=SINGLE_TENANT_UUID,
+                alert_fingerprint=detail["fingerprint"],
+                enrichments=event,
             )
         )
     db_session.add_all(alerts)
+    db_session.add_all(enrichments)
     db_session.commit()
 
     existed_last_alerts = db_session.query(LastAlert).all()
@@ -762,8 +770,11 @@ def setup_stress_alerts_no_elastic(db_session):
             for i in range(num_alerts)
         ]
         alerts = []
+        enrichments = []
         for i, detail in enumerate(alert_details):
             random_timestamp = datetime.utcnow() - timedelta(days=random.uniform(0, 7))
+            fingerprint = "fingerprint_{}".format(i)
+            event = _create_valid_event(detail, last_received=random_timestamp)
             alerts.append(
                 Alert(
                     timestamp=random_timestamp,
@@ -772,11 +783,24 @@ def setup_stress_alerts_no_elastic(db_session):
                     provider_id="test_{}".format(
                         i % 5
                     ),  # Cycle through 5 different provider_ids
-                    event=_create_valid_event(detail, lastReceived=random_timestamp),
-                    fingerprint="fingerprint_{}".format(i),
+                    fingerprint=fingerprint,
+                    source=detail["source"][0],
+                    service=detail.get("service"),
+                    severity=detail.get("severity"),
+                    status=detail.get("status", "firing"),
+                    name=detail.get("name"),
+                    last_received=str(random_timestamp),
+                )
+            )
+            enrichments.append(
+                AlertEnrichment(
+                    tenant_id=SINGLE_TENANT_UUID,
+                    alert_fingerprint=fingerprint,
+                    enrichments=event,
                 )
             )
         db_session.add_all(alerts)
+        db_session.add_all(enrichments)
         db_session.commit()
 
         existed_last_alerts = db_session.query(LastAlert).all()
@@ -834,7 +858,7 @@ def create_alert(db_session):
             import json
             details_copy = details.copy() if details else {}
             # remove dynamic fields that shouldn't affect fingerprint
-            details_copy.pop("lastReceived", None)
+            details_copy.pop("last_received", None)
             details_copy.pop("id", None)
             fingerprint = hashlib.md5(
                 json.dumps(details_copy, sort_keys=True).encode()
@@ -846,12 +870,12 @@ def create_alert(db_session):
             if details and "source" in details and details["source"]
             else "test"
         )
-        last_received = details.pop("lastReceived", timestamp.isoformat())
+        last_received = details.pop("last_received", details.pop("last_received", timestamp.isoformat()))
 
         event_data = {
             "id": str(uuid.uuid4()),
             "name": random_name,
-            "lastReceived": last_received,
+            "last_received": last_received,
             "status": status.value,
             "fingerprint": fingerprint,
             **details,
@@ -887,7 +911,6 @@ def create_alert(db_session):
                 tenant_id=tenant_id,
                 provider_type=provider_type,
                 provider_id="test",
-                extra_data=event_data,
                 fingerprint=fingerprint,
                 timestamp=timestamp,
                 # Flattened columns
@@ -899,12 +922,35 @@ def create_alert(db_session):
                 application=event_data.get("application"),
                 service=event_data.get("service"),
                 name=event_data.get("name"),
-                startedAt=timestamp.isoformat() if timestamp else None,
-                lastReceived=timestamp.isoformat() if timestamp else None,
+                started_at=timestamp.isoformat() if timestamp else None,
+                last_received=timestamp.isoformat() if timestamp else None,
             )
             db_session.add(alert)
             db_session.commit()
             alert_id = alert.id
+
+            # Persist non-native fields (labels, annotations, etc.) via AlertEnrichment
+            # so the rest of the stack (CEL filters, DTO conversion) can read them back.
+            existing_enrichment = (
+                db_session.query(AlertEnrichment)
+                .filter(
+                    AlertEnrichment.tenant_id == tenant_id,
+                    AlertEnrichment.alert_fingerprint == fingerprint,
+                )
+                .first()
+            )
+            if existing_enrichment:
+                merged = {**existing_enrichment.enrichments, **event_data}
+                existing_enrichment.enrichments = merged
+                db_session.add(existing_enrichment)
+            else:
+                enrichment = AlertEnrichment(
+                    tenant_id=tenant_id,
+                    alert_fingerprint=fingerprint,
+                    enrichments=event_data,
+                )
+                db_session.add(enrichment)
+            db_session.commit()
         else:
             alert_id = None
 

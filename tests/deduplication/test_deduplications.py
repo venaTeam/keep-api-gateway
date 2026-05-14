@@ -905,7 +905,7 @@ def test_full_deduplication_last_received(db_session, create_alert):
             "service",
         ],
         full_deduplication=True,
-        ignore_fields=["fingerprint", "lastReceived", "id"],
+        ignore_fields=["fingerprint", "last_received", "id"],
         is_provisioned=True,
         tenant_id=SINGLE_TENANT_UUID,
         description="test",
@@ -933,7 +933,7 @@ def test_full_deduplication_last_received(db_session, create_alert):
     alerts_dto = convert_db_alerts_to_dto_alerts(alerts)
 
     assert (
-        alerts_dto[0].lastReceived
+        alerts_dto[0].last_received
         == dt1.astimezone(pytz.UTC).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
     )
 
@@ -949,7 +949,7 @@ def test_full_deduplication_last_received(db_session, create_alert):
     alerts_dto = convert_db_alerts_to_dto_alerts(alerts)
 
     assert (
-        alerts_dto[0].lastReceived
+        alerts_dto[0].last_received
         == dt2.astimezone(pytz.UTC).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
     )
 

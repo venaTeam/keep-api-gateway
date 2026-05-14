@@ -99,10 +99,6 @@ class AlertDto(BaseModel):
     )
     incident: str | None = None
 
-    class Config:
-        allow_population_by_field_name = True
-        extra = Extra.ignore
-
     @validator("id", pre=True)
     def parse_id(cls, v):
         if v is not None:
@@ -262,7 +258,7 @@ class AlertDto(BaseModel):
             values["status"] = AlertStatus.FIRING
 
         # this is code duplication of enrichment_helpers.py and should be refactored
-        last_received = values.get("last_received", None)
+        last_received = values.get("last_received") or values.get("lastReceived")
         if not last_received:
             last_received = datetime.datetime.now(datetime.timezone.utc).isoformat()
             values["last_received"] = last_received
@@ -297,6 +293,7 @@ class AlertDto(BaseModel):
         return values
 
     class Config:
+        allow_population_by_field_name = True
         extra = Extra.allow
         schema_extra = {
             "examples": [

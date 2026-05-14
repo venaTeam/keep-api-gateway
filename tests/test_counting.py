@@ -41,7 +41,7 @@ def test_firing_counter_increment():
         status=AlertStatus.FIRING.value,
         source=["test"],
         fingerprint="test-fingerprint",
-        firingCounter=3,
+        firing_counter=3,
     )
 
     # Calculate firing counter
@@ -67,7 +67,7 @@ def test_firing_counter_acknowledged():
         status=AlertStatus.FIRING.value,
         source=["test"],
         fingerprint="test-fingerprint",
-        firingCounter=5,
+        firing_counter=5,
     )
 
     # Calculate firing counter
@@ -94,7 +94,7 @@ def test_firing_counter_previous_list():
             status=AlertStatus.FIRING.value,
             source=["test"],
             fingerprint="test-fingerprint",
-            firingCounter=7,
+            firing_counter=7,
         )
     ]
 
@@ -121,7 +121,7 @@ def test_firing_counter_resolved_to_firing():
         status=AlertStatus.RESOLVED.value,
         source=["test"],
         fingerprint="test-fingerprint",
-        firingCounter=10,
+        firing_counter=10,
     )
 
     # Calculate firing counter
@@ -167,7 +167,7 @@ def test_firing_counter_resolved_status():
         status=AlertStatus.FIRING.value,
         source=["test"],
         fingerprint="test-fingerprint",
-        firingCounter=5,
+        firing_counter=5,
     )
 
     # Calculate firing counter
@@ -194,7 +194,7 @@ def test_firing_counter_multiple_previous_alerts():
             status=AlertStatus.FIRING.value,
             source=["test"],
             fingerprint="test-fingerprint",
-            firingCounter=9,
+            firing_counter=9,
         )
     ]
 
@@ -221,7 +221,7 @@ def test_firing_counter_acknowledged_to_firing():
         status=AlertStatus.ACKNOWLEDGED.value,
         source=["test"],
         fingerprint="test-fingerprint",
-        firingCounter=0,
+        firing_counter=0,
     )
 
     # Calculate firing counter
@@ -292,7 +292,7 @@ def test_unresolved_counter_increment():
         status=AlertStatus.FIRING.value,
         source=["test"],
         fingerprint="test-fingerprint",
-        unresolvedCounter=3,
+        unresolved_counter=3,
     )
 
     # Calculate firing counter
@@ -318,7 +318,7 @@ def test_firing_counter_resolved():
         status=AlertStatus.FIRING.value,
         source=["test"],
         fingerprint="test-fingerprint",
-        unresolvedCounter=5,
+        unresolved_counter=5,
     )
 
     # Calculate firing counter
@@ -345,7 +345,7 @@ def test_unresolved_counter_previous_list():
             status=AlertStatus.FIRING.value,
             source=["test"],
             fingerprint="test-fingerprint",
-            unresolvedCounter=7,
+            unresolved_counter=7,
         )
     ]
 
@@ -372,7 +372,7 @@ def test_unresolved_counter_resolved_to_firing():
         status=AlertStatus.RESOLVED.value,
         source=["test"],
         fingerprint="test-fingerprint",
-        unresolvedCounter=10,
+        unresolved_counter=10,
     )
 
     # Calculate firing counter
@@ -418,7 +418,7 @@ def test_unresolved_counter_resolved_status():
         status=AlertStatus.FIRING.value,
         source=["test"],
         fingerprint="test-fingerprint",
-        unresolvedCounter=5,
+        unresolved_counter=5,
     )
 
     # Calculate firing counter
@@ -445,7 +445,7 @@ def test_unresolved_counter_multiple_previous_alerts():
             status=AlertStatus.FIRING.value,
             source=["test"],
             fingerprint="test-fingerprint",
-            unresolvedCounter=9,
+            unresolved_counter=9,
         )
     ]
 
@@ -472,7 +472,7 @@ def test_unresolved_counter_acknowledged_to_firing():
         status=AlertStatus.ACKNOWLEDGED.value,
         source=["test"],
         fingerprint="test-fingerprint",
-        unresolvedCounter=1,
+        unresolved_counter=1,
     )
 
     # Calculate firing counter
