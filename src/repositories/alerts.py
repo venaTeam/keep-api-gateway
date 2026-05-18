@@ -37,7 +37,7 @@ from src.models.query import QueryDto, SortOptionsDto
 
 logger = logging.getLogger(__name__)
 
-alerts_hard_limit = int(os.environ.get("KEEP_LAST_ALERTS_LIMIT", 50000))
+ALERTS_HARD_LIMIT = int(os.environ.get("KEEP_LAST_ALERTS_LIMIT", 50000))
 
 alert_field_configurations = [
     FieldMappingConfiguration(
@@ -224,7 +224,7 @@ def get_threeshold_query(tenant_id: str):
         .where(LastAlert.tenant_id == tenant_id)
         .order_by(LastAlert.timestamp.desc())
         .limit(1)
-        .offset(alerts_hard_limit - 1)
+        .offset(ALERTS_HARD_LIMIT - 1)
         .scalar_subquery(),
         datetime.datetime.min,
     )
@@ -408,8 +408,8 @@ def query_last_alerts(tenant_id, query: QueryDto) -> list[Alert]:
 
     with Session(engine) as session:
         try:
-            if query_with_defaults.offset + query_with_defaults.limit > alerts_hard_limit:
-                query_with_defaults.limit = alerts_hard_limit - query_with_defaults.offset
+            if query_with_defaults.offset + query_with_defaults.limit > ALERTS_HARD_LIMIT:
+                query_with_defaults.limit = ALERTS_HARD_LIMIT - query_with_defaults.offset
 
             data_query = build_alerts_query(tenant_id=tenant_id, query=query_with_defaults)
             alerts_with_start = session.exec(data_query).all()
