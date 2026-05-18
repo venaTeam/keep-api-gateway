@@ -9,7 +9,7 @@ class SortOptionsDto(BaseModel):
 
 
 class QueryDto(BaseModel):
-    cel: Optional[str]
+    cel: Optional[str] = ""
     limit: Optional[int] = 1000
     offset: Optional[int] = 0
     sort_by: Optional[str]  # must be deprecated because we have sort_options

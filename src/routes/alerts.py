@@ -182,6 +182,39 @@ def fetch_alert_facet_fields(
     )
     return fields
 
+@router.post(
+    path="/query/count",
+    description="Get last alerts count",
+)
+def query_alerts_count(
+    query: QueryDto,
+    authenticated_entity: AuthenticatedEntity = Depends(
+        IdentityManagerFactory.get_auth_verifier(["read:alert"])
+    ),
+):
+    tenant_id = authenticated_entity.tenant_id
+    logger.info(
+        msg="Fetching alerts count from DB",
+        extra={"tenant_id": tenant_id, "cel_expression": query.cel},
+    )
+
+    try:
+        total_count = query_total_alerts_count(tenant_id=tenant_id, query=query)
+        logger.info(
+            msg="Fetched alerts from DB",
+            extra={
+                "tenant_id": tenant_id,
+                "query": query,
+                "total_count": total_count,
+            },
+        )
+        return total_count
+
+    except CelToSqlException as e:
+        logger.exception(f'Error parsing CEL expression "{query.cel}". {str(e)}')
+        raise HTTPException(
+            status_code=400, detail=f"Error parsing CEL expression: {query.cel}"
+        ) from e
 
 @router.post(
     "/query",
@@ -206,7 +239,7 @@ def query_alerts(
     )
 
     try:
-        db_alerts, total_count = query_last_alerts(tenant_id=tenant_id, query=query)
+        db_alerts = query_last_alerts(tenant_id=tenant_id, query=query)
     except CelToSqlException as e:
         logger.exception(f'Error parsing CEL expression "{query.cel}". {str(e)}')
         raise HTTPException(
@@ -222,14 +255,14 @@ def query_alerts(
         extra={
             "tenant_id": tenant_id,
             "query": query,
-            "total_count": total_count,
+            "total_count": len(db_alerts),
         },
     )
 
     return {
         "limit": query.limit,
         "offset": query.offset,
-        "count": total_count,
+        "count": len(db_alerts),
         "results": enriched_alerts_dto,
     }
 
@@ -692,7 +725,7 @@ async def batch_enrich_alerts(
         )
 
         try:
-            db_alerts, total_count = query_last_alerts(
+            db_alerts = query_last_alerts(
                 tenant_id=tenant_id,
                 query=QueryDto(cel=enrich_data.cel),
             )
@@ -713,7 +746,7 @@ async def batch_enrich_alerts(
                 extra={
                     "cel": enrich_data.cel,
                     "tenant_id": tenant_id,
-                    "alert_count": total_count,
+                    "alert_count": len(db_alerts),
                 },
             )
         except CelToSqlException as e:

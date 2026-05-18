@@ -373,29 +373,8 @@ def build_alerts_query(tenant_id, query: QueryDto):
 
     return sql_query
 
-
-def query_last_alerts(tenant_id, query: QueryDto) -> Tuple[list[Alert], int]:
+def query_total_alerts_count(tenant_id, query: QueryDto) -> int:
     query_with_defaults = query.copy()
-
-    # Shahar: this happens when the frontend query builder fails to build a query
-    if query_with_defaults.cel == "1 == 1":
-        logger.warning("Failed to build query for alerts")
-        query_with_defaults.cel = ""
-    if query_with_defaults.limit is None:
-        query_with_defaults.limit = 1000
-    if query_with_defaults.offset is None:
-        query_with_defaults.offset = 0
-    if query_with_defaults.sort_by is not None:
-        query_with_defaults.sort_options = [
-            SortOptionsDto(
-                sort_by=query_with_defaults.sort_by,
-                sort_dir=query_with_defaults.sort_dir,
-            )
-        ]
-    if not query_with_defaults.sort_options:
-        query_with_defaults.sort_options = [
-            SortOptionsDto(sort_by="timestamp", sort_dir="desc")
-        ]
 
     with Session(engine) as session:
         try:
@@ -403,28 +382,42 @@ def query_last_alerts(tenant_id, query: QueryDto) -> Tuple[list[Alert], int]:
                 tenant_id=tenant_id, query=query_with_defaults
             )
             total_count = session.exec(total_count_query).one()[0]
-
-            if not query_with_defaults.limit:
-                return [], total_count
-
-            if query_with_defaults.offset >= alerts_hard_limit:
-                return [], total_count
-
-            if (
-                query_with_defaults.offset + query_with_defaults.limit
-                > alerts_hard_limit
-            ):
-                query_with_defaults.limit = (
-                    alerts_hard_limit - query_with_defaults.offset
-                )
-
-            data_query = build_alerts_query(tenant_id, query_with_defaults)
-            alerts_with_start = session.execute(data_query).all()
+            return total_count
         except OperationalError as e:
             logger.warning(
                 f"Failed to query alerts for query object '{json.dumps(query_with_defaults.dict(exclude_unset=True))}': {e}"
             )
-            return [], 0
+            return 0
+
+
+def query_last_alerts(tenant_id, query: QueryDto) -> list[Alert]:
+    query_with_defaults = query.copy()
+
+    if query_with_defaults.sort_by is not None:
+        query_with_defaults.sort_options = [
+            SortOptionsDto(
+                sort_by=query_with_defaults.sort_by,
+                sort_dir=query_with_defaults.sort_dir,
+            )
+        ]
+
+    if not query_with_defaults.sort_options:
+        query_with_defaults.sort_options = [
+            SortOptionsDto(sort_by="timestamp", sort_dir="desc")
+        ]
+
+    with Session(engine) as session:
+        try:
+            if query_with_defaults.offset + query_with_defaults.limit > alerts_hard_limit:
+                query_with_defaults.limit = alerts_hard_limit - query_with_defaults.offset
+
+            data_query = build_alerts_query(tenant_id=tenant_id, query=query_with_defaults)
+            alerts_with_start = session.exec(data_query).all()
+        except OperationalError as e:
+            logger.warning(
+                f"Failed to query alerts for query object '{json.dumps(query_with_defaults.dict(exclude_unset=True))}': {e}"
+            )
+            return []
 
         # Process results based on dialect
         alerts = []
@@ -438,9 +431,8 @@ def query_last_alerts(tenant_id, query: QueryDto) -> Tuple[list[Alert], int]:
             alert.event["event_id"] = str(alert.id)
             alerts.append(alert)
 
-        return alerts, total_count
-
-
+        return alerts
+        
 def get_alert_facets_data(
     tenant_id: str,
     facet_options_query: FacetOptionsQueryDto,
