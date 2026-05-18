@@ -19,6 +19,7 @@ from src.repositories.alerts import (
     get_alert_facets_data,
     get_alert_potential_facet_fields,
     query_last_alerts,
+    query_total_alerts_count
 )
 from src.repositories.metrics import (
     alert_ingestion_error_total,
@@ -201,7 +202,7 @@ def query_alerts_count(
     try:
         total_count = query_total_alerts_count(tenant_id=tenant_id, query=query)
         logger.info(
-            msg="Fetched alerts from DB",
+            msg="Fetched alerts count from DB",
             extra={
                 "tenant_id": tenant_id,
                 "query": query,

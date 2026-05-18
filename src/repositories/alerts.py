@@ -385,7 +385,7 @@ def query_total_alerts_count(tenant_id, query: QueryDto) -> int:
             return total_count
         except OperationalError as e:
             logger.warning(
-                f"Failed to query alerts for query object '{json.dumps(query_with_defaults.dict(exclude_unset=True))}': {e}"
+                f"Failed to query alerts count for query object '{json.dumps(query_with_defaults.dict(exclude_unset=True))}': {e}"
             )
             return 0
 
