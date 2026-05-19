@@ -1007,7 +1007,7 @@ def list_alerts(info: Info, filter: typing.List[str], export: bool):
 
     # aggregate by fingerprint
     aggregated_alerts = OrderedDict()
-    for alert in sorted(alerts, key=lambda x: x["lastReceived"]):
+    for alert in sorted(alerts, key=lambda x: x["last_received"]):
         if alert["fingerprint"] not in aggregated_alerts:
             aggregated_alerts[alert["fingerprint"]] = alert
 
@@ -1069,7 +1069,7 @@ def list_alerts(info: Info, filter: typing.List[str], export: bool):
                 alert["environment"],
                 alert["service"],
                 alert["source"],
-                alert["lastReceived"],
+                alert["last_received"],
             ]
         )
     print(table)

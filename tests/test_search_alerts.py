@@ -102,9 +102,9 @@ def test_search_sanity2(db_session, setup_alerts):
 
     # compare the results
     sorted_elastic_alerts = sorted(
-        elastic_filtered_alerts, key=lambda x: x.lastReceived
+        elastic_filtered_alerts, key=lambda x: x.last_received
     )
-    sorted_db_alerts = sorted(db_filtered_alerts, key=lambda x: x.lastReceived)
+    sorted_db_alerts = sorted(db_filtered_alerts, key=lambda x: x.last_received)
     assert sorted_elastic_alerts == sorted_db_alerts
 
 
@@ -842,9 +842,9 @@ def test_last_1000(db_session, setup_stress_alerts):
     db_end_time = time.time()
     # check that these are the last 1000 alerts
     assert len(elastic_filtered_alerts) == 1000
-    # check that these ordered by lastReceived
+    # check that these ordered by last_received
     assert (
-        sorted(elastic_filtered_alerts, key=lambda x: x.lastReceived, reverse=True)
+        sorted(elastic_filtered_alerts, key=lambda x: x.last_received, reverse=True)
         == elastic_filtered_alerts
     )
     # compare
@@ -1347,7 +1347,7 @@ def test_alerts_enrichment_in_search(db_session, client, test_app, elastic_clien
         name="Test High Alert",
         status="firing",
         severity="high",
-        lastReceived="2021-01-01T00:00:00Z",
+        last_received="2021-01-01T00:00:00Z",
         source=["test_source"],
         labels={},
     )
@@ -1357,7 +1357,7 @@ def test_alerts_enrichment_in_search(db_session, client, test_app, elastic_clien
         status="firing",
         severity="low",
         fingerprint="test-alert",
-        lastReceived="2021-01-01T00:00:00Z",
+        last_received="2021-01-01T00:00:00Z",
         source=["test_source_low"],
         labels={},
     )

@@ -32,12 +32,32 @@ def preprocess_cel_expression(cel_expression: str) -> str:
             )
             if severity_order is not None:
                 return f"{field_name} {operator} {severity_order}"
+        
+        # Handle source-specific replacement
+        if field_name.lower() == "source":
+             return f"provider_type {operator} {match.group(3)}"
 
         # Return the original match if it's not a severity comparison or if no replacement is necessary
         return match.group(0)
 
     modified_expression = re.sub(
         pattern, replace_matched, cel_expression, flags=re.IGNORECASE
+    )
+
+    # Robust source to provider_type replacement (avoiding quoted strings)
+    modified_expression = re.sub(
+        r"(?<!['\"])\bsource\b(?!['\"])",
+        "provider_type",
+        modified_expression,
+        flags=re.IGNORECASE,
+    )
+
+    # Robust deleted to false replacement (avoiding quoted strings)
+    modified_expression = re.sub(
+        r"(?<!['\"])\bdeleted\b(?!['\"])",
+        "false",
+        modified_expression,
+        flags=re.IGNORECASE,
     )
 
     return modified_expression

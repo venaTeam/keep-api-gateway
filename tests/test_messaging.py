@@ -39,7 +39,7 @@ async def test_kafka_producer_serialization(mock_kafka_producer):
         name="test-alert",
         status=AlertStatus.FIRING,
         severity=AlertSeverity.INFO,
-        lastReceived="2023-01-01T00:00:00.000Z",
+        last_received="2023-01-01T00:00:00.000Z",
         source=["test"]
     )
 

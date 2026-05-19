@@ -1,4 +1,4 @@
-﻿import datetime
+import datetime
 import html
 import json
 import logging
@@ -120,11 +120,13 @@ class EnrichmentsBl:
             self.tenant_id, rule_id, session=self.db_session
         )
 
-        # so we can track the enrichment event
-        alert.event["event_id"] = alert.id
+        alert_payload = alert.dict()
+
+        alert_payload["event_id"] = str(alert.id)
+
         if not rule:
             raise HTTPException(status_code=404, detail="Extraction rule not found")
-        return await self.run_extraction_rules(alert.event, pre=False, rules=[rule])
+        return await self.run_extraction_rules(alert_payload, pre=False, rules=[rule])
 
     async def run_extraction_rules(
         self, event: AlertDto | dict, pre=False, rules: list[ExtractionRule] = None
@@ -628,46 +630,41 @@ class EnrichmentsBl:
         action_description: str,
         dispose_on_new_alert=False,
         audit_enabled=True,
+        produce_event=True,
     ):
         self.logger.debug(
             "enriching multiple fingerprints",
             extra={"fingerprints": fingerprints, "tenant_id": self.tenant_id},
         )
-        # if these enrichments are disposable, manipulate them with a timestamp
-        #   so they can be disposed of later
-        if dispose_on_new_alert:
-            self.logger.info(
-                "Enriching disposable enrichments",
-                extra={"fingerprints": fingerprints, "tenant_id": self.tenant_id},
+        for fingerprint in fingerprints:
+            await self.enrich_entity(
+                fingerprint=fingerprint,
+                enrichments=enrichments,
+                action_type=action_type,
+                action_callee=action_callee,
+                action_description=action_description,
+                dispose_on_new_alert=dispose_on_new_alert,
+                audit_enabled=audit_enabled,
+                produce_event=False,  # Don't produce individual ENRICH events
             )
-            # for every key, add a disposable key with the value and a timestamp
-            disposable_enrichments = {}
-            for key, value in enrichments.items():
-                disposable_enrichments[f"disposable_{key}"] = {
-                    "value": value,
-                    "timestamp": datetime.datetime.now(
-                        tz=datetime.timezone.utc
-                    ).timestamp(),  # timestamp for disposal [for future use]
-                }
-            enrichments.update(disposable_enrichments)
-            
-        # Publish to kafka
-        safe_event = enrichments.copy()
-        safe_event.update({
-            "action_type": action_type.value,
-            "action_callee": action_callee,
-            "action_description": action_description,
-            "audit_enabled": audit_enabled,
-        })
-        
-        await self.event_producer.produce(
-            event=safe_event,
-            event_type=EventType.BATCH_ENRICH,
-            tenant_id=self.tenant_id,
-            provider_type="keep",
-            provider_id="keep",
-            fingerprint=fingerprints,
-        )
+
+        if produce_event:
+            # Produce a single BATCH_ENRICH event for the entire batch
+            safe_event = enrichments.copy()
+            safe_event.update({
+                "action_type": action_type.value,
+                "action_callee": action_callee,
+                "action_description": action_description,
+                "audit_enabled": False,  # Audit already created locally by API Gateway
+            })
+            await self.event_producer.produce(
+                event=safe_event,
+                event_type=EventType.BATCH_ENRICH,
+                tenant_id=self.tenant_id,
+                provider_type="keep",
+                provider_id="keep",
+                fingerprint=fingerprints,  # List of fingerprints
+            )
 
 
     async def disposable_enrich_entity(
@@ -688,6 +685,7 @@ class EnrichmentsBl:
             "action_description": action_description,
             "should_exist": should_exist,
             "force": force,
+            "produce_event": True,
         }
 
         await self.enrich_entity(
@@ -707,6 +705,7 @@ class EnrichmentsBl:
         )
         # For elastic we do not save instance-level enrichments
         common_kwargs["should_exist"] = False
+        common_kwargs["produce_event"] = False
         await self.enrich_entity(fingerprint=alert_id, audit_enabled=False, **common_kwargs)
 
     async def enrich_entity(
@@ -720,6 +719,7 @@ class EnrichmentsBl:
         dispose_on_new_alert=False,
         force=False,
         audit_enabled=True,
+        produce_event=True,
     ):
         """
         should_exist = False only in mapping where the alert is not yet in elastic
@@ -754,25 +754,38 @@ class EnrichmentsBl:
                 }
             enrichments.update(disposable_enrichments)
 
+        # Write enrichment to DB (synchronous, ensures data is persisted immediately)
+        enrich_alert_db(
+            self.tenant_id,
+            fingerprint,
+            enrichments,
+            action_callee=action_callee,
+            action_type=action_type,
+            action_description=action_description,
+            session=self.db_session,
+            force=force,
+            audit_enabled=audit_enabled,
+        )
 
         # Publish to kafka
-        safe_event = enrichments.copy()
-        safe_event.update({
-            "action_type": action_type.value,
-            "action_callee": action_callee,
-            "action_description": action_description,
-            "audit_enabled": audit_enabled,
-            "force": force,
-        })
-        
-        await self.event_producer.produce(
-            event=safe_event,
-            event_type=EventType.ENRICH,
-            tenant_id=self.tenant_id,
-            provider_type="keep",
-            provider_id="keep",
-            fingerprint=fingerprint,
-        )
+        if produce_event:
+            safe_event = enrichments.copy()
+            safe_event.update({
+                "action_type": action_type.value,
+                "action_callee": action_callee,
+                "action_description": action_description,
+                "audit_enabled": False,  # Audit already created locally by API Gateway
+                "force": force,
+            })
+            
+            await self.event_producer.produce(
+                event=safe_event,
+                event_type=EventType.ENRICH,
+                tenant_id=self.tenant_id,
+                provider_type="keep",
+                provider_id="keep",
+                fingerprint=fingerprint,
+            )
 
 
         self.logger.debug(
@@ -880,9 +893,9 @@ class EnrichmentsBl:
             # Ensure alerts are explicitly marked as not dismissed after disposal.
             # Some alert payloads may still carry the dismissed flag, so we reset it here.
             new_enrichments["dismissed"] = False
-        if "dismissUntil" in disposed_keys:
+        if "dismiss_until" in disposed_keys:
             # Clear any lingering dismissal deadline metadata.
-            new_enrichments["dismissUntil"] = None
+            new_enrichments["dismiss_until"] = None
         if disposed:
             enrich_alert_db(
                 self.tenant_id,
@@ -906,13 +919,13 @@ class EnrichmentsBl:
                     ).first()
 
                     if latest_alert:
-                        alert_data = latest_alert.event.copy()
+                        alert_data = latest_alert.dict()
                         alert_data.update(
                             {
                                 key: value
                                 for key, value in new_enrichments.items()
                                 if value is not None
-                                or key in {"dismissed", "dismissUntil"}
+                                or key in {"dismissed", "dismiss_until"}
                             }
                         )
                         alert_dto = AlertDto(**alert_data)
@@ -996,7 +1009,7 @@ class EnrichmentsBl:
                     ).first()
 
                     if latest_alert:
-                        alert_data = latest_alert.event.copy()
+                        alert_data = latest_alert.dict()
                         alert_data.update(new_enrichments)
                         alert_dto = AlertDto(**alert_data)
                         self.elastic_client.index_alert(alert_dto)
