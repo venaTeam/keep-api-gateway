@@ -1454,7 +1454,7 @@ def test_alerts_enrichment_in_search(db_session, client, test_app, elastic_clien
 
 
 @freezegun.freeze_time("2025-06-18 17:51:23+02:00")
-@patch("src.services.search_engine.query_last_alerts", return_value=([], 0))
+@patch("src.services.search_engine.query_last_alerts", return_value=[])
 @pytest.mark.parametrize(
     "cel_query, timeframe, limit, expected_cel",
     [

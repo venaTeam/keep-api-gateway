@@ -113,7 +113,7 @@ class SearchEngine:
             cel_query = " && ".join(f"({cel})" for cel in cel_list if cel)
 
         self.logger.info("Searching alerts by CEL")
-        db_alerts, _ = query_last_alerts(
+        db_alerts = query_last_alerts(
             tenant_id=self.tenant_id,
             query=QueryDto(
                 cel=cel_query,
