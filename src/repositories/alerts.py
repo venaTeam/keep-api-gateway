@@ -69,7 +69,7 @@ alert_field_configurations = [
         data_type=DataType.STRING,
     ),
     FieldMappingConfiguration(
-        map_from_pattern="startedAt",
+        map_from_pattern="started_at",
         map_to="lastalert.first_timestamp",
         data_type=DataType.DATETIME,
     ),
@@ -96,67 +96,79 @@ alert_field_configurations = [
         data_type=DataType.STRING,
     ),
     FieldMappingConfiguration(
-        map_from_pattern="severity",
+        map_from_pattern="severity_order",
         map_to=[
-            "JSON(alertenrichment.enrichments).*",
-            "JSON(alert.event).*",
+            "CASE alert.severity "
+            "WHEN 'critical' THEN 5 "
+            "WHEN 'high' THEN 4 "
+            "WHEN 'warning' THEN 3 "
+            "WHEN 'info' THEN 2 "
+            "WHEN 'low' THEN 1 "
+            "ELSE 0 END"
         ],
-        enum_values=[
+        data_type=DataType.INTEGER,
+    ),
+    FieldMappingConfiguration(
+        map_from_pattern="labels.severity",
+        map_to=[
+            "alert.severity",
+            "JSON(alertenrichment.enrichments).labels.severity",
+        ],
+        data_type=DataType.STRING,
+    ),
+]
+
+_INFRA_COLUMNS = {
+    "id", "tenant_id", "timestamp", "provider_type", "provider_id",
+    "fingerprint", "alert_hash", "source"
+}
+
+_SPECIAL_FIELDS = {
+    "severity": {
+        "data_type": DataType.STRING,
+        "enum_values": [
             severity.value
             for severity in sorted(
                 [severity for _, severity in enumerate(AlertSeverity)],
                 key=lambda s: s.order,
             )
         ],
-        data_type=DataType.STRING,
-    ),
-    FieldMappingConfiguration(
-        map_from_pattern="lastReceived",
-        map_to=[
-            "JSON(alertenrichment.enrichments).*",
-            "JSON(alert.event).*",
-        ],
-        data_type=DataType.DATETIME,
-    ),
-    FieldMappingConfiguration(
-        map_from_pattern="status",
-        map_to=[
-            "JSON(alertenrichment.enrichments).*",
-            "JSON(alert.event).*",
-        ],
-        enum_values=list(reversed([item.value for _, item in enumerate(AlertStatus)])),
-        data_type=DataType.STRING,
-    ),
-    FieldMappingConfiguration(
-        map_from_pattern="dismissed",
-        map_to=["JSON(alertenrichment.enrichments).*"],
-        data_type=DataType.BOOLEAN,
-    ),
-    FieldMappingConfiguration(
-        map_from_pattern="firingCounter",
-        map_to=[
-            "JSON(alertenrichment.enrichments).*",
-            "JSON(alert.event).*",
-        ],
-        data_type=DataType.INTEGER,
-    ),
-    FieldMappingConfiguration(
-        map_from_pattern="unresolvedCounter",
-        map_to=[
-            "JSON(alertenrichment.enrichments).*",
-            "JSON(alert.event).*",
-        ],
-        data_type=DataType.INTEGER,
-    ),
+    },
+    "status": {
+        "data_type": DataType.STRING,
+        "enum_values": list(reversed([item.value for _, item in enumerate(AlertStatus)])),
+    },
+    "last_received": {"data_type": DataType.DATETIME},
+    "dismissed": {"data_type": DataType.BOOLEAN},
+    "firing_counter": {"data_type": DataType.INTEGER},
+    "unresolved_counter": {"data_type": DataType.INTEGER},
+}
+
+for column in Alert.__table__.columns:
+    if column.name in _INFRA_COLUMNS:
+        continue
+    special = _SPECIAL_FIELDS.get(column.name, {})
+    alert_field_configurations.append(
+        FieldMappingConfiguration(
+            map_from_pattern=column.name,
+            map_to=[
+                "JSON(alertenrichment.enrichments).*",
+                f"alert.{column.name}",
+            ],
+            data_type=special.get("data_type", DataType.STRING),
+            enum_values=special.get("enum_values"),
+        )
+    )
+
+alert_field_configurations.append(
     FieldMappingConfiguration(
         map_from_pattern="*",
         map_to=[
             "JSON(alertenrichment.enrichments).*",
-            "JSON(alert.event).*",
         ],
         data_type=DataType.STRING,
-    ),
-]
+    )
+)
 
 # Copies the same configuration as above, but adds the "alert." prefix to each entry in map_from_pattern.
 # This allows users to write queries using dictionary-style field access, like:
@@ -353,7 +365,7 @@ def build_alerts_query(tenant_id, query: QueryDto):
         select_args=[
             Alert,
             AlertEnrichment,
-            LastAlert.first_timestamp.label("startedAt"),
+            LastAlert.first_timestamp.label("started_at"),
         ]
         + distinct_columns,
         cel=query.cel,
@@ -431,11 +443,8 @@ def query_last_alerts(tenant_id, query: QueryDto) -> Tuple[list[Alert], int]:
         for alert_data in alerts_with_start:
             alert: Alert = alert_data[0]
             alert.alert_enrichment = alert_data[1]
-            if not alert.event.get("startedAt"):
-                alert.event["startedAt"] = str(alert_data[2])
-            else:
-                alert.event["firstTimestamp"] = str(alert_data[2])
-            alert.event["event_id"] = str(alert.id)
+            if not alert.started_at:
+                alert.started_at = str(alert_data[2])
             alerts.append(alert)
 
         return alerts, total_count

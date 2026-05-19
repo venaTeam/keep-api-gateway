@@ -138,7 +138,8 @@ class KeepProvider(BaseProvider):
                 for alert in db_alerts:
                     if fingerprints.get(alert.fingerprint) and distinct is True:
                         continue
-                    alert_event = alert.event
+                    alert_event = alert.dict()
+
                     if alert.alert_enrichment:
                         alert_event["enrichments"] = alert.alert_enrichment.enrichments
                     alerts.append(alert_event)
@@ -168,9 +169,9 @@ class KeepProvider(BaseProvider):
         alert = AlertDto(
             name=kwargs["name"],
             status=kwargs.get("status"),
-            lastReceived=kwargs.get("lastReceived"),
+            last_received=kwargs.get("last_received"),
             environment=kwargs.get("environment", "undefined"),
-            duplicateReason=kwargs.get("duplicateReason"),
+            duplicate_reason=kwargs.get("duplicate_reason"),
             service=kwargs.get("service"),
             message=kwargs.get("message"),
             description=kwargs.get("description"),
@@ -255,13 +256,13 @@ class KeepProvider(BaseProvider):
                     # TODO: keep_firing_for logic
                     # Alert no longer exists, transition to RESOLVED
                     curr_alert.status = AlertStatus.RESOLVED
-                    curr_alert.lastReceived = datetime.now(timezone.utc).isoformat()
+                    curr_alert.last_received = datetime.now(timezone.utc).isoformat()
                     alerts_to_notify.append(curr_alert)
                     self.logger.info(
                         "Alert resolved",
                         extra={
                             "fingerprint": fingerprint,
-                            "last_received": curr_alert.lastReceived,
+                            "last_received": curr_alert.last_received,
                         },
                     )
 
@@ -277,25 +278,25 @@ class KeepProvider(BaseProvider):
                     # If PENDING alerts are not triggered, make them RESOLVED
                     # TODO: maybe INACTIVE? but we don't have this status yet
                     curr_alert.status = AlertStatus.RESOLVED
-                    curr_alert.lastReceived = datetime.now(timezone.utc).isoformat()
+                    curr_alert.last_received = datetime.now(timezone.utc).isoformat()
                     alerts_to_notify.append(curr_alert)
                     self.logger.info(
                         "Pending alert resolved",
                         extra={
                             "fingerprint": fingerprint,
-                            "last_received": curr_alert.lastReceived,
+                            "last_received": curr_alert.last_received,
                         },
                     )
                 else:
                     # Check if should transition to FIRING
                     if not hasattr(curr_alert, "activeAt"):
                         # This shouldn't happen but handle it gracefully
-                        curr_alert.activeAt = curr_alert.lastReceived
+                        curr_alert.activeAt = curr_alert.last_received
                         self.logger.debug(
-                            "Alert missing activeAt, using lastReceived",
+                            "Alert missing activeAt, using last_received",
                             extra={
                                 "fingerprint": fingerprint,
-                                "activeAt": curr_alert.lastReceived,
+                                "activeAt": curr_alert.last_received,
                             },
                         )
 
@@ -320,7 +321,7 @@ class KeepProvider(BaseProvider):
                     else:
                         raise ValueError(f"Invalid duration unit: {unit}")
 
-                    curr_alert.lastReceived = datetime.now(timezone.utc).isoformat()
+                    curr_alert.last_received = datetime.now(timezone.utc).isoformat()
                     if now - activeAt >= duration:
                         curr_alert.status = AlertStatus.FIRING
                         self.logger.info(
@@ -330,7 +331,7 @@ class KeepProvider(BaseProvider):
                                 "duration_elapsed": str(now - activeAt),
                             },
                         )
-                    # Keep pending, update lastReceived
+                    # Keep pending, update last_received
                     else:
                         curr_alert.status = AlertStatus.PENDING
                         self.logger.debug(
@@ -352,13 +353,13 @@ class KeepProvider(BaseProvider):
                 else:
                     # if its resolved and with _for, then it first need to be pending
                     curr_alert.status = AlertStatus.PENDING
-                    curr_alert.lastReceived = datetime.now(timezone.utc).isoformat()
+                    curr_alert.last_received = datetime.now(timezone.utc).isoformat()
                     alerts_to_notify.append(curr_alert)
                     self.logger.info(
                         "Resolved alert back to pending",
                         extra={
                             "fingerprint": fingerprint,
-                            "last_received": curr_alert.lastReceived,
+                            "last_received": curr_alert.last_received,
                         },
                     )
 
@@ -433,13 +434,13 @@ class KeepProvider(BaseProvider):
                 if not alert_still_exists:
                     # Alert no longer exists, transition to RESOLVED
                     curr_alert.status = AlertStatus.RESOLVED
-                    curr_alert.lastReceived = datetime.now(timezone.utc).isoformat()
+                    curr_alert.last_received = datetime.now(timezone.utc).isoformat()
                     alerts_to_notify.append(curr_alert)
                     self.logger.info(
                         "Alert resolved",
                         extra={
                             "fingerprint": fingerprint,
-                            "last_received": curr_alert.lastReceived,
+                            "last_received": curr_alert.last_received,
                         },
                     )
 
@@ -450,7 +451,7 @@ class KeepProvider(BaseProvider):
                 "New alert firing",
                 extra={
                     "fingerprint": fingerprint,
-                    "last_received": new_alert.lastReceived,
+                    "last_received": new_alert.last_received,
                 },
             )
 

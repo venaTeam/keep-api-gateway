@@ -2,7 +2,7 @@ import enum
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, conint, constr
+from pydantic import BaseModel, conint, constr, validator
 from sqlalchemy import UniqueConstraint
 from sqlmodel import JSON, Column, Field, Relationship, SQLModel
 
@@ -114,6 +114,12 @@ class PresetDto(BaseModel, extra="ignore"):
     # static presets
     static: Optional[bool] = Field(default=False)
     tags: List[TagDto] = []
+ 
+    @validator("options", "tags", pre=True)
+    def ensure_list(cls, v):
+        if v is None:
+            return []
+        return v
 
     @property
     def cel_query(self) -> str:

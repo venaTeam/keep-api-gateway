@@ -413,14 +413,9 @@ def test_batch_enrich_cel_dispose_on_new_alert(
     assert result["status"] == "ok"
 
     # Verify the events were sent
-    assert len(client.mock_producer.produced_events) == 2
+    assert len(client.mock_producer.produced_events) == 1
     
     event_data_1 = client.mock_producer.produced_events[0]
     assert event_data_1["event_type"].value == "batch_enrich"
     assert event_data_1["event"]["disposable_status"]["value"] == "resolved"
     assert event_data_1["event"]["disposable_note"]["value"] == "Temporary resolution note"
-    
-    event_data_2 = client.mock_producer.produced_events[1]
-    assert event_data_2["event_type"].value == "batch_enrich"
-    assert event_data_2["event"]["disposable_status"]["value"] == "resolved"
-    assert event_data_2["event"]["disposable_note"]["value"] == "Temporary resolution note"

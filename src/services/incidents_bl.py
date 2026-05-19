@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import logging
 import os
 import pathlib
@@ -154,9 +154,8 @@ class IncidentBl:
             },
         )
         self.__postprocess_alerts_change(incident, alert_fingerprints)
-        await self.__generate_summary(incident_id, incident)
         self.logger.info(
-            "Summary generated",
+            "Alerts added and postprocessed for incident",
             extra={
                 "incident_id": incident_id,
                 "alert_fingerprints": alert_fingerprints,
