@@ -61,40 +61,42 @@ _UPDATE_SQL = text(
 
 
 def upgrade() -> None:
-    conn = op.get_bind()
-    if conn.dialect.name != "postgresql":
+    if op.get_bind().dialect.name != "postgresql":
         return
-    t0, f0 = "", ""
-    while True:
-        rows = conn.execute(
-            _NEXT_KEY_SQL, {"t0": t0, "f0": f0, "batch": BATCH_SIZE}
-        ).fetchall()
-        if not rows:
-            break
-        t1, f1 = rows[-1][0], rows[-1][1]
-        conn.execute(_UPDATE_SQL, {"t0": t0, "f0": f0, "t1": t1, "f1": f1})
-        conn.commit()
-        t0, f0 = t1, f1
+    # Run batches inside an autocommit block: each statement commits
+    # incrementally (NF5, live-table safe) without the manual conn.commit()
+    # that would corrupt Alembic's own transaction / version bookkeeping.
+    with op.get_context().autocommit_block():
+        conn = op.get_bind()
+        t0, f0 = "", ""
+        while True:
+            rows = conn.execute(
+                _NEXT_KEY_SQL, {"t0": t0, "f0": f0, "batch": BATCH_SIZE}
+            ).fetchall()
+            if not rows:
+                break
+            t1, f1 = rows[-1][0], rows[-1][1]
+            conn.execute(_UPDATE_SQL, {"t0": t0, "f0": f0, "t1": t1, "f1": f1})
+            t0, f0 = t1, f1
 
 
 def downgrade() -> None:
     # Data-only backfill; reset the copied columns to NULL / default.
-    conn = op.get_bind()
-    if conn.dialect.name != "postgresql":
+    if op.get_bind().dialect.name != "postgresql":
         return
-    conn.execute(
-        text(
-            """
-            UPDATE lastalert SET
-                last_received = NULL,
-                firing_counter = 0,
-                unresolved_counter = 0,
-                started_at = NULL,
-                firing_start_time = NULL,
-                firing_start_time_since_last_resolved = NULL,
-                assignee = NULL,
-                note = NULL
-            """
+    with op.get_context().autocommit_block():
+        op.get_bind().execute(
+            text(
+                """
+                UPDATE lastalert SET
+                    last_received = NULL,
+                    firing_counter = 0,
+                    unresolved_counter = 0,
+                    started_at = NULL,
+                    firing_start_time = NULL,
+                    firing_start_time_since_last_resolved = NULL,
+                    assignee = NULL,
+                    note = NULL
+                """
+            )
         )
-    )
-    conn.commit()

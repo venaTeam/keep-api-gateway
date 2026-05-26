@@ -21,7 +21,8 @@ JSONB alertenrichment.enrichments per fingerprint:
 
 Notes:
   - jsonb_exists(col, key) is used instead of the ``?`` operator because ``?``
-    collides with DBAPI parameter parsing.
+    collides with DBAPI parameter parsing. enrichments is cast ``::jsonb`` since
+    some existing DBs store the column as ``json`` (jsonb_exists requires jsonb).
   - Incident-enrichment rows (UUID-keyed alert_fingerprint matching no lastalert)
     update nothing -> no incident data migration needed (feature unused).
   - Keyset pagination over id::text keeps batching agnostic to UUID storage.
@@ -53,26 +54,26 @@ _UPDATE_SQL = text(
     """
     UPDATE lastalert la SET
         status = CASE
-            WHEN jsonb_exists(ae.enrichments, 'status') THEN ae.enrichments->>'status'
-            WHEN jsonb_exists(ae.enrichments, 'dismissUntil')
+            WHEN jsonb_exists(ae.enrichments::jsonb,'status') THEN ae.enrichments->>'status'
+            WHEN jsonb_exists(ae.enrichments::jsonb,'dismissUntil')
                  AND COALESCE(ae.enrichments->>'dismissUntil', '') <> '' THEN 'suppressed'
             WHEN COALESCE(ae.enrichments->>'dismissed', '') = 'true' THEN 'suppressed'
             ELSE la.status
         END,
         dismiss_mode = CASE
-            WHEN jsonb_exists(ae.enrichments, 'dismissUntil')
+            WHEN jsonb_exists(ae.enrichments::jsonb,'dismissUntil')
                  AND COALESCE(ae.enrichments->>'dismissUntil', '') <> '' THEN 'dismiss_until'
             WHEN COALESCE(ae.enrichments->>'dismissed', '') = 'true' THEN 'permanent'
             ELSE la.dismiss_mode
         END,
         dismissed_until = CASE
-            WHEN jsonb_exists(ae.enrichments, 'dismissUntil')
+            WHEN jsonb_exists(ae.enrichments::jsonb,'dismissUntil')
                  AND ae.enrichments->>'dismissUntil' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
                 THEN (ae.enrichments->>'dismissUntil')::timestamptz
             ELSE la.dismissed_until
         END,
         assignee = CASE
-            WHEN jsonb_exists(ae.enrichments, 'assignee') THEN ae.enrichments->>'assignee'
+            WHEN jsonb_exists(ae.enrichments::jsonb,'assignee') THEN ae.enrichments->>'assignee'
             ELSE la.assignee
         END,
         note = CASE
@@ -89,18 +90,22 @@ _UPDATE_SQL = text(
 
 
 def upgrade() -> None:
-    conn = op.get_bind()
-    if conn.dialect.name != "postgresql":
+    if op.get_bind().dialect.name != "postgresql":
         return
-    c0 = ""
-    while True:
-        rows = conn.execute(_NEXT_KEY_SQL, {"c0": c0, "batch": BATCH_SIZE}).fetchall()
-        if not rows:
-            break
-        c1 = rows[-1][0]
-        conn.execute(_UPDATE_SQL, {"c0": c0, "c1": c1})
-        conn.commit()
-        c0 = c1
+    # Autocommit block: batches commit incrementally (NF5) without the manual
+    # conn.commit() that would corrupt Alembic's version bookkeeping.
+    with op.get_context().autocommit_block():
+        conn = op.get_bind()
+        c0 = ""
+        while True:
+            rows = conn.execute(
+                _NEXT_KEY_SQL, {"c0": c0, "batch": BATCH_SIZE}
+            ).fetchall()
+            if not rows:
+                break
+            c1 = rows[-1][0]
+            conn.execute(_UPDATE_SQL, {"c0": c0, "c1": c1})
+            c0 = c1
 
 
 def downgrade() -> None:
