@@ -197,6 +197,12 @@ class Alert(SQLModel, table=True):
     # removed — enrichment state now lives in typed LastAlert columns.
 
     _incidents: List[Incident] = PrivateAttr(default_factory=list)
+    # Phase 2: optional carrier for the per-fingerprint LastAlert row (user state +
+    # relocated tracking) and the episode "started_at" marker (= LastAlert.first_timestamp),
+    # attached by the query layer so the DTO builder can read typed columns without
+    # a second fetch.
+    _last_alert: object = PrivateAttr(default=None)
+    _started_at: str | None = PrivateAttr(default=None)
 
     __table_args__ = (
         Index(
