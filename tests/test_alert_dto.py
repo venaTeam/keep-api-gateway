@@ -189,18 +189,24 @@ def test_alert_started_at(db_session, create_alert, client, test_app):
     # The API might return it with T or space, and precision might vary
     assert alerts[0]["startedAt"].replace("T", " ").startswith(dt.isoformat(sep=" ")[:19])
 
+    # Phase 2: `started_at` is no longer a settable per-occurrence provider field.
+    # The DTO `startedAt` is the episode marker = LastAlert.first_timestamp (the
+    # first time this fingerprint fired), so it tracks the occurrence timestamp,
+    # not any caller-provided `started_at`.
     create_alert(
         "Something went wrong again",
         AlertStatus.FIRING,
-        datetime.utcnow(),
-        {"severity": AlertSeverity.CRITICAL.value, "started_at": dt2.isoformat()},
+        dt2,
+        {"severity": AlertSeverity.CRITICAL.value},
     )
 
     alerts = client.get("/alerts", headers={"x-api-key": "some-api-key"}).json()
 
     assert len(alerts) == 2
     assert alerts[0]["fingerprint"] == "Something went wrong again"
-    assert alerts[0]["startedAt"] == dt2.isoformat()
+    assert alerts[0]["startedAt"].replace("T", " ").startswith(
+        dt2.isoformat(sep=" ")[:19]
+    )
 
 
 def test_alert_dismiss_until_expiry():

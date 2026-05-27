@@ -663,8 +663,12 @@ class EnrichmentsBl:
             )
 
         if produce_event:
-            # Produce a single BATCH_ENRICH event for the entire batch
-            safe_event = enrichments.copy()
+            # Produce a single BATCH_ENRICH event for the entire batch. Phase 2:
+            # propagate the typed status_disposable flag (from dispose_on_new_alert)
+            # so the event-handler consumer writes the same typed columns.
+            safe_event = self._apply_dispose_on_new_alert(
+                enrichments, dispose_on_new_alert
+            ).copy()
             safe_event.update({
                 "action_type": action_type.value,
                 "action_callee": action_callee,

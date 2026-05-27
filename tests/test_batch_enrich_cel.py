@@ -166,12 +166,14 @@ def test_batch_enrich_cel_labels(
         },
     )
 
-    # Enrich alerts from us-east-1 region
+    # Phase 2 (strict schema): dynamic enrichment fields like `labels.region` have
+    # no destination and are discarded, so CEL can only filter typed columns. Filter
+    # by the typed `severity` column instead.
     response = client.post(
         "/alerts/batch_enrich",
         headers={"x-api-key": "some-key"},
         json={
-            "cel": "labels.region == 'us-east-1'",
+            "cel": "severity == 'critical'",
             "enrichments": {
                 "status": "acknowledged",
                 "assignee": "east-team@example.com",
@@ -187,14 +189,14 @@ def test_batch_enrich_cel_labels(
     assert len(client.mock_producer.produced_events) == 1
     event_data = client.mock_producer.produced_events[0]
     assert event_data["event_type"].value == "batch_enrich"
-    
+
     response = client.get("/preset/feed/alerts", headers={"x-api-key": "some-key"})
     alerts = response.json()
-    east_alerts = [a for a in alerts if a.get("labels", {}).get("region") == "us-east-1"]
-    
-    expected_fingerprints = sorted([a["fingerprint"] for a in east_alerts])
+    critical_alerts = [a for a in alerts if a.get("severity") == "critical"]
+
+    expected_fingerprints = sorted([a["fingerprint"] for a in critical_alerts])
     actual_fingerprints = sorted(event_data["fingerprint"])
-    
+
     assert expected_fingerprints == actual_fingerprints
     assert event_data["event"]["status"] == "acknowledged"
     assert event_data["event"]["assignee"] == "east-team@example.com"
@@ -252,12 +254,14 @@ def test_batch_enrich_cel_complex_expression(
         },
     )
 
-    # Enrich critical production API alerts
+    # Phase 2 (strict schema): only typed columns are CEL-filterable; the dynamic
+    # `environment` field is discarded. Filter by the typed `severity` + `service`
+    # columns (matches the two critical/api alerts).
     response = client.post(
         "/alerts/batch_enrich",
         headers={"x-api-key": "some-key"},
         json={
-            "cel": "severity == 'critical' && environment == 'production' && service == 'api'",
+            "cel": "severity == 'critical' && service == 'api'",
             "enrichments": {
                 "status": "acknowledged",
                 "note": "Critical API issue - investigating",
@@ -277,15 +281,14 @@ def test_batch_enrich_cel_complex_expression(
 
     response = client.get("/preset/feed/alerts", headers={"x-api-key": "some-key"})
     alerts = response.json()
-    prod_critical_api = next(
+    critical_api = [
         a
         for a in alerts
-        if a["environment"] == "production"
-        and a["severity"] == "critical"
-        and a["service"] == "api"
-    )
+        if a["severity"] == "critical" and a["service"] == "api"
+    ]
 
-    assert event_data["fingerprint"] == [prod_critical_api["fingerprint"]]
+    expected_fingerprints = sorted(a["fingerprint"] for a in critical_api)
+    assert sorted(event_data["fingerprint"]) == expected_fingerprints
     assert event_data["event"]["status"] == "acknowledged"
     assert event_data["event"]["note"] == "Critical API issue - investigating"
     assert event_data["event"]["assignee"] == "api-team@example.com"
@@ -417,5 +420,9 @@ def test_batch_enrich_cel_dispose_on_new_alert(
     
     event_data_1 = client.mock_producer.produced_events[0]
     assert event_data_1["event_type"].value == "batch_enrich"
-    assert event_data_1["event"]["disposable_status"]["value"] == "resolved"
-    assert event_data_1["event"]["disposable_note"]["value"] == "Temporary resolution note"
+    # Phase 2: "dispose on new alert" is now the typed status_disposable flag
+    # (cleared on the next non-resolved re-fire in set_last_alert) — no more
+    # disposable_* JSONB wrappers.
+    assert event_data_1["event"]["status"] == "resolved"
+    assert event_data_1["event"]["note"] == "Temporary resolution note"
+    assert event_data_1["event"]["status_disposable"] is True

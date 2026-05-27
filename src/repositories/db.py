@@ -877,8 +877,11 @@ def get_last_alerts(
         for alert_data in alerts_with_start:
             alert = alert_data[0]
             started_at = alert_data[1]
-            if not alert.started_at:
-                alert.started_at = str(started_at)
+            # Phase 2: started_at is no longer an Alert column; carry the episode
+            # marker (= LastAlert.first_timestamp) on the private attr the DTO
+            # builder reads.
+            if not getattr(alert, "_started_at", None):
+                alert._started_at = str(started_at)
 
             if with_incidents:
                 incident_id = alert_data[2]
