@@ -330,7 +330,10 @@ def normalize_enrichments(enrichments: dict, strict: bool = True) -> dict:
             else:
                 normalized.setdefault("dismiss_mode", "permanent")
         else:
-            normalized["status"] = None
+            # Undismiss: clear dismiss state; revert status to provider value
+            # unless the caller supplied an explicit status (e.g. change-status
+            # modal moving suppressed -> acknowledged).
+            normalized.setdefault("status", None)
             normalized["dismiss_mode"] = None
             normalized["dismissed_until"] = None
     elif "dismiss_until" in normalized:

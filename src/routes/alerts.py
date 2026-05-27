@@ -118,8 +118,10 @@ def _translate_dismiss_enrichments(enrichments: dict) -> None:
         else:
             enrichments.setdefault("dismiss_mode", "permanent")
     else:
-        # Restoring (undismissing): revert to the provider value.
-        enrichments["status"] = None
+        # Restoring (undismissing): clear the dismiss state. Revert status to the
+        # provider value UNLESS the caller supplied an explicit status (e.g. the
+        # change-status modal moving an alert from suppressed -> acknowledged).
+        enrichments.setdefault("status", None)
         enrichments["dismiss_mode"] = None
         enrichments["dismissed_until"] = None
 
