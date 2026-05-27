@@ -325,13 +325,12 @@ class BaseProvider(metaclass=abc.ABCMeta):
                 # Phase 2: system/workflow write -> discard unknown keys (strict=False)
                 # instead of raising; "dispose_on_new_alert" status -> status_disposable.
                 "strict": False,
+                # Phase 2 (AG-3b): ALERT writes go to typed LastAlert columns;
+                # INCIDENT writes stay on the legacy AlertEnrichment JSONB (kept
+                # until Phase 3). The db layer branches on this selector — strict
+                # / translation / D1 are skipped for the incident branch.
+                "entity_type": entity_type,
             }
-            # PHASE2-TODO: incident enrichment (entity_type == "incident") still flows
-            # through enrich_entity here, which now writes LastAlert typed columns and
-            # will no-op for an incident UUID (no LastAlert row, D1). Incident
-            # enrichment stays on AlertEnrichment until Phase 3 — if workflow-driven
-            # incident enrichment is in use, this path needs to be split to write
-            # AlertEnrichment for incidents. Confirm before relying on it.
 
             if _enrichments:
                 # enrich the alert with _enrichments

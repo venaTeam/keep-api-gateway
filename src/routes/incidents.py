@@ -1025,6 +1025,7 @@ async def enrich_incident(
         action_callee=authenticated_entity.email,
         action_description=f"Incident enriched by {authenticated_entity.email}",
         force=enrichment.force,
+        entity_type="incident",
     )
 
     # Notify clients about incident change
@@ -1081,6 +1082,7 @@ async def unenrich_incident(
         action_callee=authenticated_entity.email,
         action_description=f"Incident un-enriched by {authenticated_entity.email}",
         force=True,
+        entity_type="incident",
     )
 
     # Notify clients about incident change

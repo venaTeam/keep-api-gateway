@@ -404,6 +404,100 @@ class _FingerprintEnrichments:
         self.enrichments = enrichments
 
 
+def _enrich_incident_alertenrichment(
+    session,
+    tenant_id,
+    fingerprint,
+    enrichments,
+    action_type: ActionType,
+    action_callee: str,
+    action_description: str,
+    force=False,
+    audit_enabled=True,
+):
+    """Legacy (pre-Phase-2) AlertEnrichment JSONB upsert for the INCIDENT
+    enrichment path (UUID-keyed `alert_fingerprint`).
+
+    Phase 2 moved ALERT user-state to typed LastAlert columns, but INCIDENT
+    enrichment stays on AlertEnrichment until Phase 3. Incidents keep arbitrary
+    JSONB keys — the dismissed<->dismiss_mode translation, the D1 no-op and the
+    strict unknown-key rejection are intentionally NOT applied here.
+
+    `fingerprint` here is the incident id (a UUID-as-string).
+    """
+    enrichment = get_enrichment_with_session(session, tenant_id, fingerprint)
+    if enrichment:
+        # if force - override existing enrichments. used to dispose enrichments if necessary
+        if force:
+            new_enrichment_data = enrichments
+        else:
+            new_enrichment_data = {**enrichment.enrichments, **enrichments}
+        # Preserve existing note if incoming note is empty/None/not provided,
+        # but only when NOT forcing (force means caller wants a full replace).
+        if not force:
+            incoming_note = enrichments.get("note")
+            if not incoming_note or (
+                isinstance(incoming_note, str) and not incoming_note.strip()
+            ):
+                existing_note = enrichment.enrichments.get("note")
+                if existing_note:
+                    new_enrichment_data["note"] = existing_note
+        # Remove keys with None values (revert a field to its original value)
+        for key, value in list(enrichments.items()):
+            if value is None and key in new_enrichment_data:
+                del new_enrichment_data[key]
+
+        # SQLAlchemy doesn't support partial JSON updates; replace the whole field.
+        stmt = (
+            update(AlertEnrichment)
+            .where(AlertEnrichment.id == enrichment.id)
+            .values(enrichments=new_enrichment_data)
+        )
+        session.execute(stmt)
+        if audit_enabled:
+            audit = AlertAudit(
+                tenant_id=tenant_id,
+                fingerprint=fingerprint,
+                user_id=action_callee,
+                action=action_type.value,
+                description=action_description,
+            )
+            session.add(audit)
+        session.commit()
+        session.refresh(enrichment)
+        return enrichment
+    else:
+        try:
+            alert_enrichment = AlertEnrichment(
+                tenant_id=tenant_id,
+                alert_fingerprint=fingerprint,
+                enrichments=enrichments,
+            )
+            session.add(alert_enrichment)
+            if audit_enabled:
+                audit = AlertAudit(
+                    tenant_id=tenant_id,
+                    fingerprint=fingerprint,
+                    user_id=action_callee,
+                    action=action_type.value,
+                    description=action_description,
+                )
+                session.add(audit)
+            session.commit()
+            return alert_enrichment
+        except IntegrityError:
+            logger.warning(
+                "Duplicate entry error",
+                extra={
+                    "tenant_id": tenant_id,
+                    "fingerprint": fingerprint,
+                    "enrichments": enrichments,
+                },
+            )
+            session.rollback()
+            return get_enrichment_with_session(session, tenant_id, fingerprint)
+
+
 def _enrich_entity(
     session,
     tenant_id,
@@ -415,18 +509,35 @@ def _enrich_entity(
     force=False,
     audit_enabled=True,
     strict=True,
+    entity_type: str = "alert",
 ):
     """
-    Enrich an alert by writing typed columns on its LastAlert row.
+    Enrich an entity (alert or incident).
 
-    Phase 2: user-enrichment state lives on LastAlert typed columns, not on the
-    alertenrichment JSONB. The legacy `dismissed`/`dismiss_until` keys are
-    translated. Unknown keys are rejected (strict, ValueError -> 422 at the
-    route) or discarded (strict=False, internal system writes).
+    ALERT (entity_type == "alert", default): Phase 2 user-enrichment state lives
+    on LastAlert typed columns, not on the alertenrichment JSONB. The legacy
+    `dismissed`/`dismiss_until` keys are translated. Unknown keys are rejected
+    (strict, ValueError -> 422 at the route) or discarded (strict=False, internal
+    system writes). D1: if no LastAlert row exists for the fingerprint, the column
+    UPDATE is skipped (logged) but the AlertAudit row is still created.
 
-    D1: if no LastAlert row exists for the fingerprint, the column UPDATE is
-    skipped (logged) but the AlertAudit row is still created.
+    INCIDENT (entity_type == "incident"): incident enrichment stays on the legacy
+    AlertEnrichment JSONB row (UUID-keyed) until Phase 3 — arbitrary keys are
+    preserved verbatim (no translation, no D1 no-op, no strict rejection).
     """
+    if entity_type == "incident":
+        return _enrich_incident_alertenrichment(
+            session,
+            tenant_id,
+            fingerprint,
+            enrichments,
+            action_type,
+            action_callee,
+            action_description,
+            force=force,
+            audit_enabled=audit_enabled,
+        )
+
     normalized = normalize_enrichments(enrichments, strict=strict)
 
     last_alert = get_last_alert_by_fingerprint(
@@ -463,6 +574,91 @@ def _enrich_entity(
     return last_alert
 
 
+def _batch_enrich_incident_alertenrichment(
+    session,
+    tenant_id,
+    fingerprints,
+    enrichments,
+    action_type: ActionType,
+    action_callee: str,
+    action_description: str,
+    audit_enabled=True,
+):
+    """Legacy (pre-Phase-2) AlertEnrichment JSONB batch upsert for the INCIDENT
+    enrichment path. Mirrors _enrich_incident_alertenrichment but over many
+    UUID-keyed fingerprints. No translation / D1 / strict handling."""
+    existing_enrichments = {
+        e.alert_fingerprint: e
+        for e in session.exec(
+            select(AlertEnrichment)
+            .where(AlertEnrichment.tenant_id == tenant_id)
+            .where(AlertEnrichment.alert_fingerprint.in_(fingerprints))
+        ).all()
+    }
+
+    to_update = {}
+    to_create = []
+    audit_entries = []
+
+    for fingerprint in fingerprints:
+        existing = existing_enrichments.get(fingerprint)
+        if existing:
+            merged_enrichments = {**existing.enrichments, **enrichments}
+            incoming_note = enrichments.get("note")
+            if not incoming_note or (
+                isinstance(incoming_note, str) and not incoming_note.strip()
+            ):
+                existing_note = existing.enrichments.get("note")
+                if existing_note:
+                    merged_enrichments["note"] = existing_note
+            for key, value in enrichments.items():
+                if value is None and key in merged_enrichments:
+                    del merged_enrichments[key]
+            to_update[existing.id] = merged_enrichments
+        else:
+            to_create.append(
+                AlertEnrichment(
+                    tenant_id=tenant_id,
+                    alert_fingerprint=fingerprint,
+                    enrichments=enrichments,
+                )
+            )
+
+        if audit_enabled:
+            audit_entries.append(
+                AlertAudit(
+                    tenant_id=tenant_id,
+                    fingerprint=fingerprint,
+                    user_id=action_callee,
+                    action=action_type.value,
+                    description=action_description,
+                )
+            )
+
+    if to_update:
+        for enrichment_id, merged_enrichments in to_update.items():
+            stmt = (
+                update(AlertEnrichment)
+                .where(AlertEnrichment.id == enrichment_id)
+                .values(enrichments=merged_enrichments)
+            )
+            session.execute(stmt)
+
+    if to_create:
+        session.add_all(to_create)
+
+    if audit_entries:
+        session.add_all(audit_entries)
+
+    session.commit()
+
+    return session.exec(
+        select(AlertEnrichment)
+        .where(AlertEnrichment.tenant_id == tenant_id)
+        .where(AlertEnrichment.alert_fingerprint.in_(fingerprints))
+    ).all()
+
+
 def batch_enrich(
     tenant_id,
     fingerprints,
@@ -473,13 +669,18 @@ def batch_enrich(
     session=None,
     audit_enabled=True,
     strict=True,
+    entity_type: str = "alert",
 ):
     """
-    Batch enrich multiple alerts with the same enrichments in a single transaction.
+    Batch enrich multiple entities with the same enrichments in a single transaction.
 
-    Phase 2: writes typed LastAlert columns. The legacy keys are translated and
-    unknown keys handled once for the whole batch (same enrichments for all
-    fingerprints). D1 applies per-fingerprint (no LastAlert row -> audit only).
+    ALERT (entity_type == "alert", default): writes typed LastAlert columns. The
+    legacy keys are translated and unknown keys handled once for the whole batch
+    (same enrichments for all fingerprints). D1 applies per-fingerprint (no
+    LastAlert row -> audit only).
+
+    INCIDENT (entity_type == "incident"): legacy AlertEnrichment JSONB upsert
+    (UUID-keyed) — arbitrary keys preserved verbatim, no translation/D1/strict.
 
     Args:
         tenant_id (str): The tenant ID to filter the alert enrichments by.
@@ -492,8 +693,22 @@ def batch_enrich(
         audit_enabled (bool, optional): Whether to create audit entries. Defaults to True.
 
     Returns:
-        List[LastAlert]: List of updated LastAlert rows.
+        List[LastAlert]: List of updated LastAlert rows (alert path) or
+        List[AlertEnrichment] (incident path).
     """
+    if entity_type == "incident":
+        with existed_or_new_session(session) as session:
+            return _batch_enrich_incident_alertenrichment(
+                session,
+                tenant_id,
+                fingerprints,
+                enrichments,
+                action_type,
+                action_callee,
+                action_description,
+                audit_enabled=audit_enabled,
+            )
+
     normalized = normalize_enrichments(enrichments, strict=strict)
 
     with existed_or_new_session(session) as session:
@@ -557,6 +772,7 @@ def enrich_entity(
     force=False,
     audit_enabled=True,
     strict=True,
+    entity_type: str = "alert",
 ):
     with existed_or_new_session(session) as session:
         return _enrich_entity(
@@ -570,6 +786,7 @@ def enrich_entity(
             force=force,
             audit_enabled=audit_enabled,
             strict=strict,
+            entity_type=entity_type,
         )
 
 

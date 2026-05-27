@@ -18,7 +18,7 @@ import pytest
 
 from src.models.action_type import ActionType
 from src.models.alert import AlertStatus
-from src.models.db.alert import Alert, AlertAudit, LastAlert
+from src.models.db.alert import Alert, AlertAudit, AlertEnrichment, LastAlert
 from src.repositories.db import (
     enrich_entity,
     get_last_alert_by_fingerprint,
@@ -342,3 +342,117 @@ def test_dto_build_from_last_alert_columns(db_session):
     assert dto.assignee == "alice"
     assert dto.note == "dto-note"
     assert dto.firing_counter == 5
+
+
+# --------------------------------------------------------------------------- #
+# AG-3b: INCIDENT enrichment stays on the legacy AlertEnrichment JSONB row
+# (UUID-keyed). No LastAlert involvement, no translation, no D1 no-op, no
+# strict unknown-key rejection — arbitrary keys are preserved verbatim.
+# --------------------------------------------------------------------------- #
+def _get_alertenrichment(db_session, fingerprint):
+    return (
+        db_session.query(AlertEnrichment)
+        .filter(
+            AlertEnrichment.tenant_id == SINGLE_TENANT_UUID,
+            AlertEnrichment.alert_fingerprint == fingerprint,
+        )
+        .first()
+    )
+
+
+def test_incident_enrich_writes_alertenrichment_row(db_session):
+    incident_id = "11111111-1111-1111-1111-111111111111"
+    # No LastAlert exists for an incident id; the incident branch must NOT no-op.
+    enrich_entity(
+        SINGLE_TENANT_UUID,
+        incident_id,
+        {"ticket_url": "https://x", "severity": "high"},
+        action_type=ActionType.INCIDENT_ENRICH,
+        action_callee="bob@x",
+        action_description="t",
+        session=db_session,
+        entity_type="incident",
+    )
+
+    enr = _get_alertenrichment(db_session, incident_id)
+    assert enr is not None  # AlertEnrichment row written (no D1 no-op for incidents)
+    # arbitrary keys preserved verbatim (no strict rejection, no translation)
+    assert enr.enrichments["ticket_url"] == "https://x"
+    assert enr.enrichments["severity"] == "high"
+    # no LastAlert created for an incident id
+    assert get_last_alert_by_fingerprint(SINGLE_TENANT_UUID, incident_id, db_session) is None
+    assert _audit_count(db_session, incident_id) == 1
+
+
+def test_incident_enrich_merges_on_second_write(db_session):
+    incident_id = "22222222-2222-2222-2222-222222222222"
+    enrich_entity(
+        SINGLE_TENANT_UUID,
+        incident_id,
+        {"foo": "1"},
+        action_type=ActionType.INCIDENT_ENRICH,
+        action_callee="bob@x",
+        action_description="t",
+        session=db_session,
+        entity_type="incident",
+    )
+    enrich_entity(
+        SINGLE_TENANT_UUID,
+        incident_id,
+        {"bar": "2"},
+        action_type=ActionType.INCIDENT_ENRICH,
+        action_callee="bob@x",
+        action_description="t",
+        session=db_session,
+        entity_type="incident",
+    )
+    enr = _get_alertenrichment(db_session, incident_id)
+    # merge (not replace) — both keys present
+    assert enr.enrichments == {"foo": "1", "bar": "2"}
+
+
+def test_incident_enrich_no_dismissed_translation(db_session):
+    incident_id = "33333333-3333-3333-3333-333333333333"
+    # the dismissed<->dismiss_mode translation must NOT be applied to incidents
+    enrich_entity(
+        SINGLE_TENANT_UUID,
+        incident_id,
+        {"dismissed": True},
+        action_type=ActionType.INCIDENT_ENRICH,
+        action_callee="bob@x",
+        action_description="t",
+        session=db_session,
+        entity_type="incident",
+    )
+    enr = _get_alertenrichment(db_session, incident_id)
+    assert enr.enrichments == {"dismissed": True}
+    assert "dismiss_mode" not in enr.enrichments
+    assert "status" not in enr.enrichments
+
+
+def test_incident_unenrich_force_replaces(db_session):
+    incident_id = "44444444-4444-4444-4444-444444444444"
+    enrich_entity(
+        SINGLE_TENANT_UUID,
+        incident_id,
+        {"foo": "1", "bar": "2"},
+        action_type=ActionType.INCIDENT_ENRICH,
+        action_callee="bob@x",
+        action_description="t",
+        session=db_session,
+        entity_type="incident",
+    )
+    # force=True replaces the whole JSONB (how unenrich removes a key)
+    enrich_entity(
+        SINGLE_TENANT_UUID,
+        incident_id,
+        {"foo": "1"},
+        action_type=ActionType.INCIDENT_UNENRICH,
+        action_callee="bob@x",
+        action_description="t",
+        session=db_session,
+        force=True,
+        entity_type="incident",
+    )
+    enr = _get_alertenrichment(db_session, incident_id)
+    assert enr.enrichments == {"foo": "1"}
