@@ -121,6 +121,30 @@ _INFRA_COLUMNS = {
     "fingerprint", "alert_hash", "source"
 }
 
+# Retained for backward-compat with src/repositories/incidents.py, which imports
+# these to build its own (incident-scoped) alert field configurations. The incident
+# query path is out of scope for Phase 2 and keeps its existing behavior.
+_SPECIAL_FIELDS = {
+    "severity": {
+        "data_type": DataType.STRING,
+        "enum_values": [
+            severity.value
+            for severity in sorted(
+                [severity for _, severity in enumerate(AlertSeverity)],
+                key=lambda s: s.order,
+            )
+        ],
+    },
+    "status": {
+        "data_type": DataType.STRING,
+        "enum_values": list(reversed([item.value for _, item in enumerate(AlertStatus)])),
+    },
+    "last_received": {"data_type": DataType.DATETIME},
+    "dismissed": {"data_type": DataType.BOOLEAN},
+    "firing_counter": {"data_type": DataType.INTEGER},
+    "unresolved_counter": {"data_type": DataType.INTEGER},
+}
+
 # === Phase 2: strict schema ===
 # User-enrichment state + relocated tracking fields now live as typed columns on
 # LastAlert (no more alertenrichment JSONB extraction). These are mapped

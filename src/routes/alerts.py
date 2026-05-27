@@ -10,7 +10,7 @@ from typing import List, Optional
 import celpy
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
-from sqlalchemy_utils import UUIDType
+from pydantic import BaseModel
 from sqlmodel import Session
 
 from src.services.enrichments_bl import EnrichmentsBl
@@ -32,7 +32,6 @@ from src.repositories.db import (
     get_alerts_by_fingerprint,
     get_alerts_by_ids,
     get_alerts_metrics_by_provider,
-    get_enrichment,
     get_last_alerts,
     get_last_alerts_by_fingerprints,
     get_session,
@@ -80,6 +79,49 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 REDIS = os.environ.get("REDIS", "false") == "true"
+
+
+class AlertHistoryResponse(BaseModel):
+    """Phase 2 alert-history response: provider occurrences + user/system activity."""
+
+    occurrences: list[AlertDto]
+    activity: list[AlertAuditDto]
+
+
+def _translate_dismiss_enrichments(enrichments: dict) -> None:
+    """Phase 2: translate the legacy `dismissed` (and optional dismiss-until)
+    enrichment keys, sent as strings by the current UI, into the typed
+    status/dismiss_mode/dismissed_until model. Mutates `enrichments` in place.
+
+    See ALERTENRICHMENT_REMOVAL_SPEC §"Dismiss" / "API Compatibility":
+      - dismissed: "true"  -> status='suppressed', dismiss_mode='permanent'
+          (with a dismiss-until timestamp -> dismiss_mode='dismiss_until',
+           dismissed_until=<ts>)
+      - dismissed: "false" -> status=None, dismiss_mode=None, dismissed_until=None
+
+    The db layer's normalize_enrichments performs the same translation for other
+    callers; doing it here too keeps `status` available for the route's action-type
+    metadata derivation and the response shim.
+    """
+    if "dismissed" not in enrichments:
+        return
+
+    raw = enrichments.pop("dismissed")
+    dismissed = str(raw).lower() == "true" if not isinstance(raw, bool) else raw
+
+    ts = enrichments.get("dismissed_until") or enrichments.pop("dismiss_until", None)
+    if dismissed:
+        enrichments.setdefault("status", AlertStatus.SUPPRESSED.value)
+        if ts:
+            enrichments["dismiss_mode"] = "dismiss_until"
+            enrichments["dismissed_until"] = ts
+        else:
+            enrichments.setdefault("dismiss_mode", "permanent")
+    else:
+        # Restoring (undismissing): revert to the provider value.
+        enrichments["status"] = None
+        enrichments["dismiss_mode"] = None
+        enrichments["dismissed_until"] = None
 
 
 
@@ -303,32 +345,44 @@ def get_alert_history(
     authenticated_entity: AuthenticatedEntity = Depends(
         IdentityManagerFactory.get_auth_verifier(["read:alert"])
     ),
-) -> list[AlertDto]:
+) -> AlertHistoryResponse:
+    """Phase 2: the history endpoint returns two cleanly separated concerns:
+
+    - `occurrences`: one AlertDto per `alert` row (raw provider data per firing,
+      no user enrichment merged in).
+    - `activity`: the AlertAudit event stream for the fingerprint, descending by
+      timestamp (who did what, and system fired/resolved events).
+    """
+    tenant_id = authenticated_entity.tenant_id
     logger.info(
         "Fetching alert history",
         extra={
             "fingerprint": fingerprint,
-            "tenant_id": authenticated_entity.tenant_id,
+            "tenant_id": tenant_id,
         },
     )
     db_alerts = get_alerts_by_fingerprint(
-        tenant_id=authenticated_entity.tenant_id,
+        tenant_id=tenant_id,
         fingerprint=fingerprint,
         limit=1000,
-        with_alert_instance_enrichment=True,
     )
-    enriched_alerts_dto = convert_db_alerts_to_dto_alerts(
-        db_alerts, with_alert_instance_enrichment=True
-    )
+    # occurrences: raw provider data per firing — no enrichment merge.
+    occurrences = [
+        AlertDto(**alert.dict()) for alert in db_alerts
+    ]
+
+    # activity: the audit event stream (already ordered desc by timestamp).
+    audit_rows = get_alert_audit_db(tenant_id, fingerprint, limit=1000)
+    activity = AlertAuditDto.from_orm_list(audit_rows)
 
     logger.info(
         "Fetched alert history",
         extra={
-            "tenant_id": authenticated_entity.tenant_id,
+            "tenant_id": tenant_id,
             "fingerprint": fingerprint,
         },
     )
-    return enriched_alerts_dto
+    return AlertHistoryResponse(occurrences=occurrences, activity=activity)
 
 
 @router.delete("", description="Delete alert by finerprint and last received time")
@@ -353,40 +407,17 @@ async def delete_alert(
         },
     )
 
-    deleted_last_received = []  # the last received(s) that are deleted
-    assignees_last_receievd = {}  # the last received(s) that are assigned to someone
+    # Phase 2: soft-delete is a typed boolean on LastAlert (per fingerprint).
+    # restore=True clears it; restore=False sets it. The legacy `deletedAt`
+    # timestamp-list / `assignees` timestamp-dict patterns are dropped — also
+    # auto-assign the acting user (assignee is never cleared automatically).
+    deleted = not bool(delete_alert.restore)
+    enrichments = {"deleted": deleted, "assignee": user_email}
 
-    # If we enriched before, get the enrichment
-    enrichment = get_enrichment(tenant_id, delete_alert.fingerprint)
-    if enrichment:
-        deleted_last_received = enrichment.enrichments.get("deletedAt", [])
-        assignees_last_receievd = enrichment.enrichments.get("assignees", {})
-
-    if (
-        delete_alert.restore is True
-        and delete_alert.last_received in deleted_last_received
-    ):
-        # Restore deleted alert
-        deleted_last_received.remove(delete_alert.last_received)
-    elif (
-        delete_alert.restore is False
-        and delete_alert.last_received not in deleted_last_received
-    ):
-        # Delete the alert if it's not already deleted (wtf basically, shouldn't happen)
-        deleted_last_received.append(delete_alert.last_received)
-
-    if delete_alert.last_received not in assignees_last_receievd:
-        # auto-assign the deleting user to the alert
-        assignees_last_receievd[delete_alert.last_received] = user_email
-
-    # overwrite the enrichment
     enrichment_bl = EnrichmentsBl(tenant_id, event_producer=event_producer)
     await enrichment_bl.enrich_entity(
         fingerprint=delete_alert.fingerprint,
-        enrichments={
-            "deletedAt": deleted_last_received,
-            "assignees": assignees_last_receievd,
-        },
+        enrichments=enrichments,
         action_type=ActionType.DELETE_ALERT,
         action_description=f"Alert deleted by {user_email}",
         action_callee=user_email,
@@ -443,7 +474,10 @@ async def assign_alert(
         },
     )
 
-    # If the user wants to dispose the assignment on new alert, we need to add a disposable enrichment
+    # Phase 2: assignee is a typed per-fingerprint column on LastAlert (never
+    # cleared automatically). The legacy per-occurrence `assignees` timestamp-dict
+    # is dropped. dispose_on_new_alert applies to the acknowledged status only
+    # (-> status_disposable), not to the assignee.
     dispose_on_new_alert = False
     note = None
     if body:
@@ -455,53 +489,22 @@ async def assign_alert(
     if note:
         action_description += f" - With note: {note}"
 
-    # Normalize last_received to the standard format used by AlertDto
-    # This ensures the key in the "assignees" dict matches alert.last_received
-    try:
-        # Use a more robust parsing that handles various formats
-        import datetime
-        dt = datetime.datetime.fromisoformat(last_received.replace("Z", ""))
-        normalized_last_received = dt.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
-    except Exception:
-        normalized_last_received = last_received
+    enrichments = {
+        "assignee": user_email,
+        "status": AlertStatus.ACKNOWLEDGED.value,
+    }
+    if note:
+        enrichments["note"] = note
 
     enrichments_bl = EnrichmentsBl(tenant_id, session, event_producer=event_producer)
-    if dispose_on_new_alert:
-        await enrichments_bl.enrich_entity(
-            fingerprint=fingerprint,
-            enrichments={
-                "assignees": {normalized_last_received: user_email},
-                "status": AlertStatus.ACKNOWLEDGED.value,
-            },
-            action_type=ActionType.ACKNOWLEDGE,
-            action_callee=user_email,
-            action_description=action_description,
-            dispose_on_new_alert=True,
-        )
-        if note:
-            await enrichments_bl.enrich_entity(
-                fingerprint=fingerprint,
-                enrichments={
-                    "note": note,
-                },
-                action_type=ActionType.ACKNOWLEDGE,
-                action_callee=user_email,
-                action_description=f"Note added by {user_email} - {note}",
-                dispose_on_new_alert=False,
-            )
-    else:
-        await enrichments_bl.enrich_entity(
-            fingerprint=fingerprint,
-            enrichments={
-                "assignees": {normalized_last_received: user_email},
-                "note": note,
-                "status": AlertStatus.ACKNOWLEDGED.value,
-            },
-            action_type=ActionType.ACKNOWLEDGE,
-            action_callee=user_email,
-            action_description=action_description,
-            dispose_on_new_alert=False,
-        )
+    await enrichments_bl.enrich_entity(
+        fingerprint=fingerprint,
+        enrichments=enrichments,
+        action_type=ActionType.ACKNOWLEDGE,
+        action_callee=user_email,
+        action_description=action_description,
+        dispose_on_new_alert=dispose_on_new_alert,
+    )
     return {"status": "ok"}
 
 
@@ -706,14 +709,7 @@ async def batch_enrich_alerts(
         },
     )
 
-    if "dismissed" in enrich_data.enrichments:
-        if enrich_data.enrichments["dismissed"].lower() == "true":
-            enrich_data.enrichments["status"] = AlertStatus.SUPPRESSED.value
-        elif enrich_data.enrichments["dismissed"].lower() == "false":
-            # When restoring (undismissing), remove the suppressed status
-            # This allows the alert to revert to its original status from the event data
-            if "status" not in enrich_data.enrichments:
-                enrich_data.enrichments["status"] = None
+    _translate_dismiss_enrichments(enrich_data.enrichments)
 
     if not enrich_data.fingerprints and not enrich_data.cel:
         raise HTTPException(
@@ -795,45 +791,24 @@ async def batch_enrich_alerts(
 
         enrichments = deepcopy(enrich_data.enrichments)
 
-        if enrichments.get("status") == AlertStatus.RESOLVED.value:
-            for fingerprint in fingerprints:
-                enrichment_bl.make_enrichments_permanent(
-                    fingerprint, dispose_keys=["assignees"]
-                )
-
-        await enrichment_bl.batch_enrich(
-            fingerprints=fingerprints,
-            enrichments=enrichments,
-            action_type=action_type,
-            action_callee=authenticated_entity.email,
-            action_description=action_description,
-            dispose_on_new_alert=dispose_on_new_alert,
-        )
+        # Phase 2: status/dismiss clearing on resolve happens in set_last_alert;
+        # no more make_enrichments_permanent. Unknown keys -> ValueError -> 422.
+        try:
+            await enrichment_bl.batch_enrich(
+                fingerprints=fingerprints,
+                enrichments=enrichments,
+                action_type=action_type,
+                action_callee=authenticated_entity.email,
+                action_description=action_description,
+                dispose_on_new_alert=dispose_on_new_alert,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
 
         last_alerts = get_last_alerts_by_fingerprints(
             tenant_id, fingerprints, session=session
         )
         alert_ids = [last_alert.alert_id for last_alert in last_alerts]
-
-        if dispose_on_new_alert:
-            # Create instance-wide enrichment for history
-
-            # For better database-native UUID support
-            formatted_alert_ids = [
-                UUIDType(binary=False).process_bind_param(
-                    alert_id, session.bind.dialect
-                )
-                for alert_id in alert_ids
-            ]
-            await enrichment_bl.batch_enrich(
-                fingerprints=formatted_alert_ids,
-                enrichments=enrichments,
-                action_type=action_type,
-                action_callee=authenticated_entity.email,
-                action_description=action_description,
-                audit_enabled=False,
-                produce_event=False,
-            )
 
         alerts = get_alerts_by_ids(tenant_id, alert_ids, session=session)
 
@@ -903,14 +878,7 @@ async def enrich_alert(
     event_producer: EventProducer = Depends(get_event_producer),
 
 ) -> dict[str, str]:
-    if "dismissed" in enrich_data.enrichments:
-        if enrich_data.enrichments["dismissed"].lower() == "true":
-            enrich_data.enrichments["status"] = AlertStatus.SUPPRESSED.value
-        elif enrich_data.enrichments["dismissed"].lower() == "false":
-            # When restoring (undismissing), remove the suppressed status
-            # This allows the alert to revert to its original status from the event data
-            if "status" not in enrich_data.enrichments:
-                enrich_data.enrichments["status"] = None
+    _translate_dismiss_enrichments(enrich_data.enrichments)
 
     tenant_id = authenticated_entity.tenant_id
     logger.info(
@@ -959,10 +927,8 @@ async def _enrich_alert(
 
         enrichments = deepcopy(enrich_data.enrichments)
 
-        if enrichments.get("status") == AlertStatus.RESOLVED.value:
-            enrichement_bl.make_enrichments_permanent(
-                enrich_data.fingerprint, dispose_keys=["assignees"]
-            )
+        # Phase 2: status/dismiss clearing on resolve happens in set_last_alert;
+        # no more make_enrichments_permanent.
 
         enrichment_kwargs = {
             "fingerprint": enrich_data.fingerprint,
@@ -972,10 +938,14 @@ async def _enrich_alert(
             "action_description": action_description,
         }
 
-        if dispose_on_new_alert:
-            await enrichement_bl.disposable_enrich_entity(**enrichment_kwargs)
-        else:
-            await enrichement_bl.enrich_entity(**enrichment_kwargs)
+        try:
+            if dispose_on_new_alert:
+                await enrichement_bl.disposable_enrich_entity(**enrichment_kwargs)
+            else:
+                await enrichement_bl.enrich_entity(**enrichment_kwargs)
+        except ValueError as e:
+            # Unknown enrichment key(s) -> reject with 422 (strict schema)
+            raise HTTPException(status_code=422, detail=str(e))
 
         # get the alert with the new enrichment
         alert = get_alerts_by_fingerprint(
@@ -1018,6 +988,9 @@ async def _enrich_alert(
 
         return {"status": "ok"}
 
+    except HTTPException:
+        # Re-raise HTTP exceptions (e.g. 422 for unknown enrichment keys)
+        raise
     except Exception as e:
         logger.exception("Failed to enrich alert", extra={"error": str(e)})
         return {"status": "failed"}
@@ -1073,31 +1046,32 @@ async def unenrich_alert(
             action_type = ActionType.GENERIC_UNENRICH
             action_description = f"Alert en-enriched by {authenticated_entity.email}"
 
-        enrichments_object = get_enrichment(tenant_id, enrich_data.fingerprint)
-        if not enrichments_object:
-            return {"status": "failed", "message": "No enrichments found for this alert"}
-
-        enrichments = enrichments_object.enrichments
-
-        # Build the set of keys to remove, including disposable_ variants
-        keys_to_remove = set(enrich_data.enrichments)
+        # Phase 2: un-enrich = revert the requested typed LastAlert columns to the
+        # provider value by setting them NULL (force=True bypasses the note-guard so
+        # an explicit note removal sticks). Legacy `dismissed`/`dismiss_until` keys
+        # are translated to clear status/dismiss_mode/dismissed_until.
+        clear_enrichments = {}
         for key in enrich_data.enrichments:
-            keys_to_remove.add(f"disposable_{key}")
+            if key in ("dismissed", "dismiss_until"):
+                clear_enrichments["status"] = None
+                clear_enrichments["dismiss_mode"] = None
+                clear_enrichments["dismissed_until"] = None
+            elif key == "deleted":
+                clear_enrichments["deleted"] = False
+            else:
+                clear_enrichments[key] = None
 
-        new_enrichments = {
-            key: value
-            for key, value in enrichments.items()
-            if key not in keys_to_remove
-        }
-
-        await enrichement_bl.enrich_entity(
-            fingerprint=enrich_data.fingerprint,
-            enrichments=new_enrichments,
-            action_type=action_type,
-            action_callee=authenticated_entity.email,
-            action_description=action_description,
-            force=True,
-        )
+        try:
+            await enrichement_bl.enrich_entity(
+                fingerprint=enrich_data.fingerprint,
+                enrichments=clear_enrichments,
+                action_type=action_type,
+                action_callee=authenticated_entity.email,
+                action_description=action_description,
+                force=True,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
 
         alert = get_alerts_by_fingerprint(
             authenticated_entity.tenant_id, enrich_data.fingerprint, limit=1
@@ -1129,6 +1103,9 @@ async def unenrich_alert(
         )
         return {"status": "ok"}
 
+    except HTTPException:
+        # Re-raise HTTP exceptions (e.g. 422 for unknown enrichment keys)
+        raise
     except Exception as e:
         logger.exception("Failed to un-enrich alert", extra={"error": str(e)})
         return {"status": "failed"}
