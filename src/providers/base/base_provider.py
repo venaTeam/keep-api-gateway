@@ -189,10 +189,176 @@ class BaseProvider(metaclass=abc.ABCMeta):
         # trigger the provider
         results = self._notify(**kwargs)
         self.results.append(results)
-        
+        # if the alert should be enriched, enrich it
+        enrich_event = kwargs.get("enrich_alert", kwargs.get("enrich_incident", []))
+        if enrich_event:
+            audit_enabled = bool(kwargs.get("audit_enabled", True))
+            self._enrich(enrich_event, results, audit_enabled=audit_enabled)
+
         return results if results else None
 
+    def _enrich(self, enrichments, results, audit_enabled=True):
+        """
+        Enrich alert with provider specific data.
 
+        """
+        self.logger.debug("Extracting the fingerprint from the alert")
+        event = None
+        entity_type: Literal["alert", "incident"] = "alert"
+        if "fingerprint" in results:
+            fingerprint = results["fingerprint"]
+        elif self.context_manager.foreach_context.get("value", {}):
+            foreach_context: dict | tuple = self.context_manager.foreach_context.get(
+                "value", {}
+            )
+            if isinstance(foreach_context, tuple):
+                # This is when we are in a foreach context that is zipped
+                foreach_context: dict = foreach_context[0]
+                event = foreach_context
+
+            if isinstance(foreach_context, AlertDto):
+                fingerprint = foreach_context.fingerprint
+            # if we are in a dict context, use the fingerprint from the dict
+            elif isinstance(foreach_context, dict) and "fingerprint" in foreach_context:
+                fingerprint = foreach_context.get("fingerprint")
+            # in case the foreach itself doesn't have a fingerprint, use the event fingerprint
+            elif self.context_manager.event_context:
+                fingerprint = self.context_manager.event_context.fingerprint
+            else:
+                self.logger.warning(
+                    "No fingerprint found for alert enrichment",
+                    extra={"provider": self.provider_id},
+                )
+                fingerprint = None
+        # else, if we are in an event context, use the event fingerprint
+        elif self.context_manager.event_context:
+            # TODO: map all casses event_context is dict and update them to the DTO
+            #       and remove this if statement
+            event = self.context_manager.event_context
+            if isinstance(self.context_manager.event_context, dict):
+                fingerprint = self.context_manager.event_context.get("fingerprint")
+            # Alert DTO
+            else:
+                fingerprint = self.context_manager.event_context.fingerprint
+        elif self.context_manager.incident_context:
+            entity_type = "incident"
+            fingerprint = self.context_manager.incident_context.id
+        else:
+            fingerprint = None
+
+        if not fingerprint:
+            self.logger.error(
+                "No fingerprint found for alert enrichment",
+                extra={"provider": self.provider_id},
+            )
+            raise Exception("No fingerprint found for alert enrichment")
+        self.logger.debug("Fingerprint extracted", extra={"fingerprint": fingerprint})
+
+        _enrichments = {}
+        disposable_enrichments = {}
+        # enrich only the requested fields
+        for enrichment in enrichments:
+            try:
+                value = enrichment["value"]
+                disposable = bool(enrichment.get("disposable", False))
+                if value.startswith("results."):
+                    val = enrichment["value"].replace("results.", "")
+                    parts = val.split(".")
+                    r = copy.copy(results)
+                    for part in parts:
+                        r = r[part]
+                    value = r
+                # support smth like results[0][0].message.source
+                # 1. first convert to results[0][0]["message"]["source"]
+                # 2. use eval
+                elif value.startswith("results["):
+                    self.logger.info("Trying to convert")
+
+                    # try convert
+                    def convert_dot_to_bracket(match):
+                        return f'["{match.group(1)}"]'
+
+                    converted_value = value
+                    bracket_pattern = r"\.([a-zA-Z_][a-zA-Z0-9_]*)"
+                    converted_value = re.sub(
+                        bracket_pattern, convert_dot_to_bracket, converted_value
+                    )
+                    try:
+                        # this is secured since if we are here it means converted_value starts with results[
+                        value = eval(
+                            converted_value, {"__builtins__": {}}, {"results": results}
+                        )
+                    except Exception:
+                        self.logger.exception(
+                            "Could not parse results", extra={"value": value}
+                        )
+
+                if disposable:
+                    disposable_enrichments[enrichment["key"]] = value
+                else:
+                    _enrichments[enrichment["key"]] = value
+                if event is not None:
+                    if isinstance(event, dict):
+                        event[enrichment["key"]] = value
+                    else:
+                        setattr(event, enrichment["key"], value)
+            except Exception:
+                self.logger.error(
+                    f"Failed to enrich alert - enrichment: {enrichment}",
+                    extra={"fingerprint": fingerprint, "provider": self.provider_id},
+                )
+                continue
+        self.logger.info("Enriching alert", extra={"fingerprint": fingerprint})
+        try:
+            enrichments_bl = EnrichmentsBl(self.context_manager.tenant_id)
+            enrichment_string = ", ".join(
+                [f"{key}={value}" for key, value in _enrichments.items()]
+            )
+            disposable_enrichment_string = ", ".join(
+                [f"{key}={value}" for key, value in disposable_enrichments.items()]
+            )
+
+            common_kwargs = {
+                "fingerprint": fingerprint,
+                "action_type": ActionType.WORKFLOW_ENRICH,
+                "action_callee": "system",
+                "audit_enabled": audit_enabled,
+            }
+
+            if _enrichments:
+                # enrich the alert with _enrichments
+                enrichments_bl.enrich_entity(
+                    enrichments=_enrichments,
+                    action_description=f"Workflow enriched the {entity_type} with {enrichment_string}",
+                    **common_kwargs,
+                )
+
+            # todo: incidents do not have disposable enrichments
+            if disposable_enrichments and entity_type == "alert":
+                # enrich with disposable enrichments
+                enrichments_bl.disposable_enrich_entity(
+                    enrichments=disposable_enrichments,
+                    action_description=f"Workflow enriched the {entity_type} with {disposable_enrichment_string}",
+                    **common_kwargs,
+                )
+
+            should_check_incidents_resolution = (
+                _enrichments.get("status", None) == "resolved"
+                or disposable_enrichments.get("status", None) == "resolved"
+            )
+
+            if event and should_check_incidents_resolution:
+                enrichments_bl.check_incident_resolution(event)
+
+        except Exception as e:
+            self.logger.error(
+                f"Failed to enrich {entity_type} in db",
+                extra={"fingerprint": fingerprint, "provider": self.provider_id},
+            )
+            raise e
+        self.logger.info(
+            f"{entity_type.capitalize()} enriched", extra={"fingerprint": fingerprint}
+        )
 
     def _notify(self, **kwargs):
         """
@@ -225,6 +391,10 @@ class BaseProvider(metaclass=abc.ABCMeta):
         elif results:
             self.context_manager.dependencies.add(results.__class__)
 
+        enrich_alert = kwargs.get("enrich_alert", [])
+        if enrich_alert:
+            audit_enabled = bool(kwargs.get("audit_enabled", True))
+            self._enrich(enrich_alert, results, audit_enabled=audit_enabled)
         # and return the results
         return results
 
@@ -266,7 +436,7 @@ class BaseProvider(metaclass=abc.ABCMeta):
                     provider_instance = None
                 else:
                     # To prevent circular imports
-                    from providers.providers_factory import ProvidersFactory
+                    from src.providers.providers_factory import ProvidersFactory
 
                     provider_instance: BaseProvider = (
                         ProvidersFactory.get_installed_provider(
@@ -299,14 +469,14 @@ class BaseProvider(metaclass=abc.ABCMeta):
         )
 
         if not isinstance(formatted_alert, list):
-            formatted_alert.providerId = provider_id
-            formatted_alert.providerType = provider_type
+            formatted_alert.provider_id = provider_id
+            formatted_alert.provider_type = provider_type
             formatted_alert = [formatted_alert]
 
         else:
             for alert in formatted_alert:
-                alert.providerId = provider_id
-                alert.providerType = provider_type
+                alert.provider_id = provider_id
+                alert.provider_type = provider_type
 
         # if there is no custom deduplication rule, return the formatted alert
         if not custom_deduplication_rule:
@@ -353,7 +523,7 @@ class BaseProvider(metaclass=abc.ABCMeta):
                     fingerprint_field_value = None
                     break
             if isinstance(fingerprint_field_value, (list, dict)):
-                fingerprint_field_value = json.dumps(fingerprint_field_value)
+                fingerprint_field_value = json.dumps(fingerprint_field_value, sort_keys=True)
             if fingerprint_field_value is not None:
                 fingerprint.update(str(fingerprint_field_value).encode())
         return fingerprint.hexdigest()
@@ -392,16 +562,16 @@ class BaseProvider(metaclass=abc.ABCMeta):
             alerts = self._get_alerts()
             # enrich alerts with provider id
             for alert in alerts:
-                alert.providerId = self.provider_id
-                alert.providerType = self.provider_type
+                alert.provider_id = self.provider_id
+                alert.provider_type = self.provider_type
             return alerts
 
     def get_alerts_by_fingerprint(self, tenant_id: str) -> dict[str, list[AlertDto]]:
         """
-        Get alerts from the provider grouped by fingerprint, sorted by lastReceived.
+        Get alerts from the provider grouped by fingerprint, sorted by last_received.
 
         Returns:
-            dict[str, list[AlertDto]]: A dict of alerts grouped by fingerprint, sorted by lastReceived.
+            dict[str, list[AlertDto]]: A dict of alerts grouped by fingerprint, sorted by last_received.
         """
         try:
             alerts = self.get_alerts()
@@ -411,7 +581,7 @@ class BaseProvider(metaclass=abc.ABCMeta):
         if not alerts:
             return {}
 
-        # get alerts, group by fingerprint and sort them by lastReceived
+        # get alerts, group by fingerprint and sort them by last_received
         with tracer.start_as_current_span(f"{self.__class__.__name__}-get_last_alerts"):
             get_attr = operator.attrgetter("fingerprint")
             grouped_alerts = {
@@ -605,13 +775,13 @@ class BaseProvider(metaclass=abc.ABCMeta):
             id=alert_data.get("id", str(uuid.uuid4())),
             name=alert_data.get("name", "alert-from-event-queue"),
             status=alert_data.get("status", AlertStatus.FIRING),
-            lastReceived=alert_data.get(
-                "lastReceived",
+            last_received=alert_data.get(
+                "last_received",
                 datetime.datetime.now(tz=datetime.timezone.utc).isoformat(),
             ),
             environment=alert_data.get("environment", "alert-from-event-queue"),
             isDuplicate=alert_data.get("isDuplicate", False),
-            duplicateReason=alert_data.get("duplicateReason", None),
+            duplicate_reason=alert_data.get("duplicate_reason", None),
             service=alert_data.get("service", "alert-from-event-queue"),
             source=alert_data.get("source", [self.provider_type]),
             message=alert_data.get("message", "alert-from-event-queue"),
@@ -621,7 +791,7 @@ class BaseProvider(metaclass=abc.ABCMeta):
             event_id=alert_data.get("event_id", str(uuid.uuid4())),
             url=alert_data.get("url", None),
             fingerprint=alert_data.get("fingerprint", None),
-            providerId=self.provider_id,
+            provider_id=self.provider_id,
         )
         # push the alert to the provider
         url = f"{os.environ['KEEP_API_URL']}/alerts/event"
@@ -678,27 +848,11 @@ class BaseProvider(metaclass=abc.ABCMeta):
         """
         Check if provider exist in env provisioning.
         """
-        if self.config.name in getattr(self.context_manager, "providers_context", {}):
-            return True
-        
-        # Check env vars directly
-        # Check KEEP_PROVIDER_<NAME>
-        env_name = f"KEEP_PROVIDER_{self.config.name.upper().replace('-', '_')}"
-        if os.environ.get(env_name):
-            return True
-            
-        # Check KEEP_PROVIDERS
-        providers_json = os.environ.get("KEEP_PROVIDERS")
-        if providers_json:
-            try:
-                # Basic check if name exists in string to avoid parsing if possible, or parse
-                if self.config.name in providers_json:
-                     # Parse to be sure
-                    providers_dict = json.loads(providers_json)
-                    return self.config.name in providers_dict
-            except Exception:
-                pass
-        return False
+        from src.parser.parser import Parser
+
+        parser = Parser()
+        parser._parse_providers_from_env(self.context_manager)
+        return self.config.name in self.context_manager.providers_context
 
     @classmethod
     def has_health_report(cls) -> bool:
@@ -737,7 +891,7 @@ class BaseIncidentProvider(BaseProvider):
         if provider_id and provider_type and tenant_id:
             try:
                 # To prevent circular imports
-                from providers.providers_factory import ProvidersFactory
+                from src.providers.providers_factory import ProvidersFactory
 
                 provider_instance: BaseProvider = (
                     ProvidersFactory.get_installed_provider(
@@ -844,13 +998,13 @@ class ProviderHealthMixin:
 
             fingerprint_alerts = list(fingerprint_alerts)
 
-            fingerprint_alerts.sort(key=attrgetter("lastReceived"))
+            fingerprint_alerts.sort(key=attrgetter("last_received"))
             # Iterate through alerts to check if some of them are too close
             for i in range(len(fingerprint_alerts)):
                 for j in range(i + 1, len(fingerprint_alerts)):
                     if (
-                        parse(fingerprint_alerts[j].lastReceived)
-                        - parse(fingerprint_alerts[i].lastReceived)
+                        parse(fingerprint_alerts[j].last_received)
+                        - parse(fingerprint_alerts[i].last_received)
                         <= SPAMMY_ALERTS_THRESHOLD
                     ):
                         close_alerts.append(
@@ -862,10 +1016,9 @@ class ProviderHealthMixin:
             if len(close_alerts) > 2:
                 spammy_alerts.extend(fingerprint_alerts)
 
-        timestamps = [parse(alert.lastReceived) for alert in spammy_alerts]
+        timestamps = [parse(alert.last_received) for alert in spammy_alerts]
         hours = [ts.strftime("%Y-%m-%d %H:00") for ts in timestamps]
         hourly_alerts = Counter(hours)
         health["spammy"] = [
             {"date": date, "value": value} for date, value in hourly_alerts.items()
         ]
-

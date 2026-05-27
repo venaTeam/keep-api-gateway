@@ -56,6 +56,7 @@ from src.config.config import (
     PORT,
     TOPOLOGY,
     WATCHER,
+    KEEP_CORS_TRUSTED_ORIGINS,
 )
 
 load_dotenv(find_dotenv())
@@ -197,7 +198,7 @@ def get_app(
     )  # Approximately 30 MiB, https://cloud.google.com/run/quotas
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=KEEP_CORS_TRUSTED_ORIGINS,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -264,8 +265,8 @@ def run(app: FastAPI):
         limit_concurrency=KEEP_LIMIT_CONCURRENCY,
     )
 
+app = get_app()
 
 if __name__ == "__main__":
-    app = get_app()
     run(app)
 

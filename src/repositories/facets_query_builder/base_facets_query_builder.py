@@ -54,7 +54,8 @@ class BaseFacetsQueryBuilder:
         visited_facets = set()
 
         for facet in facets:
-            facet_cel = facet_options_query.facet_queries.get(facet.id, "")
+            facet_queries = facet_options_query.facet_queries or {}
+            facet_cel = facet_queries.get(facet.id, "")
             facet_key = get_facet_key(
                 facet_property_path=facet.property_path,
                 filter_cel=facet_options_query.cel,
@@ -65,7 +66,7 @@ class BaseFacetsQueryBuilder:
 
             cel_queries = [
                 facet_options_query.cel,
-                facet_options_query.facet_queries.get(facet.id, None),
+                facet_queries.get(facet.id, None),
             ]
             final_cel = " && ".join(filter(lambda cel: cel, cel_queries))
 

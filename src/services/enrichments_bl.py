@@ -1,4 +1,4 @@
-﻿import datetime
+import datetime
 import html
 import json
 import logging
@@ -17,7 +17,6 @@ from sqlmodel import Session, select
 
 from src.config.core import config
 from src.repositories.db import (
-    batch_enrich,
     get_alert_by_event_id,
     get_enrichment_with_session,
     get_extraction_rule_by_id,
@@ -43,6 +42,7 @@ from src.models.db.incident import IncidentStatus
 from src.models.db.mapping import MappingRule
 from src.models.db.rule import ResolveOn
 from src.services.identity_manager.authenticatedentity import AuthenticatedEntity
+from src.services.producers.base_event_handler import EventProducer, EventType
 
 
 def is_valid_uuid(uuid_str):
@@ -90,11 +90,12 @@ def get_nested_attribute(obj: AlertDto, attr_path: str):
 class EnrichmentsBl:
     ENRICHMENT_DISABLED = config("KEEP_ENRICHMENT_DISABLED", default="false", cast=bool)
 
-    def __init__(self, tenant_id: str, db: Session | None = None):
+    def __init__(self, tenant_id: str, db: Session | None = None, event_producer: EventProducer | None = None):
         self.logger = logging.getLogger(__name__)
         self.tenant_id = tenant_id
         self.__logs: list[EnrichmentLog] = []
         self.enrichment_event_id: UUID | None = None
+        self.event_producer = event_producer
         if not EnrichmentsBl.ENRICHMENT_DISABLED:
             self.db_session = db or get_session_sync()
             self.elastic_client = ElasticClient(tenant_id=tenant_id)
@@ -102,7 +103,7 @@ class EnrichmentsBl:
             self.db_session = None
             self.elastic_client = None
 
-    def run_mapping_rule_by_id(self, rule_id: int, alert_id: UUID) -> AlertDto:
+    async def run_mapping_rule_by_id(self, rule_id: int, alert_id: UUID) -> AlertDto:
         rule = get_mapping_rule_by_id(self.tenant_id, rule_id, session=self.db_session)
         if not rule:
             raise HTTPException(status_code=404, detail="Mapping rule not found")
@@ -112,20 +113,22 @@ class EnrichmentsBl:
         )
         if not alert:
             raise HTTPException(status_code=404, detail="Alert not found")
-        return self.check_if_match_and_enrich(alert, rule)
+        return await self.check_if_match_and_enrich(alert, rule)
 
-    def run_extraction_rule_by_id(self, rule_id: int, alert: Alert) -> AlertDto:
+    async def run_extraction_rule_by_id(self, rule_id: int, alert: Alert) -> AlertDto:
         rule = get_extraction_rule_by_id(
             self.tenant_id, rule_id, session=self.db_session
         )
 
-        # so we can track the enrichment event
-        alert.event["event_id"] = alert.id
+        alert_payload = alert.dict()
+
+        alert_payload["event_id"] = str(alert.id)
+
         if not rule:
             raise HTTPException(status_code=404, detail="Extraction rule not found")
-        return self.run_extraction_rules(alert.event, pre=False, rules=[rule])
+        return await self.run_extraction_rules(alert_payload, pre=False, rules=[rule])
 
-    def run_extraction_rules(
+    async def run_extraction_rules(
         self, event: AlertDto | dict, pre=False, rules: list[ExtractionRule] = None
     ) -> AlertDto | dict:
         """
@@ -248,7 +251,7 @@ class EnrichmentsBl:
                 # we don't override source
                 match_dict.pop("source", None)
                 event.update(match_dict)
-                self.enrich_entity(
+                await self.enrich_entity(
                     fingerprint,
                     match_dict,
                     action_type=ActionType.EXTRACTION_RULE_ENRICH,
@@ -292,7 +295,7 @@ class EnrichmentsBl:
 
         return AlertDto(**event) if is_alert_dto else event
 
-    def run_mapping_rules(self, alert: AlertDto) -> AlertDto:
+    async def run_mapping_rules(self, alert: AlertDto) -> AlertDto:
         """
         Run the mapping rules for the alert.
 
@@ -331,11 +334,11 @@ class EnrichmentsBl:
             return alert
 
         for rule in rules:
-            self.check_if_match_and_enrich(alert, rule)
+            await self.check_if_match_and_enrich(alert, rule)
 
         return alert
 
-    def check_if_match_and_enrich(self, alert: AlertDto, rule: MappingRule) -> bool:
+    async def check_if_match_and_enrich(self, alert: AlertDto, rule: MappingRule) -> bool:
         """
         Check if the alert matches the conditions specified in the mapping rule.
         If a match is found, enrich the alert and log the enrichment.
@@ -457,7 +460,7 @@ class EnrichmentsBl:
             # SHAHAR: since when running this enrich_alert, the alert is not in elastic yet (its indexed after),
             #         enrich alert will fail to update the alert in elastic.
             #         hence should_exist = False
-            self.enrich_entity(
+            await self.enrich_entity(
                 alert.fingerprint,
                 enrichments,
                 action_type=ActionType.MAPPING_RULE_ENRICH,
@@ -618,7 +621,7 @@ class EnrichmentsBl:
             should_check_incidents_resolution,
         )
 
-    def batch_enrich(
+    async def batch_enrich(
         self,
         fingerprints: list[str],
         enrichments: dict,
@@ -627,40 +630,44 @@ class EnrichmentsBl:
         action_description: str,
         dispose_on_new_alert=False,
         audit_enabled=True,
+        produce_event=True,
     ):
         self.logger.debug(
             "enriching multiple fingerprints",
             extra={"fingerprints": fingerprints, "tenant_id": self.tenant_id},
         )
-        # if these enrichments are disposable, manipulate them with a timestamp
-        #   so they can be disposed of later
-        if dispose_on_new_alert:
-            self.logger.info(
-                "Enriching disposable enrichments",
-                extra={"fingerprints": fingerprints, "tenant_id": self.tenant_id},
+        for fingerprint in fingerprints:
+            await self.enrich_entity(
+                fingerprint=fingerprint,
+                enrichments=enrichments,
+                action_type=action_type,
+                action_callee=action_callee,
+                action_description=action_description,
+                dispose_on_new_alert=dispose_on_new_alert,
+                audit_enabled=audit_enabled,
+                produce_event=False,  # Don't produce individual ENRICH events
             )
-            # for every key, add a disposable key with the value and a timestamp
-            disposable_enrichments = {}
-            for key, value in enrichments.items():
-                disposable_enrichments[f"disposable_{key}"] = {
-                    "value": value,
-                    "timestamp": datetime.datetime.now(
-                        tz=datetime.timezone.utc
-                    ).timestamp(),  # timestamp for disposal [for future use]
-                }
-            enrichments.update(disposable_enrichments)
-        batch_enrich(
-            self.tenant_id,
-            fingerprints,
-            enrichments,
-            action_type,
-            action_callee,
-            action_description,
-            audit_enabled=audit_enabled,
-            session=self.db_session,
-        )
 
-    def disposable_enrich_entity(
+        if produce_event:
+            # Produce a single BATCH_ENRICH event for the entire batch
+            safe_event = enrichments.copy()
+            safe_event.update({
+                "action_type": action_type.value,
+                "action_callee": action_callee,
+                "action_description": action_description,
+                "audit_enabled": False,  # Audit already created locally by API Gateway
+            })
+            await self.event_producer.produce(
+                event=safe_event,
+                event_type=EventType.BATCH_ENRICH,
+                tenant_id=self.tenant_id,
+                provider_type="keep",
+                provider_id="keep",
+                fingerprint=fingerprints,  # List of fingerprints
+            )
+
+
+    async def disposable_enrich_entity(
         self,
         fingerprint: str,
         enrichments: dict,
@@ -678,9 +685,10 @@ class EnrichmentsBl:
             "action_description": action_description,
             "should_exist": should_exist,
             "force": force,
+            "produce_event": True,
         }
 
-        self.enrich_entity(
+        await self.enrich_entity(
             fingerprint=fingerprint,
             dispose_on_new_alert=True,
             audit_enabled=audit_enabled,
@@ -697,9 +705,10 @@ class EnrichmentsBl:
         )
         # For elastic we do not save instance-level enrichments
         common_kwargs["should_exist"] = False
-        self.enrich_entity(fingerprint=alert_id, audit_enabled=False, **common_kwargs)
+        common_kwargs["produce_event"] = False
+        await self.enrich_entity(fingerprint=alert_id, audit_enabled=False, **common_kwargs)
 
-    def enrich_entity(
+    async def enrich_entity(
         self,
         fingerprint: str | UUID,
         enrichments: dict,
@@ -710,6 +719,7 @@ class EnrichmentsBl:
         dispose_on_new_alert=False,
         force=False,
         audit_enabled=True,
+        produce_event=True,
     ):
         """
         should_exist = False only in mapping where the alert is not yet in elastic
@@ -744,6 +754,7 @@ class EnrichmentsBl:
                 }
             enrichments.update(disposable_enrichments)
 
+        # Write enrichment to DB (synchronous, ensures data is persisted immediately)
         enrich_alert_db(
             self.tenant_id,
             fingerprint,
@@ -755,6 +766,27 @@ class EnrichmentsBl:
             force=force,
             audit_enabled=audit_enabled,
         )
+
+        # Publish to kafka
+        if produce_event:
+            safe_event = enrichments.copy()
+            safe_event.update({
+                "action_type": action_type.value,
+                "action_callee": action_callee,
+                "action_description": action_description,
+                "audit_enabled": False,  # Audit already created locally by API Gateway
+                "force": force,
+            })
+            
+            await self.event_producer.produce(
+                event=safe_event,
+                event_type=EventType.ENRICH,
+                tenant_id=self.tenant_id,
+                provider_type="keep",
+                provider_id="keep",
+                fingerprint=fingerprint,
+            )
+
 
         self.logger.debug(
             "alert enriched in db, enriching elastic",
@@ -861,9 +893,9 @@ class EnrichmentsBl:
             # Ensure alerts are explicitly marked as not dismissed after disposal.
             # Some alert payloads may still carry the dismissed flag, so we reset it here.
             new_enrichments["dismissed"] = False
-        if "dismissUntil" in disposed_keys:
+        if "dismiss_until" in disposed_keys:
             # Clear any lingering dismissal deadline metadata.
-            new_enrichments["dismissUntil"] = None
+            new_enrichments["dismiss_until"] = None
         if disposed:
             enrich_alert_db(
                 self.tenant_id,
@@ -887,13 +919,13 @@ class EnrichmentsBl:
                     ).first()
 
                     if latest_alert:
-                        alert_data = latest_alert.event.copy()
+                        alert_data = latest_alert.dict()
                         alert_data.update(
                             {
                                 key: value
                                 for key, value in new_enrichments.items()
                                 if value is not None
-                                or key in {"dismissed", "dismissUntil"}
+                                or key in {"dismissed", "dismiss_until"}
                             }
                         )
                         alert_dto = AlertDto(**alert_data)
@@ -977,7 +1009,7 @@ class EnrichmentsBl:
                     ).first()
 
                     if latest_alert:
-                        alert_data = latest_alert.event.copy()
+                        alert_data = latest_alert.dict()
                         alert_data.update(new_enrichments)
                         alert_dto = AlertDto(**alert_data)
                         self.elastic_client.index_alert(alert_dto)

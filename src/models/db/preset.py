@@ -2,7 +2,7 @@ import enum
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, conint, constr
+from pydantic import BaseModel, conint, constr, validator
 from sqlalchemy import UniqueConstraint
 from sqlmodel import JSON, Column, Field, Relationship, SQLModel
 
@@ -62,6 +62,28 @@ class Preset(SQLModel, table=True):
         return preset_dict
 
 
+class UserPresetColumnConfig(SQLModel, table=True):
+    """Per-user column configuration for a preset.
+
+    This stores column visibility, order, rename mappings, and formatting
+    preferences on a per-user basis, so each user can have their own
+    customized view of the same preset without affecting other users.
+    """
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "preset_id", "user_email"),
+    )
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    tenant_id: str = Field(foreign_key="tenant.id", index=True)
+    preset_id: UUID = Field(foreign_key="preset.id", index=True)
+    user_email: str = Field(index=True)
+    column_visibility: dict = Field(default={}, sa_column=Column(JSON))
+    column_order: list = Field(default=[], sa_column=Column(JSON))
+    column_rename_mapping: dict = Field(default={}, sa_column=Column(JSON))
+    column_time_formats: dict = Field(default={}, sa_column=Column(JSON))
+    column_list_formats: dict = Field(default={}, sa_column=Column(JSON))
+
+
 # datatype represents a query with CEL (str) and SQL (dict)
 class PresetSearchQuery(BaseModel):
     cel_query: constr(min_length=0)
@@ -92,6 +114,12 @@ class PresetDto(BaseModel, extra="ignore"):
     # static presets
     static: Optional[bool] = Field(default=False)
     tags: List[TagDto] = []
+ 
+    @validator("options", "tags", pre=True)
+    def ensure_list(cls, v):
+        if v is None:
+            return []
+        return v
 
     @property
     def cel_query(self) -> str:

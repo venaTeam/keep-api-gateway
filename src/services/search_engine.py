@@ -113,7 +113,7 @@ class SearchEngine:
             cel_query = " && ".join(f"({cel})" for cel in cel_list if cel)
 
         self.logger.info("Searching alerts by CEL")
-        db_alerts, _ = query_last_alerts(
+        db_alerts = query_last_alerts(
             tenant_id=self.tenant_id,
             query=QueryDto(
                 cel=cel_query,
@@ -143,9 +143,9 @@ class SearchEngine:
             + (f"where {query}" if query else "")
         )
         if timeframe:
-            elastic_sql_query += f" and lastReceived > now() - {timeframe}s"
+            elastic_sql_query += f" and last_received > now() - {timeframe}s"
 
-        elastic_sql_query += f" order by lastReceived desc limit {limit}"
+        elastic_sql_query += f" order by last_received desc limit {limit}"
         from opentelemetry import trace
 
         tracer = trace.get_tracer(__name__)

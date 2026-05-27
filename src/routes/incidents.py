@@ -2,9 +2,10 @@
 from typing import List, Optional
 from uuid import UUID
 
-
+from arq import ArqRedis
 from fastapi import (
     APIRouter,
+    BackgroundTasks,
     Body,
     Depends,
     HTTPException,
@@ -12,7 +13,6 @@ from fastapi import (
     Request,
     Response,
 )
-from pusher import Pusher
 from sqlmodel import Session
 
 from src.services.producers.base_event_handler import EventProducer
@@ -39,7 +39,7 @@ from src.repositories.db import (
     merge_incidents_to_id,
 )
 
-from src.repositories.dependencies import get_pusher_client
+from src.repositories.dependencies import extract_generic_body
 from src.repositories.incidents import (
     get_incident_facets,
     get_incident_facets_data,
@@ -80,6 +80,7 @@ from src.utils.pagination import (
 from src.utils.pluralize import pluralize
 from src.services.identity_manager.authenticatedentity import AuthenticatedEntity
 from src.services.identity_manager.identitymanagerfactory import IdentityManagerFactory
+from src.services.sse import notify_sse
 
 
 router = APIRouter()
@@ -92,20 +93,16 @@ logger = logging.getLogger(__name__)
     status_code=202,
     response_model=IncidentDto,
 )
-async def create_incident(
+def create_incident(
     incident_dto: IncidentDtoIn,
     authenticated_entity: AuthenticatedEntity = Depends(
         IdentityManagerFactory.get_auth_verifier(["write:incident"])
     ),
-    pusher_client: Pusher | None = Depends(get_pusher_client),
     session: Session = Depends(get_session),
-    event_producer: EventProducer = Depends(get_event_producer),
 ) -> IncidentDto:
     tenant_id = authenticated_entity.tenant_id
-    incident_bl = IncidentBl(
-        tenant_id, session, pusher_client, event_producer=event_producer
-    )
-    return await incident_bl.create_incident(incident_dto)
+    incident_bl = IncidentBl(tenant_id, session)
+    return incident_bl.create_incident(incident_dto)
 
 
 @router.get(
@@ -178,7 +175,7 @@ def get_all_incidents(
         authenticated_entity=authenticated_entity,
     )
 
-    incident_bl = IncidentBl(tenant_id, session=None, pusher_client=None)
+    incident_bl = IncidentBl(tenant_id, session=None)
 
     try:
         result = incident_bl.query_incidents(
@@ -382,7 +379,7 @@ def get_incident(
     "/{incident_id}",
     description="Update incident by id",
 )
-async def update_incident(
+def update_incident(
     incident_id: UUID,
     updated_incident_dto: IncidentDtoIn,
     generated_by_ai: bool = Query(
@@ -393,14 +390,10 @@ async def update_incident(
     authenticated_entity: AuthenticatedEntity = Depends(
         IdentityManagerFactory.get_auth_verifier(["write:incident"])
     ),
-    pusher_client: Pusher | None = Depends(get_pusher_client),
     session: Session = Depends(get_session),
-    event_producer: EventProducer = Depends(get_event_producer),
 ) -> IncidentDto:
     tenant_id = authenticated_entity.tenant_id
-    incident_bl = IncidentBl(
-        tenant_id, session=session, pusher_client=pusher_client, event_producer=event_producer
-    )
+    incident_bl = IncidentBl(tenant_id, session=session)
 
     current_incident = get_incident_by_id(tenant_id, incident_id)
     if not current_incident:
@@ -418,7 +411,7 @@ async def update_incident(
             f"Incident assigned to {updated_incident_dto.assignee}",
         )
 
-    new_incident_dto = await incident_bl.update_incident(
+    new_incident_dto = incident_bl.update_incident(
         incident_id, updated_incident_dto, generated_by_ai
     )
     return new_incident_dto
@@ -428,49 +421,34 @@ async def update_incident(
     "/bulk",
     description="Delete incidents in bulk",
 )
-async def bulk_delete_incidents(
+def bulk_delete_incidents(
     incident_ids: List[UUID] = Body(..., embed=True),
     authenticated_entity: AuthenticatedEntity = Depends(
         IdentityManagerFactory.get_auth_verifier(["write:incident"])
     ),
-    pusher_client: Pusher | None = Depends(get_pusher_client),
     session: Session = Depends(get_session),
-    event_producer: EventProducer = Depends(get_event_producer),
 ):
     tenant_id = authenticated_entity.tenant_id
-    incident_bl = IncidentBl(
-        tenant_id, session=session, pusher_client=pusher_client, event_producer=event_producer
-    )
-    for incident_id in incident_ids:
-        await incident_bl.delete_incident(incident_id)
-    from fastapi.responses import JSONResponse
-    return JSONResponse(
-        status_code=202, content={"message": "Incidents deleted successfully"}
-    )
+    incident_bl = IncidentBl(tenant_id, session)
+    incident_bl.bulk_delete_incidents(incident_ids)
+    return Response(status_code=202)
 
 
 @router.delete(
     "/{incident_id}",
     description="Delete incident by incident id",
 )
-async def delete_incident(
+def delete_incident(
     incident_id: UUID,
     authenticated_entity: AuthenticatedEntity = Depends(
         IdentityManagerFactory.get_auth_verifier(["write:incident"])
     ),
-    pusher_client: Pusher | None = Depends(get_pusher_client),
     session: Session = Depends(get_session),
-    event_producer: EventProducer = Depends(get_event_producer),
 ):
     tenant_id = authenticated_entity.tenant_id
-    incident_bl = IncidentBl(
-        tenant_id, session=session, pusher_client=pusher_client, event_producer=event_producer
-    )
-    await incident_bl.delete_incident(incident_id)
-    from fastapi.responses import JSONResponse
-    return JSONResponse(
-        status_code=202, content={"message": "Incident deleted successfully"}
-    )
+    incident_bl = IncidentBl(tenant_id, session)
+    incident_bl.delete_incident(incident_id)
+    return Response(status_code=202)
 
 
 @router.post(
@@ -484,7 +462,6 @@ async def split_incident(
     authenticated_entity: AuthenticatedEntity = Depends(
         IdentityManagerFactory.get_auth_verifier(["write:incident"])
     ),
-    pusher_client: Pusher | None = Depends(get_pusher_client),
     session: Session = Depends(get_session),
 ) -> SplitIncidentResponseDto:
     tenant_id = authenticated_entity.tenant_id
@@ -496,7 +473,7 @@ async def split_incident(
             "alert_fingerprints": command.alert_fingerprints,
         },
     )
-    incident_bl = IncidentBl(tenant_id, session, pusher_client)
+    incident_bl = IncidentBl(tenant_id, session)
     await incident_bl.add_alerts_to_incident(
         incident_id=command.destination_incident_id,
         alert_fingerprints=command.alert_fingerprints,
@@ -677,11 +654,10 @@ async def add_alerts_to_incident(
     authenticated_entity: AuthenticatedEntity = Depends(
         IdentityManagerFactory.get_auth_verifier(["write:incident"])
     ),
-    pusher_client: Pusher | None = Depends(get_pusher_client),
     session: Session = Depends(get_session),
 ):
     tenant_id = authenticated_entity.tenant_id
-    incident_bl = IncidentBl(tenant_id, session, pusher_client)
+    incident_bl = IncidentBl(tenant_id, session)
     await incident_bl.add_alerts_to_incident(
         incident_id, alert_fingerprints, is_created_by_ai
     )
@@ -701,17 +677,89 @@ def delete_alerts_from_incident(
         IdentityManagerFactory.get_auth_verifier(["write:incident"])
     ),
     session=Depends(get_session),
-    pusher_client: Pusher | None = Depends(get_pusher_client),
 ):
     tenant_id = authenticated_entity.tenant_id
-    incident_bl = IncidentBl(tenant_id, session, pusher_client)
+    incident_bl = IncidentBl(tenant_id, session)
     incident_bl.delete_alerts_from_incident(
         incident_id=incident_id, alert_fingerprints=fingerprints
     )
     return Response(status_code=202)
 
 
+@router.post(
+    "/event/{provider_type}",
+    description="Receive an alert event from a provider",
+    status_code=202,
+)
+async def receive_event(
+    provider_type: str,
+    bg_tasks: BackgroundTasks,
+    request: Request,
+    provider_id: str | None = None,
+    event=Depends(extract_generic_body),
+    authenticated_entity: AuthenticatedEntity = Depends(
+        IdentityManagerFactory.get_auth_verifier(["write:incident"])
+    ),
+) -> dict[str, str]:
+    trace_id = request.state.trace_id
+    logger.info(
+        "Received event",
+        extra={
+            "trace_id": trace_id,
+            "tenant_id": authenticated_entity.tenant_id,
+            "provider_type": provider_type,
+            "provider_id": provider_id,
+        },
+    )
 
+    provider_class = None
+    try:
+        provider_class = ProvidersFactory.get_provider_class(provider_type)
+    except ModuleNotFoundError:
+        raise HTTPException(
+            status_code=400, detail=f"Provider {provider_type} not found"
+        )
+    if not provider_class:
+        raise HTTPException(
+            status_code=400, detail=f"Provider {provider_type} not found"
+        )
+
+    # Parse the raw body
+    event = provider_class.format_incident(
+        event, authenticated_entity.tenant_id, provider_type, provider_id
+    )
+
+    if REDIS:
+        redis: ArqRedis = await get_pool()
+        job = await redis.enqueue_job(
+            "async_process_incident",
+            authenticated_entity.tenant_id,
+            provider_id,
+            provider_type,
+            event,
+            trace_id,
+            _queue_name=KEEP_ARQ_QUEUE_BASIC,
+        )
+        logger.info(
+            "Enqueued job",
+            extra={
+                "job_id": job.job_id,
+                "tenant_id": authenticated_entity.tenant_id,
+                "queue": KEEP_ARQ_QUEUE_BASIC,
+            },
+        )
+    else:
+        logger.info("Processing incident in the background")
+        bg_tasks.add_task(
+            process_incident,
+            {},
+            authenticated_entity.tenant_id,
+            provider_id,
+            provider_type,
+            event,
+            trace_id,
+        )
+    return Response(status_code=202)
 
 
 @router.post("/{incident_id}/assign", description="Assign incident to user")
@@ -761,7 +809,7 @@ def change_incident_status(
     incident_bl = IncidentBl(tenant_id, session)
 
     new_incident_dto = incident_bl.change_status(
-        incident_id, change.status, authenticated_entity
+        incident_id, change.status, authenticated_entity, change.dispose_on_new_alert
     )
 
     return new_incident_dto
@@ -779,7 +827,6 @@ def change_incident_severity(
         IdentityManagerFactory.get_auth_verifier(["write:incident"])
     ),
     session: Session = Depends(get_session),
-    pusher_client: Pusher | None = Depends(get_pusher_client),
 ) -> IncidentDto:
     tenant_id = authenticated_entity.tenant_id
     logger.info(
@@ -791,7 +838,7 @@ def change_incident_severity(
         },
     )
     incident_bl = IncidentBl(
-        tenant_id, session, pusher_client, user=authenticated_entity.email
+        tenant_id, session, user=authenticated_entity.email
     )
     incident_dto = incident_bl.update_severity(
         incident_id, change.severity, change.comment
@@ -806,7 +853,6 @@ def add_comment(
     authenticated_entity: AuthenticatedEntity = Depends(
         IdentityManagerFactory.get_auth_verifier(["write:incident"])
     ),
-    pusher_client: Pusher = Depends(get_pusher_client),
     session: Session = Depends(get_session),
 ) -> AlertAudit:
     extra = {
@@ -839,13 +885,42 @@ def add_comment(
     session.commit()
     session.refresh(comment)
 
-    if pusher_client:
-        pusher_client.trigger(
-            f"private-{authenticated_entity.tenant_id}", "incident-comment", {}
-        )
+    notify_sse(authenticated_entity.tenant_id, "incident-comment", {})
 
     logger.info("Added comment to incident", extra=extra)
     return comment
+
+
+@router.post(
+    "/ai/suggest",
+    description="Create incident with AI",
+    response_model=IncidentsClusteringSuggestion,
+    status_code=202,
+)
+async def create_with_ai(
+    alerts_fingerprints: List[str],
+    authenticated_entity: AuthenticatedEntity = Depends(
+        IdentityManagerFactory.get_auth_verifier(["write:incident"])
+    ),
+    session: Session = Depends(get_session),
+) -> IncidentsClusteringSuggestion:
+    tenant_id = authenticated_entity.tenant_id
+
+    # Get alerts data
+    alerts = get_last_alerts(tenant_id, fingerprints=alerts_fingerprints)
+    alerts_dto = convert_db_alerts_to_dto_alerts(alerts)
+
+    # Get topology data
+    topology_data = TopologiesService.get_all_topology_data(tenant_id, session)
+
+    # Create suggestions using AI
+    suggestion_bl = AISuggestionBl(tenant_id, session)
+    return suggestion_bl.suggest_incidents(
+        alerts_dto=alerts_dto,
+        topology_data=topology_data,
+        user_id=authenticated_entity.email,
+    )
+
 
 @router.post(
     "/ai/{suggestion_id}/commit",
@@ -860,13 +935,12 @@ async def commit_with_ai(
         IdentityManagerFactory.get_auth_verifier(["write:incident"])
     ),
     session: Session = Depends(get_session),
-    pusher_client: Pusher | None = Depends(get_pusher_client),
 ) -> List[IncidentDto]:
     tenant_id = authenticated_entity.tenant_id
 
     # Create business logic instances
     ai_feedback_bl = AISuggestionBl(tenant_id, session)
-    incident_bl = IncidentBl(tenant_id, session, pusher_client)
+    incident_bl = IncidentBl(tenant_id, session)
 
     # Commit incidents with feedback
     committed_incidents = await ai_feedback_bl.commit_incidents(
@@ -878,16 +952,13 @@ async def commit_with_ai(
         incident_bl=incident_bl,
     )
 
-    # Notify about changes if pusher client is available
-    if pusher_client:
-        try:
-            pusher_client.trigger(
-                f"private-{tenant_id}",
-                "incident-change",
-                {},
-            )
-        except Exception as e:
-            logger.error(f"Failed to notify client: {str(e)}")
+    # Notify about changes
+    try:
+        # Include incident IDs in the notification
+        incident_ids = [str(inc.id) for inc in committed_incidents]
+        notify_sse(tenant_id, "incident-change", {"incident_ids": incident_ids})
+    except Exception as e:
+        logger.error(f"Failed to notify client: {str(e)}")
 
     return committed_incidents
 
@@ -932,8 +1003,9 @@ async def enrich_incident(
     authenticated_entity: AuthenticatedEntity = Depends(
         IdentityManagerFactory.get_auth_verifier(["write:incident"])
     ),
-    pusher_client: Pusher | None = Depends(get_pusher_client),
     db_session: Session = Depends(get_session),
+    event_producer: EventProducer = Depends(get_event_producer),
+
 ) -> Response:
     """Enrich incident with additional data."""
     tenant_id = authenticated_entity.tenant_id
@@ -944,9 +1016,9 @@ async def enrich_incident(
         raise HTTPException(status_code=404, detail="Incident not found")
 
     # Use the existing enrichment infrastructure
-    enrichment_bl = EnrichmentsBl(tenant_id, db_session)
+    enrichment_bl = EnrichmentsBl(tenant_id, db_session, event_producer=event_producer)
 
-    enrichment_bl.enrich_entity(
+    await enrichment_bl.enrich_entity(
         fingerprint=incident_id,
         enrichments=enrichment.enrichments,
         action_type=ActionType.INCIDENT_ENRICH,
@@ -955,19 +1027,14 @@ async def enrich_incident(
         force=enrichment.force,
     )
 
-    # Notify clients if pusher is available
-    if pusher_client:
-        try:
-            pusher_client.trigger(
-                f"private-{tenant_id}",
-                "incident-change",
-                {},
-            )
-        except Exception as e:
-            logger.exception(
-                "Failed to notify clients about incident change",
-                extra={"error": str(e)},
-            )
+    # Notify clients about incident change
+    try:
+        notify_sse(tenant_id, "incident-change", {"incident_id": str(incident_id)})
+    except Exception as e:
+        logger.exception(
+            "Failed to notify clients about incident change",
+            extra={"error": str(e)},
+        )
 
     return Response(status_code=202)
 
@@ -983,7 +1050,8 @@ async def unenrich_incident(
     authenticated_entity: AuthenticatedEntity = Depends(
         IdentityManagerFactory.get_auth_verifier(["write:incident"])
     ),
-    pusher_client: Pusher | None = Depends(get_pusher_client),
+    event_producer: EventProducer = Depends(get_event_producer),
+
 ) -> Response:
     """Unenrich incident additional data."""
     tenant_id = authenticated_entity.tenant_id
@@ -1005,8 +1073,8 @@ async def unenrich_incident(
     }
 
     # Use the existing enrichment infrastructure
-    enrichment_bl = EnrichmentsBl(tenant_id)
-    enrichment_bl.enrich_entity(
+    enrichment_bl = EnrichmentsBl(tenant_id, event_producer=event_producer)
+    await enrichment_bl.enrich_entity(
         fingerprint=enrichment.fingerprint,
         enrichments=new_enrichments,
         action_type=ActionType.INCIDENT_UNENRICH,
@@ -1015,20 +1083,13 @@ async def unenrich_incident(
         force=True,
     )
 
-    # Notify clients if pusher is available
-    if pusher_client:
-        try:
-            pusher_client.trigger(
-                f"private-{tenant_id}",
-                "incident-change",
-                {},
-            )
-        except Exception as e:
-            logger.exception(
-                "Failed to notify clients about incident change",
-                extra={"error": str(e)},
-            )
+    # Notify clients about incident change
+    try:
+        notify_sse(tenant_id, "incident-change", {"incident_id": str(incident_id)})
+    except Exception as e:
+        logger.exception(
+            "Failed to notify clients about incident change",
+            extra={"error": str(e)},
+        )
 
     return Response(status_code=202)
-
-

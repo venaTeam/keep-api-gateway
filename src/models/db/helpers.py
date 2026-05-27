@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 NULL_FOR_DELETED_AT = datetime(1000, 1, 1, 0, 0)
 
 
-DB_CONNECTION_STRING = config("DATABASE_CONNECTION_STRING", default=None)
+DB_CONNECTION_STRING = config("DATABASE_CONNECTION_STRING", default="postgresql://keep:keep@localhost:5432/keep")
 # managed (mysql)
 if RUNNING_IN_CLOUD_RUN or DB_CONNECTION_STRING == "impersonate":
     # Millisecond precision

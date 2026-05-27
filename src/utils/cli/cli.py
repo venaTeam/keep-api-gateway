@@ -14,8 +14,8 @@ from dotenv import find_dotenv, load_dotenv
 from prettytable import PrettyTable
 
 
-from keep.functions import cyaml
-from keep.providers.providers_factory import ProviderEncoder, ProvidersFactory
+from src.functions import cyaml
+from src.providers.providers_factory import ProviderEncoder, ProvidersFactory
 
 load_dotenv(find_dotenv())
 
@@ -185,7 +185,7 @@ pass_info = click.make_pass_decorator(Info, ensure=True)
     required=False,
     default=f"{get_default_conf_file_path()}",
 )
-@pass_infoq
+@pass_info
 @click.pass_context
 def cli(ctx, info: Info, verbose: int, json: bool, keep_config: str):
     """Run Keep CLI."""
@@ -325,7 +325,7 @@ def whoami(info: Info):
 )
 def api(multi_tenant: bool, port: int, host: str):
     """Start the API."""
-    from keep.api import api
+    import src.main as api
 
     ctx = click.get_current_context()
 
@@ -1007,7 +1007,7 @@ def list_alerts(info: Info, filter: typing.List[str], export: bool):
 
     # aggregate by fingerprint
     aggregated_alerts = OrderedDict()
-    for alert in sorted(alerts, key=lambda x: x["lastReceived"]):
+    for alert in sorted(alerts, key=lambda x: x["last_received"]):
         if alert["fingerprint"] not in aggregated_alerts:
             aggregated_alerts[alert["fingerprint"]] = alert
 
@@ -1069,7 +1069,7 @@ def list_alerts(info: Info, filter: typing.List[str], export: bool):
                 alert["environment"],
                 alert["service"],
                 alert["source"],
-                alert["lastReceived"],
+                alert["last_received"],
             ]
         )
     print(table)

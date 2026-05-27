@@ -9,6 +9,7 @@ from src.repositories.cel_to_sql.ast_nodes import DataType
 from src.repositories.cel_to_sql.properties_metadata import (
     JsonFieldMapping,
     PropertyMetadataInfo,
+    SimpleFieldMapping,
 )
 from src.repositories.facets_query_builder.base_facets_query_builder import (
     BaseFacetsQueryBuilder,
@@ -100,3 +101,6 @@ class PostgreSqlFacetsQueryBuilder(BaseFacetsQueryBuilder):
 
         json_property_path = " -> ".join(all_columns[:-1])
         return literal_column(f"({json_property_path}) ->> {all_columns[-1]}")
+
+    def _handle_simple_mapping(self, field_mapping: SimpleFieldMapping):
+        return cast(super()._handle_simple_mapping(field_mapping), String)

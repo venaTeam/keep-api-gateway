@@ -6,14 +6,15 @@ from uuid import UUID, uuid4
 from pydantic import PrivateAttr
 from sqlalchemy import ForeignKey, ForeignKeyConstraint, UniqueConstraint
 from sqlalchemy_utils import UUIDType
-from sqlmodel import JSON, TEXT, Column, Field, Index, Relationship, SQLModel
+from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
+from sqlmodel import JSON, TEXT, Column, DateTime, Field, Index, Relationship, SQLModel, String, Integer, Boolean
 
 from src.config.core import config
 from src.models.db.helpers import DATETIME_COLUMN_TYPE, NULL_FOR_DELETED_AT
 from src.models.db.incident import Incident
 from src.models.db.tenant import Tenant
 
-db_connection_string = config("DATABASE_CONNECTION_STRING", default=None)
+db_connection_string = config("DATABASE_CONNECTION_STRING", default="postgresql://keep:keep@localhost:5432/keep")
 logger = logging.getLogger(__name__)
 
 
@@ -119,7 +120,43 @@ class Alert(SQLModel, table=True):
     )
     provider_type: str
     provider_id: str | None
-    event: dict = Field(sa_column=Column(JSON))
+    # === Source 1: External User Fields (11) ===
+    application: str | None = Field(sa_column=Column(String(200), nullable=True))
+    object: str | None = Field(sa_column=Column(String(200), nullable=True))
+    node_name: str | None = Field(sa_column=Column(String(200), nullable=True))
+    severity: str | None = Field(sa_column=Column(String(50), nullable=True))
+    message: str | None = Field(sa_column=Column(String(800), nullable=True))
+    operator: str | None = Field(sa_column=Column(String(100), nullable=True))
+    time_created: str | None = Field(sa_column=Column(String(50), nullable=True))
+    network: str | None = Field(default="nh", sa_column=Column(String(50), nullable=True, default="nh"))
+    timezone: str | None = Field(default="Asia/Jerusalem", sa_column=Column(String(50), nullable=True, default="Asia/Jerusalem"))
+    custom_key: str | None = Field(sa_column=Column(String(255), nullable=True))
+    expiry_in_minutes: int | None = Field(sa_column=Column(Integer, nullable=True))
+
+    # === Source 2: Appchi System Fields (6) ===
+    source: str | None = Field(sa_column=Column(String(255), nullable=True))
+    service: str | None = Field(sa_column=Column(String(255), nullable=True))
+    key_field: str | None = Field(sa_column=Column(String(255), nullable=True))
+    name: str | None = Field(sa_column=Column(String(255), nullable=True))
+    status: str | None = Field(sa_column=Column(String(50), nullable=True))
+    description: str | None = Field(sa_column=Column(TEXT, nullable=True))
+
+    # === Source 3: Keep Platform Fields (14) ===
+    last_received: datetime | None = Field(sa_column=Column(DateTime(timezone=True), nullable=True))
+    is_full_duplicate: bool | None = Field(default=False, sa_column=Column(Boolean, nullable=True, default=False))
+    is_partial_duplicate: bool | None = Field(default=False, sa_column=Column(Boolean, nullable=True, default=False))
+    duplicate_reason: str | None = Field(sa_column=Column(String(255), nullable=True))
+    note: str | None = Field(sa_column=Column(TEXT, nullable=True))
+    assignee: str | None = Field(sa_column=Column(String(255), nullable=True))
+    incident: str | None = Field(sa_column=Column(String(255), nullable=True))
+    dismiss_until: str | None = Field(sa_column=Column(String(255), nullable=True))
+    dismissed: bool = Field(default=False, sa_column=Column(Boolean, nullable=False, default=False))
+    started_at: str | None = Field(sa_column=Column(String(255), nullable=True))
+    firing_counter: int = Field(default=0, sa_column=Column(Integer, nullable=False, default=0))
+    unresolved_counter: int = Field(default=0, sa_column=Column(Integer, nullable=False, default=0))
+    firing_start_time: str | None = Field(sa_column=Column(String(255), nullable=True))
+    firing_start_time_since_last_resolved: str | None = Field(sa_column=Column(String(255), nullable=True))
+
     fingerprint: str = Field(index=True)  # Add the fingerprint field with an index
 
     # alert_hash is different than fingerprint, it is a hash of the alert itself
@@ -185,7 +222,7 @@ class AlertEnrichment(SQLModel, table=True):
     tenant_id: str = Field(foreign_key="tenant.id")
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     alert_fingerprint: str = Field(unique=True)
-    enrichments: dict = Field(sa_column=Column(JSON))
+    enrichments: dict = Field(sa_column=Column(JSON().with_variant(PG_JSONB, "postgresql")))
 
     # @tb: we need to think what to do about this relationship.
     alerts: list[Alert] = Relationship(
@@ -213,9 +250,9 @@ class AlertDeduplicationRule(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     created_by: str
     enabled: bool = Field(default=True)
-    fingerprint_fields: list[str] = Field(sa_column=Column(JSON), default=[])
+    fingerprint_fields: list[str] = Field(sa_column=Column(JSON().with_variant(PG_JSONB, "postgresql")), default=[])
     full_deduplication: bool = Field(default=False)
-    ignore_fields: list[str] = Field(sa_column=Column(JSON), default=[])
+    ignore_fields: list[str] = Field(sa_column=Column(JSON().with_variant(PG_JSONB, "postgresql")), default=[])
     priority: int = Field(default=0)  # for future use
     is_provisioned: bool = Field(default=False)
 
@@ -290,7 +327,7 @@ class AlertField(SQLModel, table=True):
 class AlertRaw(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     tenant_id: str = Field(foreign_key="tenant.id", index=True)
-    raw_alert: dict = Field(sa_column=Column(JSON))
+    raw_alert: dict = Field(sa_column=Column(JSON().with_variant(PG_JSONB, "postgresql")))
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     provider_type: str | None = Field(default=None)
     error: bool = Field(default=False, index=True)
@@ -357,4 +394,3 @@ class CommentMention(SQLModel, table=True):
         Index("ix_comment_mention_tenant_id", "tenant_id"),
         UniqueConstraint("comment_id", "mentioned_user_id", name="uq_comment_mention"),
     )
-

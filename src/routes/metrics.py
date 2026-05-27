@@ -85,7 +85,9 @@ def get_metrics(
         extra_labels = ""
         try:
             last_alert = last_alerts_for_incidents[str(incident.id)][0]
-            last_alert_dto = AlertDto(**last_alert.event)
+            payload = last_alert.dict()
+
+            last_alert_dto = AlertDto(**payload)
         except IndexError:
             last_alert_dto = None
 
