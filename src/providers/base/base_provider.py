@@ -33,7 +33,6 @@ from src.models.action_type import ActionType
 from src.models.alert import AlertDto, AlertSeverity, AlertStatus
 from src.models.db.topology import TopologyServiceInDto
 from src.models.incident import IncidentDto
-from src.utils.enrichment_helpers import parse_and_enrich_deleted_and_assignees
 from src.services.context_manager import ContextManager
 from src.providers.models.provider_config import ProviderConfig, ProviderScope
 from src.providers.models.provider_method import ProviderMethod
@@ -323,7 +322,16 @@ class BaseProvider(metaclass=abc.ABCMeta):
                 "action_type": ActionType.WORKFLOW_ENRICH,
                 "action_callee": "system",
                 "audit_enabled": audit_enabled,
+                # Phase 2: system/workflow write -> discard unknown keys (strict=False)
+                # instead of raising; "dispose_on_new_alert" status -> status_disposable.
+                "strict": False,
             }
+            # PHASE2-TODO: incident enrichment (entity_type == "incident") still flows
+            # through enrich_entity here, which now writes LastAlert typed columns and
+            # will no-op for an incident UUID (no LastAlert row, D1). Incident
+            # enrichment stays on AlertEnrichment until Phase 3 — if workflow-driven
+            # incident enrichment is in use, this path needs to be split to write
+            # AlertEnrichment for incidents. Confirm before relying on it.
 
             if _enrichments:
                 # enrich the alert with _enrichments
@@ -607,9 +615,9 @@ class BaseProvider(metaclass=abc.ABCMeta):
                         alert_enrichment.alert_fingerprint
                     )
                     for alert_to_enrich in alerts_to_enrich:
-                        parse_and_enrich_deleted_and_assignees(
-                            alert_to_enrich, alert_enrichment.enrichments
-                        )
+                        # Phase 2: alert_enrichment.enrichments is the typed user-state
+                        # dict sourced from LastAlert columns (status/assignee/note/
+                        # dismiss_mode/dismissed_until/deleted + derived `dismissed`).
                         for enrichment in alert_enrichment.enrichments:
                             # set the enrichment
                             setattr(

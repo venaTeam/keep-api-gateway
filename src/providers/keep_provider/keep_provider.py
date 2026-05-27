@@ -14,6 +14,14 @@ try:
 except ImportError:
     get_alerts_with_filters = None
 try:
+    from src.repositories.db import (
+        get_last_alert_by_fingerprint,
+        last_alert_enrichments_dict,
+    )
+except ImportError:
+    get_last_alert_by_fingerprint = None
+    last_alert_enrichments_dict = None
+try:
     from src.models.alert import AlertDto, AlertStatus
 except ImportError:
     AlertDto = None
@@ -140,8 +148,17 @@ class KeepProvider(BaseProvider):
                         continue
                     alert_event = alert.dict()
 
-                    if alert.alert_enrichment:
-                        alert_event["enrichments"] = alert.alert_enrichment.enrichments
+                    # Phase 2: alert enrichment state lives on the per-fingerprint
+                    # LastAlert typed columns; build the enrichments dict from it.
+                    last_alert = getattr(alert, "_last_alert", None)
+                    if last_alert is None:
+                        last_alert = get_last_alert_by_fingerprint(
+                            self.context_manager.tenant_id, alert.fingerprint
+                        )
+                    if last_alert is not None:
+                        alert_event["enrichments"] = last_alert_enrichments_dict(
+                            last_alert
+                        )
                     alerts.append(alert_event)
                     fingerprints[alert.fingerprint] = True
         else:
