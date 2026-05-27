@@ -96,6 +96,16 @@ def test_normalize_dismissed_false_clears():
     assert out["dismissed_until"] is None
 
 
+def test_normalize_dismissed_false_preserves_explicit_status():
+    # change-status modal moves suppressed -> acknowledged: it sends an explicit
+    # status alongside dismissed=false. The dismiss state must clear, but the
+    # explicit status must NOT be clobbered to None (regression guard).
+    out = normalize_enrichments({"dismissed": False, "status": "acknowledged"})
+    assert out["status"] == "acknowledged"
+    assert out["dismiss_mode"] is None
+    assert out["dismissed_until"] is None
+
+
 def test_normalize_unknown_key_strict_raises():
     with pytest.raises(ValueError):
         normalize_enrichments({"ticket_url": "https://x"}, strict=True)
