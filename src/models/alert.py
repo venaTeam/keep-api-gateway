@@ -90,6 +90,11 @@ class AlertDto(BaseModel):
     dismiss_until: str | None = Field(default=None, alias="dismissUntil")  # The time until the alert is dismissed
     # DO NOT MOVE DISMISSED ABOVE dismissedUntil since it is used in root_validator
     dismissed: bool = False  # Whether the alert has been dismissed
+    # Phase 2: typed dismiss state from lastalert (dismissed stays as a backward-compat
+    # shim derived from status=='suppressed' until the UI migrates to dismiss_mode).
+    dismiss_mode: str | None = Field(default=None, alias="dismissMode")  # permanent|until_resolved|dismiss_until
+    dismissed_until: str | None = Field(default=None, alias="dismissedUntil")  # expiry for dismiss_until mode
+    deleted: bool = False  # Whether the alert has been deleted (soft delete)
     assignee: str | None = None  # The assignee of the alert
     provider_id: str | None = Field(default=None, alias="providerId")  # The provider id
     provider_type: str | None = Field(default=None, alias="providerType")  # The provider type

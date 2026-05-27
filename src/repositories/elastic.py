@@ -9,7 +9,6 @@ from src.repositories.dependencies import SINGLE_TENANT_UUID
 from src.repositories.tenant_configuration import TenantConfiguration
 from src.models.alert import AlertDto, AlertSeverity
 from src.utils.cel_utils import preprocess_cel_expression
-from src.utils.enrichment_helpers import parse_and_enrich_deleted_and_assignees
 
 
 class ElasticClient:
@@ -106,6 +105,9 @@ class ElasticClient:
         fingerprints = [
             result["_source"]["fingerprint"] for result in results["hits"]["hits"]
         ]
+        # Phase 2: get_enrichments now returns the typed user-state dict sourced
+        # from LastAlert columns (status/assignee/note/dismiss_mode/dismissed_until/
+        # deleted + derived `dismissed`).
         enrichments = get_enrichments(self.tenant_id, fingerprints)
         enrichments_by_fingerprint = {
             enrichment.alert_fingerprint: enrichment.enrichments
@@ -114,12 +116,28 @@ class ElasticClient:
         for result in results["hits"]["hits"]:
             alert = result["_source"]
             alert_dto = AlertDto(**alert)
-            if alert_dto.fingerprint in enrichments_by_fingerprint:
-                parse_and_enrich_deleted_and_assignees(
-                    alert_dto, enrichments_by_fingerprint[alert_dto.fingerprint]
-                )
+            fp_enrichments = enrichments_by_fingerprint.get(alert_dto.fingerprint)
+            if fp_enrichments:
+                self._apply_enrichments_to_dto(alert_dto, fp_enrichments)
             alert_dtos.append(alert_dto)
         return alert_dtos
+
+    @staticmethod
+    def _apply_enrichments_to_dto(alert_dto: AlertDto, enrichments: dict):
+        """Apply the LastAlert-sourced typed user-state dict onto an AlertDto
+        built from an Elasticsearch document (Phase 2)."""
+        if enrichments.get("status") is not None:
+            alert_dto.status = enrichments["status"]
+        if enrichments.get("assignee") is not None:
+            alert_dto.assignee = enrichments["assignee"]
+        if enrichments.get("note") is not None:
+            alert_dto.note = enrichments["note"]
+        if enrichments.get("dismiss_mode") is not None:
+            alert_dto.dismiss_mode = enrichments["dismiss_mode"]
+        if enrichments.get("dismissed_until") is not None:
+            alert_dto.dismiss_until = str(enrichments["dismissed_until"])
+        alert_dto.dismissed = bool(enrichments.get("dismissed", False))
+        alert_dto.deleted = bool(enrichments.get("deleted", False))
 
     def run_query(self, query: str, limit: int = 1000):
         if not self.enabled:
@@ -271,9 +289,11 @@ class ElasticClient:
             self.logger.error(f"Alert with fingerprint {alert_fingerprint} not found")
             return
 
-        # enrich the alert
-        alert["_source"].update(alert_enrichments)
+        # Phase 2: enrich typed user-state fields on the AlertDto, then re-index.
+        # `alert_enrichments` may carry the translated typed keys (status, assignee,
+        # note, dismiss_mode, dismissed_until, deleted) and the derived `dismissed`.
         enriched_alert = AlertDto(**alert["_source"])
+        self._apply_enrichments_to_dto(enriched_alert, alert_enrichments)
         # index the enriched alert
         self.index_alert(enriched_alert)
         self.logger.debug(f"Alert {alert_fingerprint} enriched and indexed")
