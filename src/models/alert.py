@@ -103,6 +103,10 @@ class AlertDto(BaseModel):
         default=None, alias="startedAt"  # The time the alert started - e.g. if alert triggered multiple times, it will be the time of the first trigger (calculated on querying)
     )
     incident: str | None = None
+    # Phase 2: ticket linkage typed columns on lastalert (assign-ticket modal).
+    ticket_type: str | None = Field(default=None, alias="ticketType")
+    ticket_url: str | None = Field(default=None, alias="ticketUrl")
+    ticket_provider_id: str | None = Field(default=None, alias="ticketProviderId")
 
     @validator("id", pre=True)
     def parse_id(cls, v):

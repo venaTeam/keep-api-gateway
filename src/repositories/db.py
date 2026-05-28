@@ -293,6 +293,9 @@ LASTALERT_ENRICHMENT_COLUMNS = {
     "assignee",
     "note",
     "deleted",
+    "ticket_type",
+    "ticket_url",
+    "ticket_provider_id",
 }
 # Legacy keys accepted at the write boundary and translated below.
 _LEGACY_ENRICHMENT_KEYS = {"dismissed", "dismiss_until"}
@@ -372,7 +375,15 @@ def last_alert_enrichments_dict(last_alert: "LastAlert") -> dict:
     with a space separator and would corrupt UI parsing.
     """
     data: dict = {}
-    for col_name in ("status", "assignee", "note", "dismiss_mode"):
+    for col_name in (
+        "status",
+        "assignee",
+        "note",
+        "dismiss_mode",
+        "ticket_type",
+        "ticket_url",
+        "ticket_provider_id",
+    ):
         val = getattr(last_alert, col_name, None)
         if val is not None:
             data[col_name] = val
