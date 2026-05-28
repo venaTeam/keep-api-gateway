@@ -25,6 +25,7 @@ from src.repositories.db import (
     get_mapping_rule_by_id,
     get_session_sync,
     is_all_alerts_resolved,
+    normalize_enrichments,
 )
 from src.repositories.db import enrich_entity as enrich_alert_db
 from src.repositories.elastic import ElasticClient
@@ -258,6 +259,10 @@ class EnrichmentsBl:
                     action_callee="system",
                     action_description=f"Alert enriched with extraction from rule `{rule.name}`",
                     should_exist=False,
+                    # Phase 2: extraction rules emit arbitrary regex-group keys that
+                    # have no destination in the strict typed schema. System write
+                    # -> discard unknown keys with a warning instead of raising 422.
+                    strict=False,
                 )
                 self._add_enrichment_log(
                     "Event enriched with extraction rule",
@@ -467,6 +472,10 @@ class EnrichmentsBl:
                 action_callee="system",
                 action_description=f"Alert enriched with mapping from rule `{rule.name}`",
                 should_exist=False,
+                # Phase 2: mapping rules emit arbitrary user-defined keys that
+                # have no destination in the strict typed schema. System write
+                # -> discard unknown keys with a warning instead of raising 422.
+                strict=False,
             )
 
             self._add_enrichment_log(
@@ -667,10 +676,20 @@ class EnrichmentsBl:
         if produce_event:
             # Produce a single BATCH_ENRICH event for the entire batch. Phase 2:
             # propagate the typed status_disposable flag (from dispose_on_new_alert)
-            # so the event-handler consumer writes the same typed columns.
+            # so the event-handler consumer writes the same typed columns. Also
+            # normalize legacy keys (dismissed -> status/dismiss_mode) so the
+            # consumer sees the same translated payload the DB stored — incident
+            # writes keep arbitrary keys verbatim.
             safe_event = self._apply_dispose_on_new_alert(
                 enrichments, dispose_on_new_alert
             ).copy()
+            if entity_type != "incident":
+                try:
+                    safe_event = normalize_enrichments(safe_event, strict=strict)
+                except ValueError:
+                    # Per-fingerprint enrich_entity above already validated the
+                    # payload; this branch is defensive only.
+                    raise
             safe_event.update({
                 "action_type": action_type.value,
                 "action_callee": action_callee,
@@ -761,6 +780,19 @@ class EnrichmentsBl:
             enrichments = self._apply_dispose_on_new_alert(
                 enrichments, dispose_on_new_alert
             )
+            # Phase 2: normalize ONCE here so the local `enrichments` used for the
+            # Kafka event and the Elasticsearch enrich call carries the same typed
+            # keys the DB layer writes. Otherwise raw `dismissed: True` (or other
+            # legacy keys) would reach ES/Kafka while the DB stored translated
+            # status/dismiss_mode, leaving ES and the consumer out of sync (HIGH).
+            # The DB layer's normalize_enrichments is idempotent on already-typed
+            # input, so re-running it inside enrich_alert_db is harmless.
+            try:
+                enrichments = normalize_enrichments(enrichments, strict=strict)
+            except ValueError:
+                # Re-raise so the route can map to HTTP 422; the DB layer would
+                # have raised the same error a few lines below anyway.
+                raise
 
         # Write enrichment to DB (synchronous, ensures data is persisted immediately).
         # Alert -> typed LastAlert columns; incident -> legacy AlertEnrichment JSONB.

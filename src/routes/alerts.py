@@ -369,9 +369,16 @@ def get_alert_history(
         limit=1000,
     )
     # occurrences: raw provider data per firing — no enrichment merge.
-    occurrences = [
-        AlertDto(**alert.dict()) for alert in db_alerts
-    ]
+    # Phase 2: alert.last_received was dropped (P2-M2). The per-occurrence event
+    # time lives on alert.timestamp. Carry it forward so each history row reports
+    # its actual firing time instead of falling through the AlertDto validator's
+    # `datetime.now()` default (which would make every row look like "just now").
+    occurrences = []
+    for alert in db_alerts:
+        payload = alert.dict()
+        if not payload.get("last_received") and alert.timestamp is not None:
+            payload["last_received"] = alert.timestamp
+        occurrences.append(AlertDto(**payload))
 
     # activity: the audit event stream (already ordered desc by timestamp).
     audit_rows = get_alert_audit_db(tenant_id, fingerprint, limit=1000)
