@@ -22,6 +22,7 @@ from src.models.db.alert import Alert, AlertAudit, AlertEnrichment, LastAlert
 from src.repositories.db import (
     enrich_entity,
     get_last_alert_by_fingerprint,
+    last_alert_enrichments_dict,
     normalize_enrichments,
     set_last_alert,
 )
@@ -466,3 +467,73 @@ def test_incident_unenrich_force_replaces(db_session):
     )
     enr = _get_alertenrichment(db_session, incident_id)
     assert enr.enrichments == {"foo": "1"}
+
+
+# --------------------------------------------------------------------------- #
+# REVIEW fixes — guard the regressions found in the Phase 2 review pass.
+# --------------------------------------------------------------------------- #
+def test_extraction_mapping_nonstrict_discards_unknown_keys(db_session):
+    """strict=False is the contract for extraction/mapping rule writes (system).
+    A regex-named-group key like `region` has no destination in the typed
+    schema and must be silently discarded — NOT raise -> 422."""
+    alert = _make_alert(db_session, "fp-extract")
+    _make_last_alert(db_session, alert, status="acknowledged")
+
+    enrich_entity(
+        SINGLE_TENANT_UUID,
+        "fp-extract",
+        # `region` is the typical extraction-rule output (no column for it)
+        {"region": "us-east-1", "status": "suppressed"},
+        action_type=ActionType.EXTRACTION_RULE_ENRICH,
+        action_callee="system",
+        action_description="t",
+        session=db_session,
+        strict=False,
+    )
+    la = get_last_alert_by_fingerprint(SINGLE_TENANT_UUID, "fp-extract", db_session)
+    # the known key was written; the unknown key was discarded silently
+    assert la.status == "suppressed"
+
+
+def test_last_alert_enrichments_dict_emits_iso_dismissed_until(db_session):
+    """dismissed_until is a typed DateTime column. The dict returned to
+    Elastic/Kafka/AlertDto consumers must be a canonical ISO 8601 string —
+    str(datetime) is "YYYY-MM-DD HH:MM:SS+00:00" (with a space) and would
+    corrupt UI parsing."""
+    alert = _make_alert(db_session, "fp-isots")
+    ts = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    _make_last_alert(
+        db_session,
+        alert,
+        status="suppressed",
+        dismiss_mode="dismiss_until",
+        dismissed_until=ts,
+    )
+
+    la = get_last_alert_by_fingerprint(SINGLE_TENANT_UUID, "fp-isots", db_session)
+    d = last_alert_enrichments_dict(la)
+    assert isinstance(d["dismissed_until"], str)
+    # Canonical ISO with a 'T' separator (datetime.isoformat default)
+    assert "T" in d["dismissed_until"]
+
+
+def test_dto_dismiss_until_legacy_alias_populated(db_session):
+    """The pre-Phase-2 UI reads `dismiss_until` (legacy alias dismissUntil); the
+    DTO builder must populate it from lastalert.dismissed_until so the legacy
+    field stays in sync alongside the new `dismissed_until` field."""
+    alert = _make_alert(db_session, "fp-legacy", status="firing")
+    ts = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    _make_last_alert(
+        db_session,
+        alert,
+        status="suppressed",
+        dismiss_mode="dismiss_until",
+        dismissed_until=ts,
+    )
+
+    dtos = convert_db_alerts_to_dto_alerts([alert], session=db_session)
+    assert len(dtos) == 1
+    dto = dtos[0]
+    assert dto.dismiss_until is not None
+    assert dto.dismissed_until is not None
+    assert dto.dismiss_until == dto.dismissed_until
