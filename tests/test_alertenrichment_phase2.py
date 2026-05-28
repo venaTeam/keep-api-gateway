@@ -108,13 +108,17 @@ def test_normalize_dismissed_false_preserves_explicit_status():
 
 
 def test_normalize_unknown_key_strict_raises():
+    # `unknown_field` is intentionally NOT in LASTALERT_ENRICHMENT_COLUMNS.
+    # (ticket_url is now allow-listed as a typed column; use a still-unknown key.)
     with pytest.raises(ValueError):
-        normalize_enrichments({"ticket_url": "https://x"}, strict=True)
+        normalize_enrichments({"unknown_field": "x"}, strict=True)
 
 
 def test_normalize_unknown_key_nonstrict_discards():
-    out = normalize_enrichments({"ticket_url": "https://x", "status": "acknowledged"}, strict=False)
-    assert "ticket_url" not in out
+    out = normalize_enrichments(
+        {"unknown_field": "x", "status": "acknowledged"}, strict=False
+    )
+    assert "unknown_field" not in out
     assert out["status"] == "acknowledged"
 
 
@@ -148,7 +152,7 @@ def test_enrich_unknown_key_raises_strict(db_session):
         enrich_entity(
             SINGLE_TENANT_UUID,
             "fp-unknown",
-            {"ticket_url": "https://x"},
+            {"unknown_field": "x"},
             action_type=ActionType.GENERIC_ENRICH,
             action_callee="bob@x",
             action_description="t",
