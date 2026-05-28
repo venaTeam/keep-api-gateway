@@ -902,26 +902,6 @@ class EnrichmentsBl:
         )
         return self.db_session.exec(query).all()
 
-    def dispose_enrichments(self, fingerprint: str):
-        """
-        Phase 2: no-op. Disposable enrichments (the `disposable_*` JSONB wrapper)
-        are gone — "dispose on new alert" is now the typed `status_disposable`
-        flag on LastAlert, cleared on the next non-resolved re-fire inside
-        set_last_alert(). Kept as a no-op so existing callers don't break.
-        """
-        return
-
-    def make_enrichments_permanent(
-        self, fingerprint: str, dispose_keys: list[str] = None
-    ):
-        """
-        Phase 2: no-op. The dispose/make-permanent dance is replaced by typed
-        LastAlert columns + set_last_alert() clearing logic (status_disposable on
-        re-fire; dismiss_mode on resolve). Kept as a no-op so existing callers
-        don't break.
-        """
-        return
-
     def _track_enrichment_event(
         self,
         alert_id: UUID | None,

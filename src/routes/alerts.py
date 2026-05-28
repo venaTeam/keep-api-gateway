@@ -800,8 +800,8 @@ async def batch_enrich_alerts(
 
         enrichments = deepcopy(enrich_data.enrichments)
 
-        # Phase 2: status/dismiss clearing on resolve happens in set_last_alert;
-        # no more make_enrichments_permanent. Unknown keys -> ValueError -> 422.
+        # Phase 2: status/dismiss clearing on resolve happens in set_last_alert.
+        # Unknown keys -> ValueError -> 422.
         try:
             await enrichment_bl.batch_enrich(
                 fingerprints=fingerprints,
@@ -936,8 +936,7 @@ async def _enrich_alert(
 
         enrichments = deepcopy(enrich_data.enrichments)
 
-        # Phase 2: status/dismiss clearing on resolve happens in set_last_alert;
-        # no more make_enrichments_permanent.
+        # Phase 2: status/dismiss clearing on resolve happens in set_last_alert.
 
         enrichment_kwargs = {
             "fingerprint": enrich_data.fingerprint,

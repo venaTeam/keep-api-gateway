@@ -12,6 +12,7 @@ Covers the canonical shared-logic spec for keep-api-gateway:
   - DTO build sources user state + tracking from LastAlert
 """
 
+import re
 from datetime import datetime, timezone
 
 import pytest
@@ -517,8 +518,13 @@ def test_last_alert_enrichments_dict_emits_iso_dismissed_until(db_session):
     la = get_last_alert_by_fingerprint(SINGLE_TENANT_UUID, "fp-isots", db_session)
     d = last_alert_enrichments_dict(la)
     assert isinstance(d["dismissed_until"], str)
-    # Canonical ISO with a 'T' separator (datetime.isoformat default)
-    assert "T" in d["dismissed_until"]
+    # Canonical millisecond-precision UTC wire format with a 'Z' suffix —
+    # exactly "YYYY-MM-DDTHH:MM:SS.mmmZ" (what AlertDto.validate_dismissed
+    # strptimes). NOT the "+00:00"-offset form that .isoformat() produces.
+    assert re.match(
+        r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$", d["dismissed_until"]
+    )
+    assert not d["dismissed_until"].endswith("+00:00")
 
 
 def test_dto_dismiss_until_legacy_alias_populated(db_session):

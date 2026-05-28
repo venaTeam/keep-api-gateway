@@ -92,8 +92,8 @@ class AlertDto(BaseModel):
     dismissed: bool = False  # Whether the alert has been dismissed
     # Phase 2: typed dismiss state from lastalert (dismissed stays as a backward-compat
     # shim derived from status=='suppressed' until the UI migrates to dismiss_mode).
-    dismiss_mode: str | None = Field(default=None, alias="dismissMode")  # permanent|until_resolved|dismiss_until
-    dismissed_until: str | None = Field(default=None, alias="dismissedUntil")  # expiry for dismiss_until mode
+    dismiss_mode: str | None = None  # permanent|until_resolved|dismiss_until
+    dismissed_until: str | None = None  # expiry for dismiss_until mode
     deleted: bool = False  # Whether the alert has been deleted (soft delete)
     assignee: str | None = None  # The assignee of the alert
     provider_id: str | None = Field(default=None, alias="providerId")  # The provider id
@@ -104,9 +104,9 @@ class AlertDto(BaseModel):
     )
     incident: str | None = None
     # Phase 2: ticket linkage typed columns on lastalert (assign-ticket modal).
-    ticket_type: str | None = Field(default=None, alias="ticketType")
-    ticket_url: str | None = Field(default=None, alias="ticketUrl")
-    ticket_provider_id: str | None = Field(default=None, alias="ticketProviderId")
+    ticket_type: str | None = None
+    ticket_url: str | None = None
+    ticket_provider_id: str | None = None
 
     @validator("id", pre=True)
     def parse_id(cls, v):

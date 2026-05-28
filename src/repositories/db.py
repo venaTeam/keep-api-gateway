@@ -40,7 +40,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.exc import IntegrityError, InternalError, OperationalError
 from sqlalchemy.orm import foreign, joinedload, subqueryload
 from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.orm.exc import StaleDataError
@@ -299,6 +299,17 @@ LASTALERT_ENRICHMENT_COLUMNS = {
 }
 # Legacy keys accepted at the write boundary and translated below.
 _LEGACY_ENRICHMENT_KEYS = {"dismissed", "dismiss_until"}
+# Phase 2: system-owned tracking columns set by set_last_alert(tracking=...).
+# Guards the tracking write loops so a stray key can never clobber a typed
+# user-enrichment column (defense-in-depth, mirrors keep-event-handler).
+LASTALERT_TRACKING_COLUMNS = {
+    "last_received",
+    "firing_counter",
+    "unresolved_counter",
+    "started_at",
+    "firing_start_time",
+    "firing_start_time_since_last_resolved",
+}
 
 
 def normalize_enrichments(enrichments: dict, strict: bool = True) -> dict:
@@ -4393,6 +4404,16 @@ def set_last_alert(
                     # Phase 2: write relocated tracking columns when provided
                     if tracking is not None:
                         for _col, _val in tracking.items():
+                            if _col not in LASTALERT_TRACKING_COLUMNS:
+                                logger.warning(
+                                    "phase2.set_last_alert.ignored_tracking_key",
+                                    extra={
+                                        "tenant_id": tenant_id,
+                                        "fingerprint": fingerprint,
+                                        "key": _col,
+                                    },
+                                )
+                                continue
                             setattr(last_alert, _col, _val)
 
                     # Phase 2: status/dismiss clearing on this occurrence's
@@ -4426,6 +4447,16 @@ def set_last_alert(
                     # Phase 2: write relocated tracking columns when provided
                     if tracking is not None:
                         for _col, _val in tracking.items():
+                            if _col not in LASTALERT_TRACKING_COLUMNS:
+                                logger.warning(
+                                    "phase2.set_last_alert.ignored_tracking_key",
+                                    extra={
+                                        "tenant_id": tenant_id,
+                                        "fingerprint": fingerprint,
+                                        "key": _col,
+                                    },
+                                )
+                                continue
                             setattr(new_last_alert, _col, _val)
                     session.add(new_last_alert)
 
@@ -4477,6 +4508,21 @@ def set_last_alert(
                 session.rollback()
                 logger.exception(
                     f"No active sql transaction while updating lastalert for `{fingerprint}`, retry #{attempt}",
+                    extra={
+                        "alert_id": alert.id,
+                        "tenant_id": tenant_id,
+                        "fingerprint": fingerprint,
+                    },
+                )
+                if attempt == max_retries:
+                    raise ex
+                # Small delay before retry to avoid hammering the database
+                time.sleep(0.1 * attempt)
+                continue
+            except InternalError as ex:
+                session.rollback()
+                logger.exception(
+                    f"Internal error while updating lastalert for `{fingerprint}`, retry #{attempt}",
                     extra={
                         "alert_id": alert.id,
                         "tenant_id": tenant_id,
