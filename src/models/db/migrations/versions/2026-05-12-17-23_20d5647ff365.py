@@ -18,39 +18,53 @@ down_revision = "e1932c411f61"
 branch_labels = None
 depends_on = None
 
+# camelCase (old) -> snake_case (new)
+_RENAMES = {
+    "lastReceived": "last_received",
+    "dismissUntil": "dismiss_until",
+    "duplicateReason": "duplicate_reason",
+    "firingCounter": "firing_counter",
+    "firingStartTime": "firing_start_time",
+    "firingStartTimeSinceLastResolved": "firing_start_time_since_last_resolved",
+    "isFullDuplicate": "is_full_duplicate",
+    "isPartialDuplicate": "is_partial_duplicate",
+    "startedAt": "started_at",
+    "unresolvedCounter": "unresolved_counter",
+}
+
+
+def _alert_columns():
+    return {c["name"] for c in sa.inspect(op.get_bind()).get_columns("alert")}
+
+
 def upgrade() -> None:
-    # Rename camelCase fields to snake_case and drop enriched_fields
+    # Rename camelCase fields to snake_case and drop enriched_fields.
+    # Guarded for replay-from-base: the upstream model-introspecting migration
+    # (e4ad6ddc7e90) now creates snake_case columns directly, so on a fresh DB
+    # there is no camelCase column to rename and these become no-ops. On a DB
+    # migrated when the model still had camelCase, the renames run as before.
+    existing = _alert_columns()
     with op.batch_alter_table("alert", schema=None) as batch_op:
-        batch_op.alter_column("lastReceived", new_column_name="last_received")
-        batch_op.alter_column("dismissUntil", new_column_name="dismiss_until")
-        batch_op.alter_column("duplicateReason", new_column_name="duplicate_reason")
-        batch_op.alter_column("firingCounter", new_column_name="firing_counter")
-        batch_op.alter_column("firingStartTime", new_column_name="firing_start_time")
-        batch_op.alter_column("firingStartTimeSinceLastResolved", new_column_name="firing_start_time_since_last_resolved")
-        batch_op.alter_column("isFullDuplicate", new_column_name="is_full_duplicate")
-        batch_op.alter_column("isPartialDuplicate", new_column_name="is_partial_duplicate")
-        batch_op.alter_column("startedAt", new_column_name="started_at")
-        batch_op.alter_column("unresolvedCounter", new_column_name="unresolved_counter")
-        batch_op.drop_column("enriched_fields")
+        for old, new in _RENAMES.items():
+            if old in existing and new not in existing:
+                batch_op.alter_column(old, new_column_name=new)
+        if "enriched_fields" in existing:
+            batch_op.drop_column("enriched_fields")
+
 
 def downgrade() -> None:
-    # Rename snake_case fields back to camelCase and recreate enriched_fields
+    # Reverse: recreate enriched_fields and rename snake_case back to camelCase.
+    existing = _alert_columns()
     with op.batch_alter_table("alert", schema=None) as batch_op:
-        batch_op.add_column(
-            sa.Column(
-                "enriched_fields",
-                postgresql.JSONB(astext_type=sa.Text()),
-                autoincrement=False,
-                nullable=True,
+        if "enriched_fields" not in existing:
+            batch_op.add_column(
+                sa.Column(
+                    "enriched_fields",
+                    postgresql.JSONB(astext_type=sa.Text()),
+                    autoincrement=False,
+                    nullable=True,
+                )
             )
-        )
-        batch_op.alter_column("last_received", new_column_name="lastReceived")
-        batch_op.alter_column("dismiss_until", new_column_name="dismissUntil")
-        batch_op.alter_column("duplicate_reason", new_column_name="duplicateReason")
-        batch_op.alter_column("firing_counter", new_column_name="firingCounter")
-        batch_op.alter_column("firing_start_time", new_column_name="firingStartTime")
-        batch_op.alter_column("firing_start_time_since_last_resolved", new_column_name="firingStartTimeSinceLastResolved")
-        batch_op.alter_column("is_full_duplicate", new_column_name="isFullDuplicate")
-        batch_op.alter_column("is_partial_duplicate", new_column_name="isPartialDuplicate")
-        batch_op.alter_column("started_at", new_column_name="startedAt")
-        batch_op.alter_column("unresolved_counter", new_column_name="unresolvedCounter")
+        for old, new in _RENAMES.items():
+            if new in existing and old not in existing:
+                batch_op.alter_column(new, new_column_name=old)
