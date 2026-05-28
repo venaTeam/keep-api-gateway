@@ -135,7 +135,15 @@ class ElasticClient:
         if enrichments.get("dismiss_mode") is not None:
             alert_dto.dismiss_mode = enrichments["dismiss_mode"]
         if enrichments.get("dismissed_until") is not None:
-            alert_dto.dismiss_until = str(enrichments["dismissed_until"])
+            ts = enrichments["dismissed_until"]
+            # `last_alert_enrichments_dict` emits an ISO string, but defend against
+            # callers that still pass a `datetime` directly (e.g. translated
+            # route-side enrichments before they hit normalize) so the DTO field
+            # never receives the Python-default "YYYY-MM-DD HH:MM:SS" form.
+            if hasattr(ts, "isoformat"):
+                ts = ts.isoformat()
+            alert_dto.dismiss_until = ts
+            alert_dto.dismissed_until = ts
         alert_dto.dismissed = bool(enrichments.get("dismissed", False))
         alert_dto.deleted = bool(enrichments.get("deleted", False))
 

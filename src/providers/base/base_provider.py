@@ -617,13 +617,24 @@ class BaseProvider(metaclass=abc.ABCMeta):
                         # Phase 2: alert_enrichment.enrichments is the typed user-state
                         # dict sourced from LastAlert columns (status/assignee/note/
                         # dismiss_mode/dismissed_until/deleted + derived `dismissed`).
-                        for enrichment in alert_enrichment.enrichments:
-                            # set the enrichment
-                            setattr(
-                                alert_to_enrich,
-                                enrichment,
-                                alert_enrichment.enrichments[enrichment],
-                            )
+                        # `dismissed_until` arrives as a `datetime` from the typed
+                        # column, but AlertDto.dismissed_until is `str | None`;
+                        # coerce to an ISO string so downstream serialization is
+                        # well-typed.
+                        for enrichment, value in alert_enrichment.enrichments.items():
+                            # `last_alert_enrichments_dict` already emits ISO
+                            # strings for dismissed_until; defensive coerce for
+                            # any caller that passes a raw datetime through.
+                            if (
+                                enrichment == "dismissed_until"
+                                and isinstance(value, datetime.datetime)
+                            ):
+                                value = (
+                                    value.astimezone(datetime.timezone.utc)
+                                    .strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]
+                                    + "Z"
+                                )
+                            setattr(alert_to_enrich, enrichment, value)
 
         return grouped_alerts
 

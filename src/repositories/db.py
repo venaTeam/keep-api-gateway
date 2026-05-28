@@ -365,6 +365,11 @@ def last_alert_enrichments_dict(last_alert: "LastAlert") -> dict:
     from a LastAlert row's typed columns. NULL columns are omitted so callers
     fall back to the provider value. Always includes the derived `dismissed`
     compat field.
+
+    `dismissed_until` is emitted as an ISO 8601 string (typed DateTime column ->
+    string-on-the-wire) so JSON consumers (Elastic, Kafka, AlertDto) all see the
+    same canonical format. `str(datetime)` produces "2026-01-01 00:00:00+00:00"
+    with a space separator and would corrupt UI parsing.
     """
     data: dict = {}
     for col_name in ("status", "assignee", "note", "dismiss_mode"):
@@ -372,7 +377,13 @@ def last_alert_enrichments_dict(last_alert: "LastAlert") -> dict:
         if val is not None:
             data[col_name] = val
     if last_alert.dismissed_until is not None:
-        data["dismissed_until"] = last_alert.dismissed_until
+        ts = last_alert.dismissed_until
+        if isinstance(ts, datetime):
+            # Match the legacy "...%f.Z" wire format AlertDto.validate_dismissed
+            # parses (strptime "%Y-%m-%dT%H:%M:%S.%fZ"). plain `.isoformat()`
+            # produces "...+00:00" which the validator rejects.
+            ts = ts.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+        data["dismissed_until"] = ts
     if last_alert.deleted:
         data["deleted"] = True
     # derived compat field for existing consumers

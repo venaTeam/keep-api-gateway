@@ -55,7 +55,23 @@ def _last_alert_to_dto_payload(last_alert) -> dict:
     if last_alert.dismiss_mode is not None:
         payload["dismiss_mode"] = last_alert.dismiss_mode
     if last_alert.dismissed_until is not None:
-        payload["dismissed_until"] = last_alert.dismissed_until
+        # Phase 2: typed DateTime column -> AlertDto.dismissed_until is `str|None`.
+        # Default `str(datetime)` produces "2026-01-01 00:00:00+00:00" (space, not
+        # 'T'); emit canonical ISO 8601 so the DTO matches the legacy wire shape.
+        ts_val = last_alert.dismissed_until
+        if isinstance(ts_val, datetime):
+            # Match the legacy "...%f.Z" wire format AlertDto.validate_dismissed
+            # parses (strptime "%Y-%m-%dT%H:%M:%S.%fZ"). plain `.isoformat()`
+            # produces "...+00:00" which the validator rejects.
+            ts_val = (
+                ts_val.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]
+                + "Z"
+            )
+        payload["dismissed_until"] = ts_val
+        # Also expose under the legacy `dismiss_until` field so the AlertDto
+        # `validate_dismissed` validator (which still reads dismiss_until for
+        # expiry handling) and any pre-Phase-2 UI consumer keep working.
+        payload.setdefault("dismiss_until", ts_val)
     payload["deleted"] = bool(last_alert.deleted)
     # relocated tracking fields
     if last_alert.last_received is not None:
