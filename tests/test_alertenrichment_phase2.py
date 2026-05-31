@@ -21,6 +21,7 @@ from src.models.action_type import ActionType
 from src.models.alert import AlertStatus
 from src.models.db.alert import Alert, AlertAudit, AlertEnrichment, LastAlert
 from src.repositories.db import (
+    LASTALERT_ENRICHMENT_COLUMNS,
     enrich_entity,
     get_last_alert_by_fingerprint,
     last_alert_enrichments_dict,
@@ -547,3 +548,10 @@ def test_dto_dismiss_until_legacy_alias_populated(db_session):
     assert dto.dismiss_until is not None
     assert dto.dismissed_until is not None
     assert dto.dismiss_until == dto.dismissed_until
+
+
+def test_enrichment_columns_match_model():
+    assert LASTALERT_ENRICHMENT_COLUMNS == {
+        "status", "status_disposable", "dismiss_mode", "dismissed_until", "assignee",
+        "note", "deleted", "ticket_type", "ticket_url", "ticket_provider_id",
+    }
