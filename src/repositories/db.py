@@ -294,16 +294,13 @@ LASTALERT_ENRICHMENT_COLUMNS = {
 }
 # Legacy keys accepted at the write boundary and translated below.
 _LEGACY_ENRICHMENT_KEYS = {"dismissed", "dismiss_until"}
-# Phase 2: system-owned tracking columns set by set_last_alert(tracking=...).
-# Guards the tracking write loops so a stray key can never clobber a typed
-# user-enrichment column (defense-in-depth, mirrors keep-event-handler).
+# System tracking columns owned by set_last_alert(tracking=...), derived from the LastAlert
+# model (single source of truth) — columns tagged info={"tracking": True}. Strict allow-list
+# so the tracking write path can never clobber user-enrichment columns.
 LASTALERT_TRACKING_COLUMNS = {
-    "last_received",
-    "firing_counter",
-    "unresolved_counter",
-    "started_at",
-    "firing_start_time",
-    "firing_start_time_since_last_resolved",
+    column.name
+    for column in LastAlert.__table__.columns
+    if column.info.get("tracking")
 }
 
 
