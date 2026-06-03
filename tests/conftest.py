@@ -732,6 +732,8 @@ def setup_alerts(elastic_client, db_session, request):
             last_alert = existed_last_alerts_dict[alert.fingerprint]
             last_alert.alert_id = alert.id
             last_alert.timestamp = alert.timestamp
+            # Phase 2: tracking fields live on LastAlert now
+            last_alert.last_received = alert.timestamp
             last_alerts.append(last_alert)
         else:
             last_alerts.append(
@@ -741,6 +743,8 @@ def setup_alerts(elastic_client, db_session, request):
                     timestamp=alert.timestamp,
                     first_timestamp=alert.timestamp,
                     alert_id=alert.id,
+                    # Phase 2: tracking fields live on LastAlert now
+                    last_received=alert.timestamp,
                 )
             )
     db_session.add_all(last_alerts)
@@ -813,6 +817,7 @@ def setup_stress_alerts_no_elastic(db_session):
                 last_alert = existed_last_alerts_dict[alert.fingerprint]
                 last_alert.alert_id = alert.id
                 last_alert.timestamp = alert.timestamp
+                last_alert.last_received = alert.timestamp
                 last_alerts.append(last_alert)
             else:
                 last_alerts.append(
@@ -822,6 +827,7 @@ def setup_stress_alerts_no_elastic(db_session):
                         timestamp=alert.timestamp,
                         first_timestamp=alert.timestamp,
                         alert_id=alert.id,
+                        last_received=alert.timestamp,
                     )
                 )
         db_session.add_all(last_alerts)
@@ -958,6 +964,7 @@ def create_alert(db_session):
             if alert_id:
                 existing.alert_id = alert_id
             existing.timestamp = timestamp
+            existing.last_received = timestamp
         else:
             last_alert = LastAlert(
                 tenant_id=tenant_id,
@@ -965,9 +972,10 @@ def create_alert(db_session):
                 timestamp=timestamp,
                 first_timestamp=timestamp,
                 alert_id=alert_id,
+                last_received=timestamp,
             )
             db_session.add(last_alert)
-        
+
         db_session.commit()
 
     return _create_alert

@@ -89,6 +89,11 @@ class AlertDto(BaseModel):
     dismiss_until: str | None = Field(default=None, alias="dismissUntil")  # The time until the alert is dismissed
     # DO NOT MOVE DISMISSED ABOVE dismissedUntil since it is used in root_validator
     dismissed: bool = False  # Whether the alert has been dismissed
+    # Phase 2: typed dismiss state from lastalert (dismissed stays as a backward-compat
+    # shim derived from status=='suppressed' until the UI migrates to dismiss_mode).
+    dismiss_mode: str | None = None  # permanent|until_resolved|dismiss_until
+    dismissed_until: str | None = None  # expiry for dismiss_until mode
+    deleted: bool = False  # Whether the alert has been deleted (soft delete)
     assignee: str | None = None  # The assignee of the alert
     provider_id: str | None = Field(default=None, alias="providerId")  # The provider id
     provider_type: str | None = Field(default=None, alias="providerType")  # The provider type
@@ -97,6 +102,11 @@ class AlertDto(BaseModel):
         default=None, alias="startedAt"  # The time the alert started - e.g. if alert triggered multiple times, it will be the time of the first trigger (calculated on querying)
     )
     incident: str | None = None
+    # Phase 2: ticket linkage typed columns on lastalert (assign-ticket modal).
+    ticket_type: str | None = None
+    ticket_url: str | None = None
+    ticket_provider_id: str | None = None
+    # Alert standardization fields (dev): alert-payload fields, not enrichment.
     object: str | None = None
     component: str | None = None
     site: str | None = None

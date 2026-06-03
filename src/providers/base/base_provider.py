@@ -33,7 +33,6 @@ from src.models.action_type import ActionType
 from src.models.alert import AlertDto, AlertSeverity, AlertStatus
 from src.models.db.topology import TopologyServiceInDto
 from src.models.incident import IncidentDto
-from src.utils.enrichment_helpers import parse_and_enrich_deleted_and_assignees
 from src.services.context_manager import ContextManager
 from src.providers.models.provider_config import ProviderConfig, ProviderScope
 from src.providers.models.provider_method import ProviderMethod
@@ -323,6 +322,14 @@ class BaseProvider(metaclass=abc.ABCMeta):
                 "action_type": ActionType.WORKFLOW_ENRICH,
                 "action_callee": "system",
                 "audit_enabled": audit_enabled,
+                # Phase 2: system/workflow write -> discard unknown keys (strict=False)
+                # instead of raising; "dispose_on_new_alert" status -> status_disposable.
+                "strict": False,
+                # Phase 2 (AG-3b): ALERT writes go to typed LastAlert columns;
+                # INCIDENT writes stay on the legacy AlertEnrichment JSONB (kept
+                # until Phase 3). The db layer branches on this selector — strict
+                # / translation / D1 are skipped for the incident branch.
+                "entity_type": entity_type,
             }
 
             if _enrichments:
@@ -607,16 +614,27 @@ class BaseProvider(metaclass=abc.ABCMeta):
                         alert_enrichment.alert_fingerprint
                     )
                     for alert_to_enrich in alerts_to_enrich:
-                        parse_and_enrich_deleted_and_assignees(
-                            alert_to_enrich, alert_enrichment.enrichments
-                        )
-                        for enrichment in alert_enrichment.enrichments:
-                            # set the enrichment
-                            setattr(
-                                alert_to_enrich,
-                                enrichment,
-                                alert_enrichment.enrichments[enrichment],
-                            )
+                        # Phase 2: alert_enrichment.enrichments is the typed user-state
+                        # dict sourced from LastAlert columns (status/assignee/note/
+                        # dismiss_mode/dismissed_until/deleted + derived `dismissed`).
+                        # `dismissed_until` arrives as a `datetime` from the typed
+                        # column, but AlertDto.dismissed_until is `str | None`;
+                        # coerce to an ISO string so downstream serialization is
+                        # well-typed.
+                        for enrichment, value in alert_enrichment.enrichments.items():
+                            # `last_alert_enrichments_dict` already emits ISO
+                            # strings for dismissed_until; defensive coerce for
+                            # any caller that passes a raw datetime through.
+                            if (
+                                enrichment == "dismissed_until"
+                                and isinstance(value, datetime.datetime)
+                            ):
+                                value = (
+                                    value.astimezone(datetime.timezone.utc)
+                                    .strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]
+                                    + "Z"
+                                )
+                            setattr(alert_to_enrich, enrichment, value)
 
         return grouped_alerts
 
