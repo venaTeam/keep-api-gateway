@@ -3368,7 +3368,9 @@ def add_alerts_to_incident(
             else:
                 alerts_count = alerts_data_for_incident["count"]
 
-            last_received_field = Alert.last_received
+            # Alert.last_received was relocated to LastAlert; use the per-occurrence
+            # Alert.timestamp for incident start/last-seen bounds (parity with keep-workflows).
+            last_received_field = Alert.timestamp
 
             started_at, last_seen_at = session.exec(
                 select(func.min(last_received_field), func.max(last_received_field))
@@ -3595,7 +3597,9 @@ def remove_alerts_to_incident_by_incident_id(
             if source not in sources_existed
         ]
 
-        last_received_field = Alert.last_received
+        # Alert.last_received was relocated to LastAlert; use the per-occurrence
+        # Alert.timestamp for incident start/last-seen bounds (parity with keep-workflows).
+        last_received_field = Alert.timestamp
 
         started_at, last_seen_at = session.exec(
             select(func.min(last_received_field), func.max(last_received_field))
