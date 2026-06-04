@@ -322,12 +322,13 @@ class BaseProvider(metaclass=abc.ABCMeta):
                 "action_type": ActionType.WORKFLOW_ENRICH,
                 "action_callee": "system",
                 "audit_enabled": audit_enabled,
-                # Phase 2: system/workflow write -> discard unknown keys (strict=False)
+                # system/workflow write -> discard unknown keys (strict=False)
                 # instead of raising; "dispose_on_new_alert" status -> status_disposable.
                 "strict": False,
-                # Phase 2 (AG-3b): ALERT writes go to typed LastAlert columns;
+                # ALERT writes go to typed LastAlert columns;
                 # INCIDENT writes stay on the legacy AlertEnrichment JSONB (kept
-                # until Phase 3). The db layer branches on this selector — strict
+                # until a later migration removes the `alertenrichment` table). The
+                # db layer branches on this selector — strict
                 # / translation / D1 are skipped for the incident branch.
                 "entity_type": entity_type,
             }
@@ -614,7 +615,7 @@ class BaseProvider(metaclass=abc.ABCMeta):
                         alert_enrichment.alert_fingerprint
                     )
                     for alert_to_enrich in alerts_to_enrich:
-                        # Phase 2: alert_enrichment.enrichments is the typed user-state
+                        # alert_enrichment.enrichments is the typed user-state
                         # dict sourced from LastAlert columns (status/assignee/note/
                         # dismiss_mode/dismissed_until/deleted + derived `dismissed`).
                         # `dismissed_until` arrives as a `datetime` from the typed

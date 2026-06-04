@@ -105,7 +105,7 @@ class ElasticClient:
         fingerprints = [
             result["_source"]["fingerprint"] for result in results["hits"]["hits"]
         ]
-        # Phase 2: get_enrichments now returns the typed user-state dict sourced
+        # get_enrichments returns the typed user-state dict sourced
         # from LastAlert columns (status/assignee/note/dismiss_mode/dismissed_until/
         # deleted + derived `dismissed`).
         enrichments = get_enrichments(self.tenant_id, fingerprints)
@@ -125,7 +125,7 @@ class ElasticClient:
     @staticmethod
     def _apply_enrichments_to_dto(alert_dto: AlertDto, enrichments: dict):
         """Apply the LastAlert-sourced typed user-state dict onto an AlertDto
-        built from an Elasticsearch document (Phase 2)."""
+        built from an Elasticsearch document."""
         if enrichments.get("status") is not None:
             alert_dto.status = enrichments["status"]
         if enrichments.get("assignee") is not None:
@@ -297,7 +297,7 @@ class ElasticClient:
             self.logger.error(f"Alert with fingerprint {alert_fingerprint} not found")
             return
 
-        # Phase 2: enrich typed user-state fields on the AlertDto, then re-index.
+        # Enrich typed user-state fields on the AlertDto, then re-index.
         # `alert_enrichments` may carry the translated typed keys (status, assignee,
         # note, dismiss_mode, dismissed_until, deleted) and the derived `dismissed`.
         enriched_alert = AlertDto(**alert["_source"])

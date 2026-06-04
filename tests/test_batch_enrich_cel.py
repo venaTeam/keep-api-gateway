@@ -166,7 +166,7 @@ def test_batch_enrich_cel_labels(
         },
     )
 
-    # Phase 2 (strict schema): dynamic enrichment fields like `labels.region` have
+    # Strict schema: dynamic enrichment fields like `labels.region` have
     # no destination and are discarded, so CEL can only filter typed columns. Filter
     # by the typed `severity` column instead.
     response = client.post(
@@ -254,7 +254,7 @@ def test_batch_enrich_cel_complex_expression(
         },
     )
 
-    # Phase 2 (strict schema): only typed columns are CEL-filterable; the dynamic
+    # Strict schema: only typed columns are CEL-filterable; the dynamic
     # `environment` field is discarded. Filter by the typed `severity` + `service`
     # columns (matches the two critical/api alerts).
     response = client.post(
@@ -420,7 +420,7 @@ def test_batch_enrich_cel_dispose_on_new_alert(
     
     event_data_1 = client.mock_producer.produced_events[0]
     assert event_data_1["event_type"].value == "batch_enrich"
-    # Phase 2: "dispose on new alert" is now the typed status_disposable flag
+    # "dispose on new alert" is now the typed status_disposable flag
     # (cleared on the next non-resolved re-fire in set_last_alert) — no more
     # disposable_* JSONB wrappers.
     assert event_data_1["event"]["status"] == "resolved"

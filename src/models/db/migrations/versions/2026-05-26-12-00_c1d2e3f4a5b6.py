@@ -18,8 +18,8 @@ Does NOT drop alertenrichment and does NOT change any code path (NF6).
 IMPORTANT — Phase 1 runs while the OLD code is still live. The old
 ``set_last_alert()`` inserts a LastAlert WITHOUT these columns, so every NOT NULL
 column MUST keep a ``server_default`` or those inserts would raise
-NotNullViolation. The defaults are left in place through Phase 1; Phase 2 may
-drop them once the code writes the columns explicitly.
+NotNullViolation. The defaults are left in place through Phase 1; a later migration
+may drop them once the code writes the columns explicitly.
 
 Types match Migration 1's final alert schema:
   - last_received   -> TIMESTAMPTZ  (alert.last_received is timestamptz since a1b2c3d4e5f6)

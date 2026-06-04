@@ -1,10 +1,10 @@
-"""merge Phase 2 (alertenrichment removal) head with the alert-standardization / source_to_json head
+"""merge the alertenrichment-removal head with the alert-standardization / source_to_json head
 
 Both lineages descend from `c4d5e6f7a8b9` (the Phase 1 lastalert head) and touch DISJOINT
 `alert` columns, so this is a no-op merge that simply unifies the two alembic heads:
 
-  - `f3a4b5c6d7e8` — Phase 2: typed `lastalert` enrichment+tracking columns, ticket columns,
-                     and the drop of the 11 misplaced `alert` columns (P2-M1/M2/M3).
+  - `f3a4b5c6d7e8` — alertenrichment removal: typed `lastalert` enrichment+tracking columns,
+                     ticket columns, and the drop of the 11 misplaced `alert` columns.
   - `3680b37fcc51` — dev: alert standardization (site/impact/runbook_url/alert_rule_url) +
                      `source` String -> JSON (which itself merged `c4d5e6f7a8b9` + `source_to_json`).
 

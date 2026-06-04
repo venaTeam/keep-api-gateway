@@ -193,7 +193,7 @@ def test_search_sanity_4(db_session, setup_alerts):
     assert elastic_filtered_alerts[0] == db_filtered_alerts[0]
 
 
-@pytest.mark.skip(reason="Phase 2 (alertenrichment removal, Option A): dynamic enrichment fields have no typed lastalert column and are dropped by the strict allow-list; this test asserts pre-Phase-2 dynamic-field behavior. See HANDOFF.md.")
+@pytest.mark.skip(reason="alertenrichment removal (Option A): dynamic enrichment fields have no typed lastalert column and are dropped by the strict allow-list; this test asserts the legacy dynamic-field behavior. See HANDOFF.md.")
 @pytest.mark.parametrize(
     "setup_alerts",
     [
@@ -253,7 +253,7 @@ def test_search_sanity_5(db_session, setup_alerts):
     )
 
 
-@pytest.mark.skip(reason="Phase 2 (alertenrichment removal, Option A): dynamic enrichment fields have no typed lastalert column and are dropped by the strict allow-list; this test asserts pre-Phase-2 dynamic-field behavior. See HANDOFF.md.")
+@pytest.mark.skip(reason="alertenrichment removal (Option A): dynamic enrichment fields have no typed lastalert column and are dropped by the strict allow-list; this test asserts the legacy dynamic-field behavior. See HANDOFF.md.")
 @pytest.mark.parametrize(
     "setup_alerts",
     [
@@ -319,7 +319,7 @@ def test_search_sanity_6(db_session, setup_alerts):
     )
 
 
-@pytest.mark.skip(reason="Phase 2 (alertenrichment removal, Option A): dynamic enrichment fields have no typed lastalert column and are dropped by the strict allow-list; this test asserts pre-Phase-2 dynamic-field behavior. See HANDOFF.md.")
+@pytest.mark.skip(reason="alertenrichment removal (Option A): dynamic enrichment fields have no typed lastalert column and are dropped by the strict allow-list; this test asserts the legacy dynamic-field behavior. See HANDOFF.md.")
 @pytest.mark.parametrize(
     "setup_alerts",
     [
@@ -399,7 +399,7 @@ def test_not_equal(db_session, setup_alerts):
     assert elastic_filtered_alerts[0] == db_filtered_alerts[0]
 
 
-@pytest.mark.skip(reason="Phase 2 (alertenrichment removal, Option A): dynamic enrichment fields have no typed lastalert column and are dropped by the strict allow-list; this test asserts pre-Phase-2 dynamic-field behavior. See HANDOFF.md.")
+@pytest.mark.skip(reason="alertenrichment removal (Option A): dynamic enrichment fields have no typed lastalert column and are dropped by the strict allow-list; this test asserts the legacy dynamic-field behavior. See HANDOFF.md.")
 @pytest.mark.parametrize(
     "setup_alerts",
     [
@@ -445,7 +445,7 @@ def test_list(db_session, setup_alerts):
     assert elastic_filtered_alerts[0] == db_filtered_alerts[0]
 
 
-@pytest.mark.skip(reason="Phase 2 (alertenrichment removal, Option A): dynamic enrichment fields have no typed lastalert column and are dropped by the strict allow-list; this test asserts pre-Phase-2 dynamic-field behavior. See HANDOFF.md.")
+@pytest.mark.skip(reason="alertenrichment removal (Option A): dynamic enrichment fields have no typed lastalert column and are dropped by the strict allow-list; this test asserts the legacy dynamic-field behavior. See HANDOFF.md.")
 @pytest.mark.parametrize(
     "setup_alerts",
     [
@@ -506,7 +506,7 @@ def test_dict(db_session, setup_alerts):
     assert elastic_filtered_alerts[0] == db_filtered_alerts[0]
 
 
-@pytest.mark.skip(reason="Phase 2 (alertenrichment removal, Option A): dynamic enrichment fields have no typed lastalert column and are dropped by the strict allow-list; this test asserts pre-Phase-2 dynamic-field behavior. See HANDOFF.md.")
+@pytest.mark.skip(reason="alertenrichment removal (Option A): dynamic enrichment fields have no typed lastalert column and are dropped by the strict allow-list; this test asserts the legacy dynamic-field behavior. See HANDOFF.md.")
 @pytest.mark.parametrize(
     "setup_alerts",
     [
@@ -545,7 +545,7 @@ def test_logical_not(db_session, setup_alerts):
     assert elastic_filtered_alerts[0] == db_filtered_alerts[0]
 
 
-@pytest.mark.skip(reason="Phase 2 (alertenrichment removal, Option A): dynamic enrichment fields have no typed lastalert column and are dropped by the strict allow-list; this test asserts pre-Phase-2 dynamic-field behavior. See HANDOFF.md.")
+@pytest.mark.skip(reason="alertenrichment removal (Option A): dynamic enrichment fields have no typed lastalert column and are dropped by the strict allow-list; this test asserts the legacy dynamic-field behavior. See HANDOFF.md.")
 @pytest.mark.parametrize(
     "setup_alerts",
     [
@@ -584,7 +584,7 @@ def test_in_operator(db_session, setup_alerts):
     assert elastic_filtered_alerts[0] == db_filtered_alerts[0]
 
 
-@pytest.mark.skip(reason="Phase 2 (alertenrichment removal, Option A): dynamic enrichment fields have no typed lastalert column and are dropped by the strict allow-list; this test asserts pre-Phase-2 dynamic-field behavior. See HANDOFF.md.")
+@pytest.mark.skip(reason="alertenrichment removal (Option A): dynamic enrichment fields have no typed lastalert column and are dropped by the strict allow-list; this test asserts the legacy dynamic-field behavior. See HANDOFF.md.")
 @pytest.mark.parametrize(
     "setup_alerts",
     [
@@ -623,7 +623,7 @@ def test_starts_with(db_session, setup_alerts):
     assert elastic_filtered_alerts[0] == db_filtered_alerts[0]
 
 
-@pytest.mark.skip(reason="Phase 2 (alertenrichment removal, Option A): dynamic enrichment fields have no typed lastalert column and are dropped by the strict allow-list; this test asserts pre-Phase-2 dynamic-field behavior. See HANDOFF.md.")
+@pytest.mark.skip(reason="alertenrichment removal (Option A): dynamic enrichment fields have no typed lastalert column and are dropped by the strict allow-list; this test asserts the legacy dynamic-field behavior. See HANDOFF.md.")
 @pytest.mark.parametrize(
     "setup_alerts",
     [
@@ -663,7 +663,7 @@ def test_null_handling(db_session, setup_alerts):
     assert elastic_filtered_alerts[0] == db_filtered_alerts[0]
 
 
-@pytest.mark.skip(reason="Phase 2 (alertenrichment removal, Option A): dynamic enrichment fields have no typed lastalert column and are dropped by the strict allow-list; this test asserts pre-Phase-2 dynamic-field behavior. See HANDOFF.md.")
+@pytest.mark.skip(reason="alertenrichment removal (Option A): dynamic enrichment fields have no typed lastalert column and are dropped by the strict allow-list; this test asserts the legacy dynamic-field behavior. See HANDOFF.md.")
 @pytest.mark.parametrize(
     "setup_alerts",
     [
@@ -718,7 +718,7 @@ def test_complex_nested_queries(db_session, setup_alerts):
     assert elastic_filtered_alerts[0] == db_filtered_alerts[0]
 
 
-@pytest.mark.skip(reason="Phase 2 (alertenrichment removal, Option A): dynamic enrichment fields have no typed lastalert column and are dropped by the strict allow-list; this test asserts pre-Phase-2 dynamic-field behavior. See HANDOFF.md.")
+@pytest.mark.skip(reason="alertenrichment removal (Option A): dynamic enrichment fields have no typed lastalert column and are dropped by the strict allow-list; this test asserts the legacy dynamic-field behavior. See HANDOFF.md.")
 @pytest.mark.parametrize(
     "setup_alerts",
     [
@@ -831,7 +831,7 @@ def test_complex_logical_operations_large_dataset(db_session, setup_stress_alert
     print("time taken for 10k alerts with db: ", db_end_time - db_start_time)
 
 
-@pytest.mark.skip(reason="Phase 2 (alertenrichment removal, Option A): dynamic enrichment fields have no typed lastalert column and are dropped by the strict allow-list; this test asserts pre-Phase-2 dynamic-field behavior. See HANDOFF.md.")
+@pytest.mark.skip(reason="alertenrichment removal (Option A): dynamic enrichment fields have no typed lastalert column and are dropped by the strict allow-list; this test asserts the legacy dynamic-field behavior. See HANDOFF.md.")
 @pytest.mark.parametrize("setup_stress_alerts", [{"num_alerts": 10000}], indirect=True)
 def test_last_1000(db_session, setup_stress_alerts):
     search_query = SearchQuery(

@@ -283,8 +283,8 @@ def add_audit(
     return audit
 
 
-# === Phase 2: typed user-enrichment columns on LastAlert ===
-# Phase 2: derived from the LastAlert model (single source of truth) — columns tagged
+# === Typed user-enrichment columns on LastAlert ===
+# Derived from the LastAlert model (single source of truth) — columns tagged
 # info={"enrichable": True} are the user-writable enrichment columns. Keeping this in sync
 # with the model is automatic; do not hand-maintain a literal list.
 LASTALERT_ENRICHMENT_COLUMNS = {
@@ -358,7 +358,7 @@ def normalize_enrichments(enrichments: dict, strict: bool = True) -> dict:
                 f"Allowed: {sorted(LASTALERT_ENRICHMENT_COLUMNS | _LEGACY_ENRICHMENT_KEYS)}"
             )
         logger.warning(
-            "phase2.discard_unknown_enrichment_keys",
+            "enrichment.discard_unknown_keys",
             extra={"keys": sorted(unknown)},
         )
         for key in unknown:
@@ -423,7 +423,7 @@ def _apply_enrichments_to_last_alert(last_alert: "LastAlert", enrichments: dict,
 class _FingerprintEnrichments:
     """Lightweight read-only view exposing the same `.alert_fingerprint` /
     `.enrichments` shape that consumers expect, but sourced from LastAlert
-    typed columns (Phase 2)."""
+    typed columns."""
 
     __slots__ = ("alert_fingerprint", "enrichments")
 
@@ -443,11 +443,12 @@ def _enrich_incident_alertenrichment(
     force=False,
     audit_enabled=True,
 ):
-    """Legacy (pre-Phase-2) AlertEnrichment JSONB upsert for the INCIDENT
+    """Legacy AlertEnrichment JSONB upsert for the INCIDENT
     enrichment path (UUID-keyed `alert_fingerprint`).
 
-    Phase 2 moved ALERT user-state to typed LastAlert columns, but INCIDENT
-    enrichment stays on AlertEnrichment until Phase 3. Incidents keep arbitrary
+    ALERT user-state was moved to typed LastAlert columns, but INCIDENT
+    enrichment stays on AlertEnrichment until a later migration removes the
+    `alertenrichment` table. Incidents keep arbitrary
     JSONB keys — the dismissed<->dismiss_mode translation, the D1 no-op and the
     strict unknown-key rejection are intentionally NOT applied here.
 
@@ -542,7 +543,7 @@ def _enrich_entity(
     """
     Enrich an entity (alert or incident).
 
-    ALERT (entity_type == "alert", default): Phase 2 user-enrichment state lives
+    ALERT (entity_type == "alert", default): user-enrichment state lives
     on LastAlert typed columns, not on the alertenrichment JSONB. The legacy
     `dismissed`/`dismiss_until` keys are translated. Unknown keys are rejected
     (strict, ValueError -> 422 at the route) or discarded (strict=False, internal
@@ -550,7 +551,8 @@ def _enrich_entity(
     UPDATE is skipped (logged) but the AlertAudit row is still created.
 
     INCIDENT (entity_type == "incident"): incident enrichment stays on the legacy
-    AlertEnrichment JSONB row (UUID-keyed) until Phase 3 — arbitrary keys are
+    AlertEnrichment JSONB row (UUID-keyed) until a later migration removes the
+    `alertenrichment` table — arbitrary keys are
     preserved verbatim (no translation, no D1 no-op, no strict rejection).
     """
     if entity_type == "incident":
@@ -575,7 +577,7 @@ def _enrich_entity(
     if last_alert is None:
         # D1: enrich-before-first-alert -> no column write, still audit.
         logger.warning(
-            "phase2.enrich_no_lastalert",
+            "enrichment.no_lastalert",
             extra={
                 "tenant_id": tenant_id,
                 "fingerprint": fingerprint,
@@ -758,7 +760,7 @@ def batch_enrich(
             if last_alert is None:
                 # D1: enrich-before-first-alert -> no column write, still audit.
                 logger.warning(
-                    "phase2.enrich_no_lastalert",
+                    "enrichment.no_lastalert",
                     extra={
                         "tenant_id": tenant_id,
                         "fingerprint": fingerprint,
@@ -856,9 +858,10 @@ def get_enrichment(tenant_id, fingerprint, refresh=False):
         return get_enrichment_with_session(session, tenant_id, fingerprint, refresh)
 
 
-# Phase 2: get_enrichment / get_enrichment_with_session still read AlertEnrichment
+# get_enrichment / get_enrichment_with_session still read AlertEnrichment
 # because they serve the INCIDENT enrichment path (UUID-keyed rows), which the
-# spec keeps until Phase 3. Alert-fingerprint reads must NOT use these anymore —
+# spec keeps until a later migration removes the `alertenrichment` table.
+# Alert-fingerprint reads must NOT use these anymore —
 # alert user state comes from LastAlert typed columns (see get_enrichments below
 # and last_alert_enrichments_dict).
 @retry(exceptions=(Exception,), tries=3, delay=0.1, backoff=2)
@@ -904,7 +907,7 @@ def get_enrichments(
 ) -> List[Optional["_FingerprintEnrichments"]]:
     """
     Get the user-enrichment state for a list of fingerprints from LastAlert
-    typed columns (Phase 2).
+    typed columns.
 
     :param tenant_id: The tenant ID to filter the alerts by.
     :param fingerprints: A list of fingerprints to get the enrichments for.
@@ -952,7 +955,7 @@ def query_alerts(
         # Create the query
         query = session.query(Alert)
 
-        # Phase 2: alert enrichment state now lives on LastAlert typed columns;
+        # Alert enrichment state now lives on LastAlert typed columns;
         # no alertenrichment eager-load needed.
 
         # Filter by tenant_id
@@ -1044,7 +1047,7 @@ def get_last_alerts(
         if filter_conditions:
             stmt = stmt.where(*filter_conditions)
 
-        # Phase 2: alert enrichment state now lives on LastAlert typed columns;
+        # Alert enrichment state now lives on LastAlert typed columns;
         # no alertenrichment eager-load needed.
 
         if with_incidents:
@@ -1122,7 +1125,7 @@ def get_last_alerts(
         for alert_data in alerts_with_start:
             alert = alert_data[0]
             started_at = alert_data[1]
-            # Phase 2: started_at is no longer an Alert column; carry the episode
+            # started_at is no longer an Alert column; carry the episode
             # marker (= LastAlert.first_timestamp) on the private attr the DTO
             # builder reads.
             if not getattr(alert, "_started_at", None):
@@ -1153,7 +1156,7 @@ def get_alerts_by_fingerprint(
     """
     Get all alerts for a given fingerprint.
 
-    Phase 2: alert enrichment state now lives on LastAlert typed columns, so no
+    Alert enrichment state now lives on LastAlert typed columns, so no
     alertenrichment eager-load is needed here.
 
     Args:
@@ -1212,7 +1215,7 @@ def get_alert_by_event_id(
             .filter(Alert.tenant_id == tenant_id)
             .filter(Alert.id == uuid.UUID(event_id))
         )
-        # Phase 2: enrichment state lives on LastAlert; no eager-load needed.
+        # Enrichment state lives on LastAlert; no eager-load needed.
         alert = session.exec(query).first()
     return alert
 
@@ -1226,7 +1229,7 @@ def get_alerts_by_ids(
             .filter(Alert.tenant_id == tenant_id)
             .filter(Alert.id.in_(alert_ids))
         )
-        # Phase 2: enrichment state lives on LastAlert; no eager-load needed.
+        # Enrichment state lives on LastAlert; no eager-load needed.
         return session.exec(query).all()
 
 
@@ -3129,7 +3132,7 @@ def get_incident_alerts_and_links_by_incident_id(
             )
             .order_by(col(LastAlert.timestamp).desc())
         )
-        # Phase 2: enrichment state lives on LastAlert; no eager-load needed.
+        # Enrichment state lives on LastAlert; no eager-load needed.
         if not include_unlinked:
             query = query.filter(
                 LastAlertToIncident.deleted_at == NULL_FOR_DELETED_AT,
@@ -4026,7 +4029,7 @@ def is_all_alerts_in_status(
         return False
 
     with existed_or_new_session(session) as session:
-        # Phase 2: effective status = COALESCE(lastalert.status, alert.status).
+        # Effective status = COALESCE(lastalert.status, alert.status).
         enriched_status_field = LastAlert.status
         status_field = Alert.status
 
@@ -4097,7 +4100,7 @@ def is_edge_incident_alert_resolved(
         return False
 
     with existed_or_new_session(session) as session:
-        # Phase 2: effective status = COALESCE(lastalert.status, alert.status).
+        # Effective status = COALESCE(lastalert.status, alert.status).
         enriched_status_field = LastAlert.status
         status_field = Alert.status
 
@@ -4352,7 +4355,7 @@ def set_last_alert(
 ) -> None:
     """Create or repoint the LastAlert row for a fingerprint.
 
-    Phase 2: `tracking` carries the system tracking columns relocated from
+    `tracking` carries the system tracking columns relocated from
     `alert` (last_received, firing_counter, unresolved_counter, started_at,
     firing_start_time, firing_start_time_since_last_resolved). When None those
     columns are left unchanged. Status/dismiss clearing on re-fire/resolve also
@@ -4393,12 +4396,12 @@ def set_last_alert(
                     last_alert.alert_id = alert.id
                     last_alert.alert_hash = alert.alert_hash
 
-                    # Phase 2: write relocated tracking columns when provided
+                    # Write relocated tracking columns when provided
                     if tracking is not None:
                         for _col, _val in tracking.items():
                             if _col not in LASTALERT_TRACKING_COLUMNS:
                                 logger.warning(
-                                    "phase2.set_last_alert.ignored_tracking_key",
+                                    "set_last_alert.ignored_tracking_key",
                                     extra={
                                         "tenant_id": tenant_id,
                                         "fingerprint": fingerprint,
@@ -4408,7 +4411,7 @@ def set_last_alert(
                                 continue
                             setattr(last_alert, _col, _val)
 
-                    # Phase 2: status/dismiss clearing on this occurrence's
+                    # Status/dismiss clearing on this occurrence's
                     # provider status (replaces dispose/make-permanent).
                     resolved = alert.status == AlertStatus.RESOLVED.value
                     if not resolved:
@@ -4436,12 +4439,12 @@ def set_last_alert(
                         alert_id=alert.id,
                         alert_hash=alert.alert_hash,
                     )
-                    # Phase 2: write relocated tracking columns when provided
+                    # Write relocated tracking columns when provided
                     if tracking is not None:
                         for _col, _val in tracking.items():
                             if _col not in LASTALERT_TRACKING_COLUMNS:
                                 logger.warning(
-                                    "phase2.set_last_alert.ignored_tracking_key",
+                                    "set_last_alert.ignored_tracking_key",
                                     extra={
                                         "tenant_id": tenant_id,
                                         "fingerprint": fingerprint,

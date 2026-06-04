@@ -1,6 +1,7 @@
-"""Phase 2 / P2-M2 migration coverage for e2b3c4d5f6a7.
+"""Misplaced-alert-column drop migration coverage for e2b3c4d5f6a7.
 
-`e2b3c4d5f6a7` is the ONLY irreversible-in-place step of Phase 2: it DROPs 11
+`e2b3c4d5f6a7` is the ONLY irreversible-in-place step of the alertenrichment
+removal: it DROPs 11
 columns from the append-only ``alert`` table (system tracking + user state that
 moved to ``lastalert``; plus the denormalized ``incident``). A regression here
 silently deletes a production column, so the upgrade/downgrade is exercised
@@ -50,7 +51,7 @@ _CORE_KEPT = {"status", "severity", "description"}
 
 
 def _load_migration():
-    spec = importlib.util.spec_from_file_location("phase2_m2_migration", _MIGRATION_PATH)
+    spec = importlib.util.spec_from_file_location("alert_column_drop_migration", _MIGRATION_PATH)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -100,7 +101,7 @@ def test_migration_constants_are_correct():
 
 def test_upgrade_drops_columns_downgrade_readds(tmp_path):
     migration = _load_migration()
-    db_path = tmp_path / "phase2_migration.db"
+    db_path = tmp_path / "migration.db"
     engine = sa.create_engine(f"sqlite:///{db_path}")
     try:
         _build_pre_drop_alert_table(engine)

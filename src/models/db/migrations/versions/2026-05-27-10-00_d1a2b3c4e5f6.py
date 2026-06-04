@@ -1,10 +1,10 @@
-"""phase2 P2-M1: add lastalert.deleted
+"""Add lastalert.deleted (alertenrichment removal — the lastalert.deleted migration)
 
 Revision ID: d1a2b3c4e5f6
 Revises: c4d5e6f7a8b9
 Create Date: 2026-05-27 10:00:00.000000
 
-Phase 2 / task P2-M1 of the alertenrichment removal (PHASE2_IMPLEMENTATION_PLAN.md).
+The lastalert.deleted step of the alertenrichment removal (PHASE2_IMPLEMENTATION_PLAN.md).
 
 Adds a typed ``deleted`` boolean to ``lastalert`` to replace the legacy
 ``alertenrichment.enrichments->'deletedAt'`` timestamp-list mechanism (which drove
@@ -13,7 +13,7 @@ schema there is no JSONB to hold ``deletedAt``; ``deleted`` becomes a first-clas
 set by the ``delete_alert`` route and cleared by ``unenrich``/restore.
 
 NOT-NULL with ``server_default = false`` so the OLD code path (which inserts a LastAlert
-without this column) keeps working during the Phase 2 cutover window (NF6).
+without this column) keeps working during the cutover window (NF6).
 
 Backfill note: the legacy ``deletedAt`` array stores client-sent ISO strings whose format
 does not reliably match ``lastalert.last_received`` (timestamptz). Matching in SQL is

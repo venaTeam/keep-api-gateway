@@ -1,10 +1,10 @@
-"""phase2 P2-M3: add lastalert ticket_type / ticket_url / ticket_provider_id
+"""Add lastalert ticket_type / ticket_url / ticket_provider_id (alertenrichment removal)
 
 Revision ID: f3a4b5c6d7e8
 Revises: e2b3c4d5f6a7
 Create Date: 2026-05-28 10:00:00.000000
 
-Phase 2 follow-up. Previously the assign-ticket modal wrote arbitrary keys
+alertenrichment-removal follow-up. Previously the assign-ticket modal wrote arbitrary keys
 (`ticket_type`, `ticket_url`, `ticket_provider_id`) into ``alertenrichment.enrichments``.
 Under the strict schema those keys now 422. Per product decision they get
 first-class typed columns on ``lastalert`` instead of being discarded.

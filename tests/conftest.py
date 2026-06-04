@@ -732,7 +732,7 @@ def setup_alerts(elastic_client, db_session, request):
             last_alert = existed_last_alerts_dict[alert.fingerprint]
             last_alert.alert_id = alert.id
             last_alert.timestamp = alert.timestamp
-            # Phase 2: tracking fields live on LastAlert now
+            # tracking fields live on LastAlert now
             last_alert.last_received = alert.timestamp
             last_alerts.append(last_alert)
         else:
@@ -743,7 +743,7 @@ def setup_alerts(elastic_client, db_session, request):
                     timestamp=alert.timestamp,
                     first_timestamp=alert.timestamp,
                     alert_id=alert.id,
-                    # Phase 2: tracking fields live on LastAlert now
+                    # tracking fields live on LastAlert now
                     last_received=alert.timestamp,
                 )
             )
