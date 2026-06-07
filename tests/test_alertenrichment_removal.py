@@ -1,4 +1,4 @@
-"""Phase 2 (alertenrichment removal) — db-layer behavior tests.
+"""alertenrichment removal — db-layer behavior tests.
 
 Covers the canonical shared-logic spec for keep-api-gateway:
   - dismissed -> dismiss_mode translation (normalize_enrichments)
@@ -477,7 +477,7 @@ def test_incident_unenrich_force_replaces(db_session):
 
 
 # --------------------------------------------------------------------------- #
-# REVIEW fixes — guard the regressions found in the Phase 2 review pass.
+# REVIEW fixes — guard the regressions found in the alertenrichment removal review pass.
 # --------------------------------------------------------------------------- #
 def test_extraction_mapping_nonstrict_discards_unknown_keys(db_session):
     """strict=False is the contract for extraction/mapping rule writes (system).
@@ -530,7 +530,7 @@ def test_last_alert_enrichments_dict_emits_iso_dismissed_until(db_session):
 
 
 def test_dto_dismiss_until_legacy_alias_populated(db_session):
-    """The pre-Phase-2 UI reads `dismiss_until` (legacy alias dismissUntil); the
+    """The UI before the alertenrichment removal reads `dismiss_until` (legacy alias dismissUntil); the
     DTO builder must populate it from lastalert.dismissed_until so the legacy
     field stays in sync alongside the new `dismissed_until` field."""
     alert = _make_alert(db_session, "fp-legacy", status="firing")

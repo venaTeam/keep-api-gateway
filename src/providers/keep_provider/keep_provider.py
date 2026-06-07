@@ -144,7 +144,7 @@ class KeepProvider(BaseProvider):
                         continue
                     alert_event = alert.dict()
 
-                    # Phase 2: alert enrichment state lives on the per-fingerprint
+                    # Alert enrichment state lives on the per-fingerprint
                     # LastAlert typed columns; build the enrichments dict from it.
                     last_alert = getattr(alert, "_last_alert", None)
                     if last_alert is None:

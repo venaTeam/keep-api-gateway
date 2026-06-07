@@ -1,6 +1,6 @@
 """add per-occurrence `received_at` column to the alert table
 
-Phase 2 relocated the per-fingerprint `last_received` to `lastalert.last_received`
+The alertenrichment removal relocated the per-fingerprint `last_received` to `lastalert.last_received`
 (the canonical value used by the DTO/queries). This re-introduces a per-occurrence
 received timestamp on the `alert` row itself, under a distinct name (`received_at`)
 so it can never be confused with / override `lastalert.last_received`.

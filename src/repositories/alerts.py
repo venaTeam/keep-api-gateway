@@ -123,7 +123,7 @@ _INFRA_COLUMNS = {
 
 # Retained for backward-compat with src/repositories/incidents.py, which imports
 # these to build its own (incident-scoped) alert field configurations. The incident
-# query path is out of scope for Phase 2 and keeps its existing behavior.
+# query path is out of scope for the alertenrichment removal and keeps its existing behavior.
 _SPECIAL_FIELDS = {
     "severity": {
         "data_type": DataType.STRING,
@@ -145,7 +145,7 @@ _SPECIAL_FIELDS = {
     "unresolved_counter": {"data_type": DataType.INTEGER},
 }
 
-# === Phase 2: strict schema ===
+# === strict schema ===
 # User-enrichment state + relocated tracking fields now live as typed columns on
 # LastAlert (no more alertenrichment JSONB extraction). These are mapped
 # explicitly here and EXCLUDED from the generic Alert-column loop below.
@@ -153,7 +153,7 @@ _SPECIAL_FIELDS = {
 #     (alert.status).
 #   - severity/description: immutable provider values on alert.
 #   - dismissed: derived boolean (lastalert.status == 'suppressed').
-_PHASE2_FIELD_CONFIGS = [
+_STRICT_SCHEMA_FIELD_CONFIGS = [
     FieldMappingConfiguration(
         map_from_pattern="status",
         map_to=["lastalert.status", "alert.status"],
@@ -233,27 +233,39 @@ _PHASE2_FIELD_CONFIGS = [
         data_type=DataType.STRING,
     ),
 ]
-alert_field_configurations.extend(_PHASE2_FIELD_CONFIGS)
+alert_field_configurations.extend(_STRICT_SCHEMA_FIELD_CONFIGS)
 
-# Fields handled explicitly above (Phase 2) — skip them in the generic loop so we
+# Fields handled explicitly above — skip them in the generic loop so we
 # don't shadow the LastAlert-backed mappings with a plain alert.* mapping. Note
 # `started_at` stays mapped to lastalert.first_timestamp (declared at the top) and
 # must not be overridden by the relocated lastalert.started_at string column.
-_PHASE2_HANDLED_FIELDS = {cfg.map_from_pattern for cfg in _PHASE2_FIELD_CONFIGS}
-_PHASE2_HANDLED_FIELDS.add("started_at")
+_STRICT_SCHEMA_HANDLED_FIELDS = {cfg.map_from_pattern for cfg in _STRICT_SCHEMA_FIELD_CONFIGS}
+_STRICT_SCHEMA_HANDLED_FIELDS.add("started_at")
 
 for column in Alert.__table__.columns:
     if column.name in _INFRA_COLUMNS:
         continue
-    if column.name in _PHASE2_HANDLED_FIELDS:
+    if column.name in _STRICT_SCHEMA_HANDLED_FIELDS:
         continue
+    # Use the column's real scalar type for int/float/bool so CEL truthiness and
+    # comparisons stay type-correct (e.g. integer `expiry_in_minutes` must not be
+    # compared to a boolean literal). Text/datetime/etc. keep mapping as STRING.
+    try:
+        _py_type = column.type.python_type
+    except Exception:
+        _py_type = str
+    _col_data_type = {
+        int: DataType.INTEGER,
+        float: DataType.FLOAT,
+        bool: DataType.BOOLEAN,
+    }.get(_py_type, DataType.STRING)
     alert_field_configurations.append(
         FieldMappingConfiguration(
             map_from_pattern=column.name,
             map_to=[
                 f"alert.{column.name}",
             ],
-            data_type=DataType.STRING,
+            data_type=_col_data_type,
         )
     )
 
@@ -359,7 +371,7 @@ def __build_query_for_filtering(
     sql_query = select(*select_args).select_from(LastAlert)
 
     if fetch_alerts_data or force_fetch:
-        # Phase 2: no more alertenrichment JOIN — user state lives on LastAlert
+        # No more alertenrichment JOIN — user state lives on LastAlert
         # typed columns (already the FROM table here).
         sql_query = sql_query.join(
             Alert,
@@ -515,7 +527,7 @@ def query_last_alerts(tenant_id, query: QueryDto) -> list[Alert]:
             return []
 
         # Process results based on dialect
-        # Phase 2: alert_data = (Alert, LastAlert, started_at). User-enrichment
+        # alert_data = (Alert, LastAlert, started_at). User-enrichment
         # state lives on the LastAlert row; the DTO builder reads it from typed
         # columns (re-fetched by fingerprint), so we only carry the Alert and the
         # `started_at` (= LastAlert.first_timestamp) episode marker forward here.

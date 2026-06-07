@@ -82,14 +82,14 @@ REDIS = os.environ.get("REDIS", "false") == "true"
 
 
 class AlertHistoryResponse(BaseModel):
-    """Phase 2 alert-history response: provider occurrences + user/system activity."""
+    """Alert-history response: provider occurrences + user/system activity."""
 
     occurrences: list[AlertDto]
     activity: list[AlertAuditDto]
 
 
 def _translate_dismiss_enrichments(enrichments: dict) -> None:
-    """Phase 2: translate the legacy `dismissed` (and optional dismiss-until)
+    """Translate the legacy `dismissed` (and optional dismiss-until)
     enrichment keys, sent as strings by the current UI, into the typed
     status/dismiss_mode/dismissed_until model. Mutates `enrichments` in place.
 
@@ -348,7 +348,7 @@ def get_alert_history(
         IdentityManagerFactory.get_auth_verifier(["read:alert"])
     ),
 ) -> AlertHistoryResponse:
-    """Phase 2: the history endpoint returns two cleanly separated concerns:
+    """The history endpoint returns two cleanly separated concerns:
 
     - `occurrences`: one AlertDto per `alert` row (raw provider data per firing,
       no user enrichment merged in).
@@ -369,8 +369,9 @@ def get_alert_history(
         limit=1000,
     )
     # occurrences: raw provider data per firing — no enrichment merge.
-    # Phase 2: alert.last_received was dropped (P2-M2). The per-occurrence event
-    # time lives on alert.timestamp. Carry it forward so each history row reports
+    # alert.last_received was dropped by the misplaced-alert-column drop migration.
+    # The per-occurrence event time lives on alert.timestamp. Carry it forward so
+    # each history row reports
     # its actual firing time instead of falling through the AlertDto validator's
     # `datetime.now()` default (which would make every row look like "just now").
     occurrences = []
@@ -416,7 +417,7 @@ async def delete_alert(
         },
     )
 
-    # Phase 2: soft-delete is a typed boolean on LastAlert (per fingerprint).
+    # Soft-delete is a typed boolean on LastAlert (per fingerprint).
     # restore=True clears it; restore=False sets it. The legacy `deletedAt`
     # timestamp-list / `assignees` timestamp-dict patterns are dropped — also
     # auto-assign the acting user (assignee is never cleared automatically).
@@ -483,7 +484,7 @@ async def assign_alert(
         },
     )
 
-    # Phase 2: assignee is a typed per-fingerprint column on LastAlert (never
+    # Assignee is a typed per-fingerprint column on LastAlert (never
     # cleared automatically). The legacy per-occurrence `assignees` timestamp-dict
     # is dropped. dispose_on_new_alert applies to the acknowledged status only
     # (-> status_disposable), not to the assignee.
@@ -800,7 +801,7 @@ async def batch_enrich_alerts(
 
         enrichments = deepcopy(enrich_data.enrichments)
 
-        # Phase 2: status/dismiss clearing on resolve happens in set_last_alert.
+        # status/dismiss clearing on resolve happens in set_last_alert.
         # Unknown keys -> ValueError -> 422.
         try:
             await enrichment_bl.batch_enrich(
@@ -936,7 +937,7 @@ async def _enrich_alert(
 
         enrichments = deepcopy(enrich_data.enrichments)
 
-        # Phase 2: status/dismiss clearing on resolve happens in set_last_alert.
+        # status/dismiss clearing on resolve happens in set_last_alert.
 
         enrichment_kwargs = {
             "fingerprint": enrich_data.fingerprint,
@@ -1054,7 +1055,7 @@ async def unenrich_alert(
             action_type = ActionType.GENERIC_UNENRICH
             action_description = f"Alert en-enriched by {authenticated_entity.email}"
 
-        # Phase 2: un-enrich = revert the requested typed LastAlert columns to the
+        # Un-enrich = revert the requested typed LastAlert columns to the
         # provider value by setting them NULL (force=True bypasses the note-guard so
         # an explicit note removal sticks). Legacy `dismissed`/`dismiss_until` keys
         # are translated to clear status/dismiss_mode/dismissed_until.

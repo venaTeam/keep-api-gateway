@@ -41,7 +41,7 @@ def javascript_iso_format(last_received) -> str:
 
 def _last_alert_to_dto_payload(last_alert) -> dict:
     """Build the DTO payload contribution (user enrichment + relocated tracking
-    fields) from a LastAlert row's typed columns (Phase 2)."""
+    fields) from a LastAlert row's typed columns."""
     payload: dict = {}
     # user enrichment state
     if last_alert.status is not None:
@@ -55,7 +55,7 @@ def _last_alert_to_dto_payload(last_alert) -> dict:
     if last_alert.dismiss_mode is not None:
         payload["dismiss_mode"] = last_alert.dismiss_mode
     if last_alert.dismissed_until is not None:
-        # Phase 2: typed DateTime column -> AlertDto.dismissed_until is `str|None`.
+        # Typed DateTime column -> AlertDto.dismissed_until is `str|None`.
         # Default `str(datetime)` produces "2026-01-01 00:00:00+00:00" (space, not
         # 'T'); emit canonical ISO 8601 so the DTO matches the legacy wire shape.
         ts_val = last_alert.dismissed_until
@@ -70,7 +70,7 @@ def _last_alert_to_dto_payload(last_alert) -> dict:
         payload["dismissed_until"] = ts_val
         # Also expose under the legacy `dismiss_until` field so the AlertDto
         # `validate_dismissed` validator (which still reads dismiss_until for
-        # expiry handling) and any pre-Phase-2 UI consumer keep working.
+        # expiry handling) and any pre-existing UI consumer keep working.
         payload.setdefault("dismiss_until", ts_val)
     payload["deleted"] = bool(last_alert.deleted)
     # relocated tracking fields
@@ -216,7 +216,7 @@ def convert_db_alerts_to_dto_alerts(
 ) -> list[AlertDto | AlertWithIncidentLinkMetadataDto]:
     """
     Build AlertDtos, sourcing user-enrichment state and relocated tracking
-    fields from the per-fingerprint LastAlert typed columns (Phase 2).
+    fields from the per-fingerprint LastAlert typed columns.
 
     The LastAlert row is read from the Alert's attached `_last_alert` (set by the
     query layer) when present; otherwise it is batch-fetched by (tenant_id,
@@ -273,7 +273,7 @@ def convert_db_alerts_to_dto_alerts(
                 if alert_payload.get("source") and isinstance(alert_payload["source"], str):
                     alert_payload["source"] = [alert_payload["source"]]
 
-                # Phase 2: user-enrichment + relocated tracking from LastAlert columns
+                # user-enrichment + relocated tracking from LastAlert columns
                 last_alert = last_alerts_by_key.get(
                     (alert.tenant_id, alert.fingerprint)
                 )

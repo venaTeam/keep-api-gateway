@@ -259,7 +259,7 @@ class EnrichmentsBl:
                     action_callee="system",
                     action_description=f"Alert enriched with extraction from rule `{rule.name}`",
                     should_exist=False,
-                    # Phase 2: extraction rules emit arbitrary regex-group keys that
+                    # Extraction rules emit arbitrary regex-group keys that
                     # have no destination in the strict typed schema. System write
                     # -> discard unknown keys with a warning instead of raising 422.
                     strict=False,
@@ -472,7 +472,7 @@ class EnrichmentsBl:
                 action_callee="system",
                 action_description=f"Alert enriched with mapping from rule `{rule.name}`",
                 should_exist=False,
-                # Phase 2: mapping rules emit arbitrary user-defined keys that
+                # Mapping rules emit arbitrary user-defined keys that
                 # have no destination in the strict typed schema. System write
                 # -> discard unknown keys with a warning instead of raising 422.
                 strict=False,
@@ -634,7 +634,7 @@ class EnrichmentsBl:
     def _apply_dispose_on_new_alert(
         enrichments: dict, dispose_on_new_alert: bool
     ) -> dict:
-        """Phase 2: 'dispose on new alert' for status is now expressed via the
+        """'Dispose on new alert' for status is now expressed via the
         typed `status_disposable` flag (cleared on the next non-resolved re-fire
         in set_last_alert), not a disposable_* JSONB wrapper.
         """
@@ -674,8 +674,8 @@ class EnrichmentsBl:
             )
 
         if produce_event:
-            # Produce a single BATCH_ENRICH event for the entire batch. Phase 2:
-            # propagate the typed status_disposable flag (from dispose_on_new_alert)
+            # Produce a single BATCH_ENRICH event for the entire batch.
+            # Propagate the typed status_disposable flag (from dispose_on_new_alert)
             # so the event-handler consumer writes the same typed columns. Also
             # normalize legacy keys (dismissed -> status/dismiss_mode) so the
             # consumer sees the same translated payload the DB stored — incident
@@ -719,7 +719,7 @@ class EnrichmentsBl:
         strict=True,
         entity_type: str = "alert",
     ):
-        # Phase 2: "dispose on new alert" is now a typed `status_disposable` flag on
+        # "Dispose on new alert" is now a typed `status_disposable` flag on
         # LastAlert (cleared on the next non-resolved re-fire in set_last_alert). No
         # more disposable_* JSONB wrappers nor instance-level (UUID-keyed) enrichment.
         await self.enrich_entity(
@@ -757,7 +757,8 @@ class EnrichmentsBl:
         action_type = AlertActionType - the action type of the enrichment
         action_callee = the action callee of the enrichment
         entity_type = "alert" (default, typed LastAlert columns) or "incident"
-            (legacy AlertEnrichment JSONB; kept until Phase 3)
+            (legacy AlertEnrichment JSONB; kept until a later migration removes
+            the `alertenrichment` table)
 
         Enrich the entity with extraction and mapping rules
         """
@@ -774,13 +775,13 @@ class EnrichmentsBl:
                 "entity_type": entity_type,
             },
         )
-        # Phase 2: dispose-on-new-alert -> typed status_disposable flag. This is
+        # Dispose-on-new-alert -> typed status_disposable flag. This is
         # an ALERT-only concept; incidents keep arbitrary JSONB keys untouched.
         if entity_type != "incident":
             enrichments = self._apply_dispose_on_new_alert(
                 enrichments, dispose_on_new_alert
             )
-            # Phase 2: normalize ONCE here so the local `enrichments` used for the
+            # Normalize ONCE here so the local `enrichments` used for the
             # Kafka event and the Elasticsearch enrich call carries the same typed
             # keys the DB layer writes. Otherwise raw `dismissed: True` (or other
             # legacy keys) would reach ES/Kafka while the DB stored translated

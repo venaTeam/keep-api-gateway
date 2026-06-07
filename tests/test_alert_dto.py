@@ -189,7 +189,7 @@ def test_alert_started_at(db_session, create_alert, client, test_app):
     # The API might return it with T or space, and precision might vary
     assert alerts[0]["startedAt"].replace("T", " ").startswith(dt.isoformat(sep=" ")[:19])
 
-    # Phase 2: `started_at` is no longer a settable per-occurrence provider field.
+    # `started_at` is no longer a settable per-occurrence provider field.
     # The DTO `startedAt` is the episode marker = LastAlert.first_timestamp (the
     # first time this fingerprint fired), so it tracks the occurrence timestamp,
     # not any caller-provided `started_at`.

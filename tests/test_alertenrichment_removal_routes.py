@@ -1,4 +1,4 @@
-"""Phase 2 (alertenrichment removal) — route-level + DTO round-trip coverage.
+"""alertenrichment removal — route-level + DTO round-trip coverage.
 
 The alerts routes (delete / assign / unenrich) run ``EnrichmentsBl.enrich_entity``
 in-process and synchronously write the typed LastAlert columns, so a TestClient
