@@ -50,8 +50,7 @@ def _last_alert_to_dto_payload(last_alert) -> dict:
         payload["assignee"] = last_alert.assignee
     if last_alert.note is not None:
         payload["note"] = last_alert.note
-    # derived dismissed compat field + dismiss details
-    payload["dismissed"] = last_alert.status == "suppressed"
+    # dismiss details
     if last_alert.dismiss_mode is not None:
         payload["dismiss_mode"] = last_alert.dismiss_mode
     if last_alert.dismissed_until is not None:
@@ -68,9 +67,8 @@ def _last_alert_to_dto_payload(last_alert) -> dict:
                 + "Z"
             )
         payload["dismissed_until"] = ts_val
-        # Also expose under the legacy `dismiss_until` field so the AlertDto
-        # `validate_dismissed` validator (which still reads dismiss_until for
-        # expiry handling) and any pre-existing UI consumer keep working.
+        # Also expose under the legacy `dismiss_until` field for any pre-existing
+        # UI consumer that reads it for expiry handling.
         payload.setdefault("dismiss_until", ts_val)
     payload["deleted"] = bool(last_alert.deleted)
     # relocated tracking fields
