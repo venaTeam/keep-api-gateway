@@ -35,6 +35,10 @@ BATCH_SIZE = 10_000
 
 def upgrade() -> None:
     conn = op.get_bind()
+    # `extra_data` is a transient overflow column (dropped later by e1932). The
+    # current Alert model no longer declares it, so the model-introspecting
+    # e4ad migration does not create it on a fresh replay — ensure it exists.
+    op.execute("ALTER TABLE alert ADD COLUMN IF NOT EXISTS extra_data jsonb")
     payload_cols = _get_payload_columns()
     
     set_clauses_list = []
@@ -45,6 +49,9 @@ def upgrade() -> None:
             set_clauses_list.append(f'"{col_name}" = (event->>\'{col_name}\')::boolean')
         elif isinstance(col.type, sa.Integer):
             set_clauses_list.append(f'"{col_name}" = (event->>\'{col_name}\')::integer')
+        elif isinstance(col.type, sa.DateTime):
+            # e.g. last_received is timestamptz in the current model; text needs an explicit cast.
+            set_clauses_list.append(f'"{col_name}" = (event->>\'{col_name}\')::timestamptz')
         elif isinstance(col.type, sa.JSON) or col_name in ("enriched_fields", "labels", "incident_dto", "assignees", "source"):
             # If the field is a dictionary/list, extract directly as JSON instead of text
             set_clauses_list.append(f'"{col_name}" = event->\'{col_name}\'')
@@ -65,7 +72,7 @@ def upgrade() -> None:
             )
             UPDATE alert SET
                 {set_clauses},
-                "extra_data" = event - '{{{remove_keys}}}'::text[]
+                "extra_data" = event::jsonb - '{{{remove_keys}}}'::text[]
             FROM batch
             WHERE alert.id = batch.id
         """))

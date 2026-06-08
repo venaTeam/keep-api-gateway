@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "keep-api-gateway"
-version = "0.50.3.3"
+version = "0.51.0.5"
 description = "Alerting. for developers, by developers."
 authors = ["Keep Alerting LTD"]
 packages = [{include = "src"}]

@@ -9,39 +9,43 @@ from html import unescape
 
 import yaml
 
+from src.repositories.db import (
+    get_last_alert_by_fingerprint,
+    last_alert_enrichments_dict,
+)
+from src.models.alert import AlertDto, AlertStatus
+from src.services.context_manager import ContextManager
+from src.exceptions.provider_exception import ProviderException
+from src.providers.base.base_provider import BaseProvider
+from src.providers.models.provider_config import ProviderConfig
+
+# This file is a vendored copy of the keep-workflows "keep" provider. The names
+# below exist only in keep-workflows, not in api-gateway (get_alerts_with_filters
+# is a workflows-only db helper; the rest are workflows-only modules), but
+# providers_factory imports this file at registration time
+# (importlib.import_module), so the import must not raise. They stay None here:
+# KeepProvider's alert-execution paths (_notify / _query / state handling) only
+# ever run inside keep-workflows — KeepProvider can't even be instantiated in
+# api-gateway, since IOHandler is None.
 try:
     from src.repositories.db import get_alerts_with_filters
 except ImportError:
     get_alerts_with_filters = None
 try:
-    from src.models.alert import AlertDto, AlertStatus
-except ImportError:
-    AlertDto = None
-    AlertStatus = None
-try:
     from src.common.event_management.process_event_task import process_event
-except (ModuleNotFoundError, ImportError):
-    process_event = None
-from src.services.context_manager import ContextManager
-try:
-    from src.exceptions.provider_exception import ProviderException
 except ImportError:
-    class ProviderException(Exception):
-        pass
+    process_event = None
 try:
     from src.iohandler.iohandler import IOHandler
-except (ModuleNotFoundError, ImportError):
+except ImportError:
     IOHandler = None
-from src.providers.base.base_provider import BaseProvider
-from src.providers.models.provider_config import ProviderConfig
 try:
     from src.searchengine.searchengine import SearchEngine
-except ModuleNotFoundError:
+except ImportError:
     SearchEngine = None
-
 try:
     from src.workflowmanager.workflowstore import WorkflowStore
-except ModuleNotFoundError:
+except ImportError:
     WorkflowStore = None
 
 
@@ -140,8 +144,17 @@ class KeepProvider(BaseProvider):
                         continue
                     alert_event = alert.dict()
 
-                    if alert.alert_enrichment:
-                        alert_event["enrichments"] = alert.alert_enrichment.enrichments
+                    # Alert enrichment state lives on the per-fingerprint
+                    # LastAlert typed columns; build the enrichments dict from it.
+                    last_alert = getattr(alert, "_last_alert", None)
+                    if last_alert is None:
+                        last_alert = get_last_alert_by_fingerprint(
+                            self.context_manager.tenant_id, alert.fingerprint
+                        )
+                    if last_alert is not None:
+                        alert_event["enrichments"] = last_alert_enrichments_dict(
+                            last_alert
+                        )
                     alerts.append(alert_event)
                     fingerprints[alert.fingerprint] = True
         else:
