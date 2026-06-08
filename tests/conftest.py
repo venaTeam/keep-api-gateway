@@ -683,14 +683,11 @@ def _create_valid_event(d, last_received=None):
 def setup_alerts(elastic_client, db_session, request):
     alert_details = request.param.get("alert_details")
     alerts = []
-    enrichments = []
     for i, detail in enumerate(alert_details):
         # sleep to avoid same last_received
         time.sleep(0.02)
         detail["fingerprint"] = f"test-{i}"
         source = detail.get("source", ["unknown"])[0]
-        # Build event payload (carries non-native fields for AlertEnrichment)
-        event = _create_valid_event(detail)
         last_received = detail.get("last_received") or detail.get("last_received") or datetime.utcnow().isoformat()
         alerts.append(
             Alert(
@@ -710,15 +707,7 @@ def setup_alerts(elastic_client, db_session, request):
                 last_received=last_received,
             )
         )
-        enrichments.append(
-            AlertEnrichment(
-                tenant_id=SINGLE_TENANT_UUID,
-                alert_fingerprint=detail["fingerprint"],
-                enrichments=event,
-            )
-        )
     db_session.add_all(alerts)
-    db_session.add_all(enrichments)
     db_session.commit()
 
     existed_last_alerts = db_session.query(LastAlert).all()
@@ -774,11 +763,9 @@ def setup_stress_alerts_no_elastic(db_session):
             for i in range(num_alerts)
         ]
         alerts = []
-        enrichments = []
         for i, detail in enumerate(alert_details):
             random_timestamp = datetime.utcnow() - timedelta(days=random.uniform(0, 7))
             fingerprint = "fingerprint_{}".format(i)
-            event = _create_valid_event(detail, last_received=random_timestamp)
             alerts.append(
                 Alert(
                     timestamp=random_timestamp,
@@ -796,15 +783,7 @@ def setup_stress_alerts_no_elastic(db_session):
                     last_received=str(random_timestamp),
                 )
             )
-            enrichments.append(
-                AlertEnrichment(
-                    tenant_id=SINGLE_TENANT_UUID,
-                    alert_fingerprint=fingerprint,
-                    enrichments=event,
-                )
-            )
         db_session.add_all(alerts)
-        db_session.add_all(enrichments)
         db_session.commit()
 
         existed_last_alerts = db_session.query(LastAlert).all()
@@ -934,29 +913,6 @@ def create_alert(db_session):
             db_session.add(alert)
             db_session.commit()
             alert_id = alert.id
-
-            # Persist non-native fields (labels, annotations, etc.) via AlertEnrichment
-            # so the rest of the stack (CEL filters, DTO conversion) can read them back.
-            existing_enrichment = (
-                db_session.query(AlertEnrichment)
-                .filter(
-                    AlertEnrichment.tenant_id == tenant_id,
-                    AlertEnrichment.alert_fingerprint == fingerprint,
-                )
-                .first()
-            )
-            if existing_enrichment:
-                merged = {**existing_enrichment.enrichments, **event_data}
-                existing_enrichment.enrichments = merged
-                db_session.add(existing_enrichment)
-            else:
-                enrichment = AlertEnrichment(
-                    tenant_id=tenant_id,
-                    alert_fingerprint=fingerprint,
-                    enrichments=event_data,
-                )
-                db_session.add(enrichment)
-            db_session.commit()
         else:
             alert_id = None
 

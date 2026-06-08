@@ -326,9 +326,8 @@ class BaseProvider(metaclass=abc.ABCMeta):
                 # instead of raising; "dispose_on_new_alert" status -> status_disposable.
                 "strict": False,
                 # ALERT writes go to typed LastAlert columns;
-                # INCIDENT writes stay on the legacy AlertEnrichment JSONB (kept
-                # until a later migration removes the `alertenrichment` table). The
-                # db layer branches on this selector — strict
+                # INCIDENT writes go to the IncidentEnrichment JSONB (keyed on
+                # incident_id). The db layer branches on this selector — strict
                 # / translation / D1 are skipped for the incident branch.
                 "entity_type": entity_type,
             }

@@ -1,8 +1,7 @@
 import hashlib
 import urllib.parse
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
-import freezegun
 import pytest
 
 from src.models.alert import AlertDto, AlertSeverity, AlertStatus
@@ -209,50 +208,16 @@ def test_alert_started_at(db_session, create_alert, client, test_app):
     )
 
 
-def test_alert_dismiss_until_expiry():
-    """Test that an alert becomes un-dismissed after the dismiss_until time is reached"""
-    # Create a fixed reference time
-    now = datetime.now(tz=timezone.utc)
-    dismiss_until = now + timedelta(minutes=1)
-    dismiss_until_str = dismiss_until.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+# The response-side `dismissed` shim and its time-based expiry validator were
+# removed; dismiss state now lives on lastalert.dismiss_mode / dismissed_until.
+# The inbound dismissed/dismiss_until -> dismiss_mode translation is covered by
+# tests/test_alertenrichment_removal.py and tests/test_alertenrichment_removal_routes.py.
 
-    # Create alert with dismiss until 1 minute in the future
+
+def test_alert_dto_has_no_dismissed_field():
+    """The response-side `dismissed` shim is gone from AlertDto."""
     alert = create_basic_alert(
-        name="Dismiss Until Test",
+        name="No Dismissed Field",
         last_received="2024-01-01T00:00:00.000Z",
-        dismissed=True,
-        dismiss_until=dismiss_until_str,
     )
-
-    # At current time, the alert should still be dismissed
-    with freezegun.freeze_time(now):
-        revalidated_alert = AlertDto(**alert.dict())
-        assert revalidated_alert.dismissed is True
-
-    # Advance time by 2 minutes (past the dismiss_until time)
-    with freezegun.freeze_time(now + timedelta(minutes=2)):
-        revalidated_alert = AlertDto(**alert.dict())
-        assert revalidated_alert.dismissed is False
-
-
-def test_alert_dismiss_forever():
-    """Test that an alert with dismiss_until='forever' remains dismissed"""
-    alert = create_basic_alert(
-        name="Dismiss Forever Test",
-        last_received="2024-01-01T00:00:00.000Z",
-        dismissed=True,
-        dismiss_until="forever",
-    )
-
-    # At current time, the alert should be dismissed
-    now = datetime.now(tz=timezone.utc)
-
-    # At current time, the alert should still be dismissed
-    with freezegun.freeze_time(now):
-        revalidated_alert = AlertDto(**alert.dict())
-        assert revalidated_alert.dismissed is True
-
-    # Advance time by 1 year (should still be dismissed)
-    with freezegun.freeze_time(now + timedelta(days=365)):
-        revalidated_alert = AlertDto(**alert.dict())
-        assert revalidated_alert.dismissed is True
+    assert "dismissed" not in alert.__fields__

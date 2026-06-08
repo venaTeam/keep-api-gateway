@@ -19,7 +19,7 @@ import pytest
 
 from src.models.action_type import ActionType
 from src.models.alert import AlertStatus
-from src.models.db.alert import Alert, AlertAudit, AlertEnrichment, LastAlert
+from src.models.db.alert import Alert, AlertAudit, LastAlert
 from src.repositories.db import (
     LASTALERT_ENRICHMENT_COLUMNS,
     LASTALERT_TRACKING_COLUMNS,
@@ -337,7 +337,7 @@ def test_set_last_alert_writes_tracking(db_session):
 
 
 # --------------------------------------------------------------------------- #
-# DTO build sources user-state + derived dismissed from LastAlert
+# DTO build sources user-state from LastAlert
 # --------------------------------------------------------------------------- #
 def test_dto_build_from_last_alert_columns(db_session):
     alert = _make_alert(db_session, "fp-dto", status="firing")
@@ -355,125 +355,18 @@ def test_dto_build_from_last_alert_columns(db_session):
     assert len(dtos) == 1
     dto = dtos[0]
     assert dto.status == "suppressed"
-    assert dto.dismissed is True  # derived from status == 'suppressed'
     assert dto.dismiss_mode == "permanent"
     assert dto.assignee == "alice"
     assert dto.note == "dto-note"
     assert dto.firing_counter == 5
+    # the response-side `dismissed` shim is gone
+    assert not hasattr(dto, "dismissed")
 
 
 # --------------------------------------------------------------------------- #
-# AG-3b: INCIDENT enrichment stays on the legacy AlertEnrichment JSONB row
-# (UUID-keyed). No LastAlert involvement, no translation, no D1 no-op, no
-# strict unknown-key rejection — arbitrary keys are preserved verbatim.
+# Incident enrichment lives on the dedicated IncidentEnrichment table — see
+# tests/test_incident_enrichment_table.py.
 # --------------------------------------------------------------------------- #
-def _get_alertenrichment(db_session, fingerprint):
-    return (
-        db_session.query(AlertEnrichment)
-        .filter(
-            AlertEnrichment.tenant_id == SINGLE_TENANT_UUID,
-            AlertEnrichment.alert_fingerprint == fingerprint,
-        )
-        .first()
-    )
-
-
-def test_incident_enrich_writes_alertenrichment_row(db_session):
-    incident_id = "11111111-1111-1111-1111-111111111111"
-    # No LastAlert exists for an incident id; the incident branch must NOT no-op.
-    enrich_entity(
-        SINGLE_TENANT_UUID,
-        incident_id,
-        {"ticket_url": "https://x", "severity": "high"},
-        action_type=ActionType.INCIDENT_ENRICH,
-        action_callee="bob@x",
-        action_description="t",
-        session=db_session,
-        entity_type="incident",
-    )
-
-    enr = _get_alertenrichment(db_session, incident_id)
-    assert enr is not None  # AlertEnrichment row written (no D1 no-op for incidents)
-    # arbitrary keys preserved verbatim (no strict rejection, no translation)
-    assert enr.enrichments["ticket_url"] == "https://x"
-    assert enr.enrichments["severity"] == "high"
-    # no LastAlert created for an incident id
-    assert get_last_alert_by_fingerprint(SINGLE_TENANT_UUID, incident_id, db_session) is None
-    assert _audit_count(db_session, incident_id) == 1
-
-
-def test_incident_enrich_merges_on_second_write(db_session):
-    incident_id = "22222222-2222-2222-2222-222222222222"
-    enrich_entity(
-        SINGLE_TENANT_UUID,
-        incident_id,
-        {"foo": "1"},
-        action_type=ActionType.INCIDENT_ENRICH,
-        action_callee="bob@x",
-        action_description="t",
-        session=db_session,
-        entity_type="incident",
-    )
-    enrich_entity(
-        SINGLE_TENANT_UUID,
-        incident_id,
-        {"bar": "2"},
-        action_type=ActionType.INCIDENT_ENRICH,
-        action_callee="bob@x",
-        action_description="t",
-        session=db_session,
-        entity_type="incident",
-    )
-    enr = _get_alertenrichment(db_session, incident_id)
-    # merge (not replace) — both keys present
-    assert enr.enrichments == {"foo": "1", "bar": "2"}
-
-
-def test_incident_enrich_no_dismissed_translation(db_session):
-    incident_id = "33333333-3333-3333-3333-333333333333"
-    # the dismissed<->dismiss_mode translation must NOT be applied to incidents
-    enrich_entity(
-        SINGLE_TENANT_UUID,
-        incident_id,
-        {"dismissed": True},
-        action_type=ActionType.INCIDENT_ENRICH,
-        action_callee="bob@x",
-        action_description="t",
-        session=db_session,
-        entity_type="incident",
-    )
-    enr = _get_alertenrichment(db_session, incident_id)
-    assert enr.enrichments == {"dismissed": True}
-    assert "dismiss_mode" not in enr.enrichments
-    assert "status" not in enr.enrichments
-
-
-def test_incident_unenrich_force_replaces(db_session):
-    incident_id = "44444444-4444-4444-4444-444444444444"
-    enrich_entity(
-        SINGLE_TENANT_UUID,
-        incident_id,
-        {"foo": "1", "bar": "2"},
-        action_type=ActionType.INCIDENT_ENRICH,
-        action_callee="bob@x",
-        action_description="t",
-        session=db_session,
-        entity_type="incident",
-    )
-    # force=True replaces the whole JSONB (how unenrich removes a key)
-    enrich_entity(
-        SINGLE_TENANT_UUID,
-        incident_id,
-        {"foo": "1"},
-        action_type=ActionType.INCIDENT_UNENRICH,
-        action_callee="bob@x",
-        action_description="t",
-        session=db_session,
-        force=True,
-        entity_type="incident",
-    )
-    enr = _get_alertenrichment(db_session, incident_id)
-    assert enr.enrichments == {"foo": "1"}
 
 
 # --------------------------------------------------------------------------- #
@@ -521,8 +414,8 @@ def test_last_alert_enrichments_dict_emits_iso_dismissed_until(db_session):
     d = last_alert_enrichments_dict(la)
     assert isinstance(d["dismissed_until"], str)
     # Canonical millisecond-precision UTC wire format with a 'Z' suffix —
-    # exactly "YYYY-MM-DDTHH:MM:SS.mmmZ" (what AlertDto.validate_dismissed
-    # strptimes). NOT the "+00:00"-offset form that .isoformat() produces.
+    # exactly "YYYY-MM-DDTHH:MM:SS.mmmZ" (the legacy dismiss wire format).
+    # NOT the "+00:00"-offset form that .isoformat() produces.
     assert re.match(
         r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$", d["dismissed_until"]
     )
