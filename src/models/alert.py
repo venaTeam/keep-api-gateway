@@ -87,10 +87,7 @@ class AlertDto(BaseModel):
         None  # The fingerprint of the alert (used for alert de-duplication)
     )
     dismiss_until: str | None = Field(default=None, alias="dismissUntil")  # The time until the alert is dismissed
-    # DO NOT MOVE DISMISSED ABOVE dismissedUntil since it is used in root_validator
-    dismissed: bool = False  # Whether the alert has been dismissed
-    # Typed dismiss state from lastalert (dismissed stays as a backward-compat
-    # shim derived from status=='suppressed' until the UI migrates to dismiss_mode).
+    # Typed dismiss state from lastalert.
     dismiss_mode: str | None = None  # permanent|until_resolved|dismiss_until
     dismissed_until: str | None = None  # expiry for dismiss_until mode
     deleted: bool = False  # Whether the alert has been deleted (soft delete)
@@ -212,32 +209,6 @@ class AlertDto(BaseModel):
 
         raise ValueError(f"Invalid date format: {last_received}")
 
-    @validator("dismissed", pre=True, always=True)
-    def validate_dismissed(cls, dismissed, values):
-        # normzlize dismissed value
-        if isinstance(dismissed, str):
-            dismissed = dismissed.lower() == "true"
-
-        # if dismissed is False, return False
-        if not dismissed:
-            return dismissed
-
-        # else, validate dismissedUntil
-        dismiss_until = values.get("dismiss_until")
-        # if there's no dismiss_until, return just return dismissed
-        if not dismiss_until or dismiss_until == "forever":
-            return dismissed
-
-        # if there's dismiss_until, validate it
-        dismiss_until_datetime = datetime.datetime.strptime(
-            dismiss_until, "%Y-%m-%dT%H:%M:%S.%fZ"
-        ).replace(tzinfo=datetime.timezone.utc)
-        dismissed = (
-            datetime.datetime.now(datetime.timezone.utc) < dismiss_until_datetime
-        )
-        return dismissed
-
-
     @root_validator(pre=True)
     def set_default_values(cls, values: Dict[str, Any]) -> Dict[str, Any]:
         # Check and set id:
@@ -319,11 +290,6 @@ class AlertDto(BaseModel):
     # after root_validator to ensure that the values are set
     @root_validator(pre=False)
     def validate_status(cls, values: Dict[str, Any]) -> Dict[str, Any]:
-        # if dismissed, change status to SUPPRESSED
-        # note this is happen AFTER validate_dismissed which already consider
-        #   dismissed + dismiss_until
-        # if values.get("dismissed"):
-        #     values["status"] = AlertStatus.SUPPRESSED
         return values
 
     class Config:
@@ -391,12 +357,14 @@ class EnrichAlertNoteRequestBody(BaseModel):
 
 
 class EnrichAlertRequestBody(BaseModel):
-    enrichments: dict[str, str]
+    # Values may be null to clear a typed column (e.g. dismiss_mode/dismissed_until
+    # set to null on restore or when changing status out of suppressed).
+    enrichments: dict[str, Any]
     fingerprint: str
 
 
 class BatchEnrichAlertRequestBody(BaseModel):
-    enrichments: dict[str, str]
+    enrichments: dict[str, Any]
     fingerprints: Optional[list[str]] = None
     cel: Optional[str] = None
 

@@ -144,7 +144,6 @@ class ElasticClient:
                 ts = ts.isoformat()
             alert_dto.dismiss_until = ts
             alert_dto.dismissed_until = ts
-        alert_dto.dismissed = bool(enrichments.get("dismissed", False))
         alert_dto.deleted = bool(enrichments.get("deleted", False))
 
     def run_query(self, query: str, limit: int = 1000):
@@ -232,7 +231,6 @@ class ElasticClient:
         try:
             # query
             alert_dict = alert.dict()
-            alert_dict["dismissed"] = bool(alert_dict["dismissed"])
             # change severity to number so we can sort by it
             alert_dict["severity"] = AlertSeverity(alert.severity.lower()).order
             self._client.index(

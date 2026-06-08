@@ -101,7 +101,7 @@ def _translate_dismiss_enrichments(enrichments: dict) -> None:
 
     The db layer's normalize_enrichments performs the same translation for other
     callers; doing it here too keeps `status` available for the route's action-type
-    metadata derivation and the response shim.
+    metadata derivation.
     """
     if "dismissed" not in enrichments:
         return

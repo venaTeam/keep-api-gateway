@@ -757,8 +757,7 @@ class EnrichmentsBl:
         action_type = AlertActionType - the action type of the enrichment
         action_callee = the action callee of the enrichment
         entity_type = "alert" (default, typed LastAlert columns) or "incident"
-            (legacy AlertEnrichment JSONB; kept until a later migration removes
-            the `alertenrichment` table)
+            (IncidentEnrichment JSONB, keyed on incident_id)
 
         Enrich the entity with extraction and mapping rules
         """
@@ -796,7 +795,7 @@ class EnrichmentsBl:
                 raise
 
         # Write enrichment to DB (synchronous, ensures data is persisted immediately).
-        # Alert -> typed LastAlert columns; incident -> legacy AlertEnrichment JSONB.
+        # Alert -> typed LastAlert columns; incident -> IncidentEnrichment JSONB.
         enrich_alert_db(
             self.tenant_id,
             fingerprint,
