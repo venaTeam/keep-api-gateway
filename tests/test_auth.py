@@ -4,6 +4,7 @@ from unittest.mock import patch
 import pytest
 
 from src.repositories.dependencies import SINGLE_TENANT_UUID
+from src.models.db.tenant import TenantApiKey
 from tests.fixtures.client import client, setup_api_key, test_app  # noqa
 
 MOCK_TOKEN = "MOCKTOKEN"
@@ -90,6 +91,50 @@ def test_api_key_with_header(db_session, client, test_app):
         "/providers", headers={"authorization": "digest invalid_api_key"}
     )
     assert response.status_code == 401 if auth_type != "NO_AUTH" else 200
+
+
+@pytest.mark.parametrize("test_app", ["SINGLE_TENANT"], indirect=True)
+def test_api_key_request_reuses_auth_and_route_session(
+    monkeypatch, db_session, client, test_app
+):
+    valid_api_key = "valid_api_key"
+    setup_api_key(db_session, valid_api_key)
+
+    from src.repositories import db as db_repository
+
+    session_creations = []
+    original_session = db_repository.Session
+
+    def counting_session(*args, **kwargs):
+        session_creations.append(1)
+        return original_session(*args, **kwargs)
+
+    monkeypatch.setattr(db_repository, "Session", counting_session)
+
+    response = client.get("/settings/smtp", headers={"x-api-key": valid_api_key})
+
+    assert response.status_code == 200
+    assert len(session_creations) == 1
+
+
+@pytest.mark.parametrize("test_app", ["SINGLE_TENANT"], indirect=True)
+def test_api_key_last_used_still_persists_with_request_session(
+    db_session, client, test_app
+):
+    valid_api_key = "valid_api_key"
+    setup_api_key(db_session, valid_api_key)
+
+    response = client.get("/settings/smtp", headers={"x-api-key": valid_api_key})
+
+    assert response.status_code == 200
+
+    db_session.expire_all()
+    tenant_api_key = (
+        db_session.query(TenantApiKey)
+        .filter(TenantApiKey.reference_id == "test_api_key")
+        .first()
+    )
+    assert tenant_api_key.last_used is not None
 
 
 @pytest.mark.parametrize(
