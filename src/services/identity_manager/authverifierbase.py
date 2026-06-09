@@ -10,9 +10,10 @@ from fastapi.security import (
     OAuth2PasswordBearer,
 )
 from starlette.datastructures import FormData
+from sqlmodel import Session
 
 from src.config.core import config
-from src.repositories.db import get_api_key, update_key_last_used
+from src.repositories.db import get_api_key, get_session, update_key_last_used
 from src.repositories.dependencies import extract_generic_body
 from src.services.identity_manager.authenticatedentity import AuthenticatedEntity
 from src.services.identity_manager.rbac import Admin as AdminRole
@@ -100,6 +101,7 @@ class AuthVerifierBase:
         authorization: Optional[HTTPAuthorizationCredentials] = Security(http_basic),
         token: Optional[str] = Depends(oauth2_scheme),
         body: dict | bytes | FormData = Depends(extract_generic_body),
+        session: Session = Depends(get_session),
     ) -> AuthenticatedEntity:
         """
         Main entry point for authentication and authorization.
@@ -127,7 +129,12 @@ class AuthVerifierBase:
                 )
 
         authenticated_entity = self.authenticate(
-            request, api_key, authorization, token, body
+            request,
+            api_key,
+            authorization,
+            token,
+            body=body,
+            session=session,
         )
         self.logger.debug(
             f"Authentication successful for entity: {authenticated_entity}"
@@ -146,6 +153,7 @@ class AuthVerifierBase:
         authorization: Optional[HTTPAuthorizationCredentials],
         token: Optional[str],
         body: Optional[dict | bytes | FormData] = None,
+        session: Optional[Session] = None,
     ) -> AuthenticatedEntity:
         """
         Authenticate the request using either token, API key, or HTTP basic auth.
@@ -184,7 +192,9 @@ class AuthVerifierBase:
         if api_key:
             self.logger.debug("Attempting to authenticate with API key")
             try:
-                return self._verify_api_key(request, api_key, authorization)
+                return self._verify_api_key(
+                    request, api_key, authorization, session=session
+                )
             except HTTPException:
                 raise
             except Exception:
@@ -318,6 +328,7 @@ class AuthVerifierBase:
         request: Request,
         api_key: str = Security(auth_header),
         authorization: HTTPAuthorizationCredentials = Security(http_basic),
+        session: Optional[Session] = None,
     ) -> AuthenticatedEntity:
         """
         Verify the API key and return an authenticated entity.
@@ -334,22 +345,21 @@ class AuthVerifierBase:
             HTTPException: If the API key is invalid.
         """
         self.logger.debug("Verifying API key")
-        tenant_api_key = get_api_key(api_key)
+        tenant_api_key = get_api_key(api_key, session=session)
         if not tenant_api_key:
             self.logger.warning("Invalid API Key")
             raise HTTPException(status_code=401, detail="Invalid API Key")
+        tenant_id = tenant_api_key.tenant_id
+        created_by = tenant_api_key.created_by
+        reference_id = tenant_api_key.reference_id
+        api_key_role = tenant_api_key.role
 
         try:
             self.logger.debug("Updating API Key last used")
             # if the key was updated in the last update_key_interval seconds, skip the update
-            if (
-                f"{tenant_api_key.tenant_id}:{tenant_api_key.reference_id}"
-                in self.key_last_used_updates
-            ):
+            if f"{tenant_id}:{reference_id}" in self.key_last_used_updates:
                 # if the key was updated in the last update_key_interval seconds, skip the update
-                if self.key_last_used_updates[
-                    f"{tenant_api_key.tenant_id}:{tenant_api_key.reference_id}"
-                ] > (
+                if self.key_last_used_updates[f"{tenant_id}:{reference_id}"] > (
                     datetime.datetime.now()
                     - datetime.timedelta(seconds=self.update_key_interval)
                 ):
@@ -359,24 +369,24 @@ class AuthVerifierBase:
             # else, update the key
             else:
                 update_key_last_used(
-                    tenant_api_key.tenant_id, reference_id=tenant_api_key.reference_id
+                    tenant_id, reference_id=reference_id, session=session
                 )
-                self.key_last_used_updates[
-                    f"{tenant_api_key.tenant_id}:{tenant_api_key.reference_id}"
-                ] = datetime.datetime.now()
+                self.key_last_used_updates[f"{tenant_id}:{reference_id}"] = (
+                    datetime.datetime.now()
+                )
             self.logger.debug("Successfully updated API Key last used")
         except Exception:
             self.logger.exception("Failed to update API Key last used")
 
-        request.state.tenant_id = tenant_api_key.tenant_id
-        self.logger.debug(f"API key verified for tenant: {tenant_api_key.tenant_id}")
+        request.state.tenant_id = tenant_id
+        self.logger.debug(f"API key verified for tenant: {tenant_id}")
         # check if impersonation is enabled, if not, return the api key's authenticated entity
         if not self.impersonation_enabled:
             return AuthenticatedEntity(
-                tenant_api_key.tenant_id,
-                tenant_api_key.created_by,
-                tenant_api_key.reference_id,
-                tenant_api_key.role,
+                tenant_id,
+                created_by,
+                reference_id,
+                api_key_role,
             )
         # check if impersonation headers are present
         user_name = request.headers.get(self.impersonation_user_header)
@@ -384,10 +394,10 @@ class AuthVerifierBase:
         # if not, return the apikey's authenticated entity
         if not user_name or not role:
             return AuthenticatedEntity(
-                tenant_api_key.tenant_id,
-                tenant_api_key.created_by,
-                tenant_api_key.reference_id,
-                tenant_api_key.role,
+                tenant_id,
+                created_by,
+                reference_id,
+                api_key_role,
             )
 
         self.logger.info("Impersonating user")
@@ -398,7 +408,7 @@ class AuthVerifierBase:
 
         # TODO - validate authorization meaning api key X has access to impersonate user Y
         #        for now, only admin users can impersonate
-        if tenant_api_key.role != AdminRole.get_name():
+        if api_key_role != AdminRole.get_name():
             self.logger.error("Impersonation not allowed for non-admin users")
             raise HTTPException(
                 status_code=401, detail="Impersonation not allowed for non-admin users"
@@ -407,18 +417,18 @@ class AuthVerifierBase:
         # auto provision user
         if self.impersonation_auto_provision:
             self.logger.info(f"Auto provisioning user: {user_name}")
-            self._provision_user(tenant_api_key.tenant_id, user_name, role)
+            self._provision_user(tenant_id, user_name, role, session=session)
             self.logger.info(f"User {user_name} provisioned successfully")
 
         self.logger.info("User impersonated successfully")
         return AuthenticatedEntity(
-            tenant_id=tenant_api_key.tenant_id,
+            tenant_id=tenant_id,
             email=user_name,
             api_key_name=None,
             role=role,
         )
 
-    def _provision_user(self, tenant_api_key, user_name, role):
+    def _provision_user(self, tenant_api_key, user_name, role, session=None):
         """
         Create a user for impersonation.
 

@@ -6,31 +6,18 @@ import jwt
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from src.config.config import KEEP_EXTRACT_IDENTITY
-from src.repositories.db import get_api_key
-
 logger = logging.getLogger(__name__)
 
 
 def _extract_identity(request: Request, attribute="email") -> str:
     try:
-        token = request.headers.get("Authorization").split(" ")[1]
-        decoded_token = jwt.decode(token, options={"verify_signature": False})
-        return decoded_token.get(attribute)
-    # case api key
-    except AttributeError:
-        # try api key
-        api_key = request.headers.get("x-api-key")
-        if not api_key:
+        authorization = request.headers.get("Authorization")
+        if not authorization:
             return "anonymous"
 
-        # allow disabling the extraction of the identity from the api key
-        # for high performance scenarios
-        if KEEP_EXTRACT_IDENTITY:
-            api_key = get_api_key(api_key)
-            if api_key:
-                return api_key.tenant_id
-        return "anonymous"
+        token = authorization.split(" ")[1]
+        decoded_token = jwt.decode(token, options={"verify_signature": False})
+        return decoded_token.get(attribute)
     except Exception:
         return "anonymous"
 
@@ -52,6 +39,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
 
         end_time = time.time()
+        identity = getattr(request.state, "tenant_id", identity)
         logger.info(
             f"Request finished: {request.method} {request.url.path} {response.status_code} in {end_time - start_time:.2f}s",
             extra={
