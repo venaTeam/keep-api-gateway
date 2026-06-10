@@ -347,7 +347,7 @@ class DismissRequestBody(BaseModel):
 
 
 class AssignAlertRequestBody(BaseModel):
-    dispose_on_new_alert: bool = True
+    dispose_on_new_alert: bool = False
     note: Optional[str] = None
 
 
