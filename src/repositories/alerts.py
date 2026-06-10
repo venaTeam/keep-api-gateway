@@ -303,27 +303,6 @@ static_facets = [
         is_static=True,
         type=FacetType.str,
     ),
-    FacetDto(
-        id="461bef05-fc20-4363-b427-9d26fe064e7f",
-        property_path="source",
-        name="Source",
-        is_static=True,
-        type=FacetType.str,
-    ),
-    FacetDto(
-        id="6afa12d7-21df-4694-8566-fd56d5ee2266",
-        property_path="incident.name",
-        name="Incident",
-        is_static=True,
-        type=FacetType.str,
-    ),
-    FacetDto(
-        id="77b8a6d4-3b8d-4b6a-9f8e-2c8e4b8f8e4c",
-        property_path="dismissed",
-        name="Dismissed",
-        is_static=True,
-        type=FacetType.str,
-    ),
 ]
 static_facets_dict = {facet.id: facet for facet in static_facets}
 
