@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from src.models.alert import AlertStatus
+from src.models.alert import AlertStatus, AssignAlertRequestBody
 from src.models.db.alert import LastAlert
 from src.repositories.db import get_last_alert_by_fingerprint, set_last_alert
 from src.repositories.dependencies import SINGLE_TENANT_UUID
@@ -242,6 +242,87 @@ def test_assign_route_sets_assignee_and_acknowledged(
     la = _read_la(db_session, "fp-assign")
     assert la.assignee is not None
     assert la.status == AlertStatus.ACKNOWLEDGED.value
+
+
+# --------------------------------------------------------------------------- #
+# AssignAlertRequestBody — dispose_on_new_alert must default to False
+# --------------------------------------------------------------------------- #
+def test_assign_request_body_dispose_defaults_to_false():
+    # no body fields at all -> keep assignment on new alerts
+    assert AssignAlertRequestBody().dispose_on_new_alert is False
+
+
+def test_assign_request_body_partial_body_dispose_defaults_to_false():
+    # partial body (only a note) must not silently opt into disposal
+    assert AssignAlertRequestBody(note="x").dispose_on_new_alert is False
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+@pytest.mark.parametrize("elastic_client", [False], indirect=True)
+def test_assign_route_partial_body_does_not_dispose(
+    db_session, client, test_app, create_alert, elastic_client
+):
+    """A body with only a note gets the model default for dispose_on_new_alert,
+    which must be False (regression: it used to be True, the opposite of the
+    no-body handler default)."""
+    ts = datetime.utcnow()
+    create_alert("fp-assign-note", AlertStatus.FIRING, ts, {"name": "a"})
+
+    resp = client.post(
+        f"/alerts/fp-assign-note/assign/{ts.isoformat()}",
+        headers={"x-api-key": "some-key"},
+        json={"note": "on it"},
+    )
+    assert resp.status_code == 200
+
+    la = _read_la(db_session, "fp-assign-note")
+    assert la.assignee is not None
+    assert la.status == AlertStatus.ACKNOWLEDGED.value
+    assert la.note == "on it"
+    # partial body -> dispose_on_new_alert=False -> status is NOT disposable
+    assert la.status_disposable is False
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+@pytest.mark.parametrize("elastic_client", [False], indirect=True)
+def test_assign_route_no_body_does_not_dispose(
+    db_session, client, test_app, create_alert, elastic_client
+):
+    ts = datetime.utcnow()
+    create_alert("fp-assign-nobody", AlertStatus.FIRING, ts, {"name": "a"})
+
+    resp = client.post(
+        f"/alerts/fp-assign-nobody/assign/{ts.isoformat()}",
+        headers={"x-api-key": "some-key"},
+    )
+    assert resp.status_code == 200
+
+    la = _read_la(db_session, "fp-assign-nobody")
+    assert la.assignee is not None
+    assert la.status == AlertStatus.ACKNOWLEDGED.value
+    assert la.status_disposable is False
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+@pytest.mark.parametrize("elastic_client", [False], indirect=True)
+def test_assign_route_explicit_dispose_true_sets_disposable(
+    db_session, client, test_app, create_alert, elastic_client
+):
+    """Opting in explicitly still works: status becomes disposable."""
+    ts = datetime.utcnow()
+    create_alert("fp-assign-dispose", AlertStatus.FIRING, ts, {"name": "a"})
+
+    resp = client.post(
+        f"/alerts/fp-assign-dispose/assign/{ts.isoformat()}",
+        headers={"x-api-key": "some-key"},
+        json={"dispose_on_new_alert": True},
+    )
+    assert resp.status_code == 200
+
+    la = _read_la(db_session, "fp-assign-dispose")
+    assert la.assignee is not None
+    assert la.status == AlertStatus.ACKNOWLEDGED.value
+    assert la.status_disposable is True
 
 
 # --------------------------------------------------------------------------- #
