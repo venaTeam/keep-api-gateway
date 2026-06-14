@@ -6,6 +6,7 @@ class EventType(str, Enum):
     INCIDENT = "incident"
     ENRICH = "enrich"
     BATCH_ENRICH = "batch_enrich"
+    DELETE = "delete"
 
 class EventProducer(abc.ABC):
     @abc.abstractmethod
