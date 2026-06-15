@@ -15,7 +15,7 @@ class ActionType(enum.Enum):
     API_STATUS_CHANGE = "alert status changed by API"
     STATUS_UNENRICH = "alert status undone"
     # the alert was escalated
-    # the alert was escalated
+    WORKFLOW_ENRICH = "alert enriched by workflow"
     MAPPING_RULE_ENRICH = "alert enriched by mapping rule"
     EXTRACTION_RULE_ENRICH = "alert enriched by extraction rule"
     # the alert was deduplicated
