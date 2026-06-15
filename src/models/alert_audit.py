@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 from typing import List, Optional
 
@@ -5,6 +6,8 @@ from pydantic import BaseModel
 
 from src.models.action_type import ActionType
 from src.models.db.alert import AlertAudit
+
+logger = logging.getLogger(__name__)
 
 
 class CommentMentionDto(BaseModel):
@@ -45,6 +48,26 @@ class AlertAuditDto(BaseModel):
         previous_event = None
         count = 1
 
+        def _append(event: AlertAudit, occurrences: int) -> None:
+            # One audit row with an action value this service doesn't know
+            # (e.g. an enum that drifted between repos) must NOT take down the
+            # whole timeline. Skip + log the offending row, keep the rest.
+            try:
+                dto = AlertAuditDto.from_orm(event)
+            except Exception:
+                logger.warning(
+                    "Skipping audit row with invalid action",
+                    extra={
+                        "audit_id": str(getattr(event, "id", None)),
+                        "fingerprint": getattr(event, "fingerprint", None),
+                        "action": getattr(event, "action", None),
+                    },
+                )
+                return
+            if occurrences > 1:
+                dto.description += f" x{occurrences}"
+            grouped_events.append(dto)
+
         for event in alert_audits:
             # Check if the current event is similar to the previous event
             if previous_event and (
@@ -57,17 +80,13 @@ class AlertAuditDto(BaseModel):
             else:
                 # If the events are not similar, append the previous event to the grouped events
                 if previous_event:
-                    if count > 1:
-                        previous_event.description += f" x{count}"
-                    grouped_events.append(AlertAuditDto.from_orm(previous_event))
+                    _append(previous_event, count)
                 # Update the previous event to the current event and reset the count
                 previous_event = event
                 count = 1
 
         # Add the last event to the grouped events
         if previous_event:
-            if count > 1:
-                previous_event.description += f" x{count}"
-            grouped_events.append(AlertAuditDto.from_orm(previous_event))
+            _append(previous_event, count)
         return grouped_events
 
