@@ -751,6 +751,7 @@ class EnrichmentsBl:
         produce_event=True,
         strict=True,
         entity_type: str = "alert",
+        event_type: EventType = EventType.ENRICH
     ):
         """
         should_exist = False only in mapping where the alert is not yet in elastic
@@ -823,7 +824,7 @@ class EnrichmentsBl:
             
             await self.event_producer.produce(
                 event=safe_event,
-                event_type=EventType.ENRICH,
+                event_type=event_type,
                 tenant_id=self.tenant_id,
                 provider_type="keep",
                 provider_id="keep",

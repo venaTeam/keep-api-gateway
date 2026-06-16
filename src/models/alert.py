@@ -337,6 +337,7 @@ class DeleteRequestBody(BaseModel):
     fingerprint: str
     last_received: str = Field(alias="lastReceived")
     restore: bool = False
+    soft_delete: bool = True
 
 
 class DismissRequestBody(BaseModel):
