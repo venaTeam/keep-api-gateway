@@ -395,7 +395,7 @@ def get_alert_history(
     return AlertHistoryResponse(occurrences=occurrences, activity=activity)
 
 
-@router.delete("", description="Delete alert by finerprint and last received time")
+@router.delete("", description="Delete alert by fingerprint and last received time")
 async def delete_alert(
     delete_alert: DeleteRequestBody,
     authenticated_entity: AuthenticatedEntity = Depends(
@@ -408,12 +408,13 @@ async def delete_alert(
     user_email = authenticated_entity.email
 
     logger.info(
-        "Deleting alert",
+        f"Deleting alert {'' if delete_alert.soft_delete else 'from DB'}",
         extra={
             "fingerprint": delete_alert.fingerprint,
             "restore": delete_alert.restore,
             "last_received": delete_alert.last_received,
             "tenant_id": tenant_id,
+            "soft_delete": delete_alert.soft_delete,
         },
     )
 
@@ -431,6 +432,7 @@ async def delete_alert(
         action_type=ActionType.DELETE_ALERT,
         action_description=f"Alert deleted by {user_email}",
         action_callee=user_email,
+        event_type = EventType.ENRICH if delete_alert.soft_delete else EventType.DELETE
     )
 
     logger.info(
