@@ -66,7 +66,7 @@ class CelToPostgreSqlProvider(BaseCelToSqlProvider):
         Overriden, because for PostgreSql we need to cast columns to known data types (because every JSON operation returns just text).
         This is used in ordering to correctly order rows in accordance to their types and not lexicographically.
         """
-        metadata = self.properties_metadata.get_property_metadata_for_str(cel_field)
+        metadata = self._get_field_metadata_or_raise(cel_field)
         field_expressions = []
         is_json_field = []  # Track which expressions are from JSON fields
 

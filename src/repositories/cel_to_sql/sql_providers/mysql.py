@@ -75,7 +75,7 @@ class CelToMySqlProvider(BaseCelToSqlProvider):
 
     def _get_order_by_field(self, cel_sort_by: str):
         """Overriden, because for MySql we need to just use JSON_EXTRACT wihout JSON_UNQOUTE to sorting work like expected"""
-        metadata = self.properties_metadata.get_property_metadata_for_str(cel_sort_by)
+        metadata = self._get_field_metadata_or_raise(cel_sort_by)
         field_expressions = []
 
         for field_mapping in metadata.field_mappings:

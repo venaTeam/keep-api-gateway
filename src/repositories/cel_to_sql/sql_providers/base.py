@@ -159,8 +159,17 @@ class BaseCelToSqlProvider:
 
         return ", ".join(sort_expressions)
 
-    def get_field_expression(self, cel_field: str) -> str:
+    def _get_field_metadata_or_raise(self, cel_field: str):
+        """Resolve a field's mapping metadata, raising a clean CelToSqlException
+        when the field is unknown instead of letting callers dereference None
+        (which used to surface as an opaque AttributeError / HTTP 500)."""
         metadata = self.properties_metadata.get_property_metadata_for_str(cel_field)
+        if metadata is None:
+            raise CelToSqlException(f"Unknown sort/filter field: '{cel_field}'")
+        return metadata
+
+    def get_field_expression(self, cel_field: str) -> str:
+        metadata = self._get_field_metadata_or_raise(cel_field)
         field_expressions = []
 
         for field_mapping in metadata.field_mappings:
