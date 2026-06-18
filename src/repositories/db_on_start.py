@@ -23,7 +23,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from src.config.core import config
-from src.repositories.db_utils import create_db_engine
+from src.repositories.db import engine
 from src.models.db.alert import *  # pylint: disable=unused-wildcard-import
 from src.models.db.dashboard import *  # pylint: disable=unused-wildcard-import
 from src.models.db.extraction import *  # pylint: disable=unused-wildcard-import
@@ -39,7 +39,12 @@ from src.services.identity_manager.rbac import Admin as AdminRole
 
 logger = logging.getLogger(__name__)
 
-engine = create_db_engine()
+# Reuse the singleton engine from db.py instead of creating a second one. A
+# second engine keeps its own QueuePool that holds up to pool_size idle
+# connections (opened by the master's startup migrate/create-tenant work) for
+# the whole process lifetime. db.py's engine is already fork-safe here because
+# each gunicorn worker's lifespan calls dispose_session() (engine.dispose) after
+# the fork, so workers get fresh connections regardless of what the master did.
 
 KEEP_FORCE_RESET_DEFAULT_PASSWORD = config(
     "KEEP_FORCE_RESET_DEFAULT_PASSWORD", default="false", cast=bool
