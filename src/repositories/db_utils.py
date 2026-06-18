@@ -24,8 +24,17 @@ from sqlalchemy.sql.functions import GenericFunction
 from sqlmodel import Session, SQLModel, create_engine, select
 
 # This import is required to create the tables
-from src.config.consts import RUNNING_IN_CLOUD_RUN
-from src.config.core import config
+from src.config.consts import (
+    DB_CONNECTION_STRING,
+    DB_ECHO,
+    DB_MAX_OVERFLOW,
+    DB_POOL_RECYCLE,
+    DB_POOL_SIZE,
+    DB_POOL_TIMEOUT,
+    KEEP_DB_PRE_PING_ENABLED,
+    KEEP_FORCE_CONNECTION_STRING,
+    RUNNING_IN_CLOUD_RUN,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -95,20 +104,6 @@ def __get_conn_impersonate() -> pymysql.connections.Connection:
 # this is a workaround for gunicorn to load the env vars
 #   becuase somehow in gunicorn it doesn't load the .env file
 load_dotenv(find_dotenv())
-
-DB_CONNECTION_STRING = config("DATABASE_CONNECTION_STRING", default=None)  # pylint: disable=invalid-name
-DB_POOL_SIZE = config("DATABASE_POOL_SIZE", default=5, cast=int)  # pylint: disable=invalid-name
-DB_MAX_OVERFLOW = config("DATABASE_MAX_OVERFLOW", default=10, cast=int)  # pylint: disable=invalid-name
-DB_ECHO = config("DATABASE_ECHO", default=False, cast=bool)  # pylint: disable=invalid-name
-KEEP_FORCE_CONNECTION_STRING = config(
-    "KEEP_FORCE_CONNECTION_STRING", default=False, cast=bool
-)  # pylint: disable=invalid-name
-KEEP_DB_PRE_PING_ENABLED = config("KEEP_DB_PRE_PING_ENABLED", default=True, cast=bool)  # pylint: disable=invalid-name
-# Recycle pooled connections below PgBouncer's server_idle_timeout so stale
-# server-side connections are dropped instead of reused. 0 disables recycling.
-DB_POOL_RECYCLE = config("DATABASE_POOL_RECYCLE", default=300, cast=int)  # pylint: disable=invalid-name
-# Block (instead of growing unbounded) when no pooled connection is free.
-DB_POOL_TIMEOUT = config("DATABASE_POOL_TIMEOUT", default=10, cast=int)  # pylint: disable=invalid-name
 
 
 def dumps(_json) -> str:
