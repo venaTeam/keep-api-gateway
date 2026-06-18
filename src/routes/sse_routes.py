@@ -38,17 +38,6 @@ def get_sse_authenticated_entity(
     - In noauth mode: Returns a default single-tenant entity if no token provided
     - In authenticated mode: Validates the token and returns the authenticated entity
 
-    It deliberately does NOT use the verifier as a `Depends(...)` dependency,
-    because the verifier pulls in `Depends(get_session)`. FastAPI keeps a `yield`
-    dependency's session open until the response finishes, and the SSE response is
-    a StreamingResponse that lives until the client disconnects -- so the pooled DB
-    connection would stay checked out for the whole stream and exhaust the pool
-    under many concurrent UI tabs. Instead we authenticate inside a short-lived
-    `with Session(engine)` that is returned to the pool before streaming starts.
-
-    Defined as a sync function so FastAPI runs it (and the blocking auth DB call)
-    in a threadpool rather than on the event loop.
-
     Args:
         request: The FastAPI request object
         token: Optional token passed as query parameter (since EventSource can't send headers)
@@ -84,8 +73,7 @@ def get_sse_authenticated_entity(
         request.scope["headers"] = [h for h in request.scope["headers"] if h[0] != b"authorization"]
         request.scope["headers"].append(auth_header_tuple)
     
-    # Get the auth verifier and authenticate using a short-lived session that is
-    # closed (returned to the pool) before the SSE stream starts.
+    # Get the auth verifier and authenticate
     try:
         auth_verifier = IdentityManagerFactory.get_auth_verifier(["read:alert"])
         with Session(engine) as session:
