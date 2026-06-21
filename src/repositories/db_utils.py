@@ -24,8 +24,17 @@ from sqlalchemy.sql.functions import GenericFunction
 from sqlmodel import Session, SQLModel, create_engine, select
 
 # This import is required to create the tables
-from src.config.consts import RUNNING_IN_CLOUD_RUN
-from src.config.core import config
+from src.config.consts import (
+    DB_CONNECTION_STRING,
+    DB_ECHO,
+    DB_MAX_OVERFLOW,
+    DB_POOL_RECYCLE,
+    DB_POOL_SIZE,
+    DB_POOL_TIMEOUT,
+    KEEP_DB_PRE_PING_ENABLED,
+    KEEP_FORCE_CONNECTION_STRING,
+    RUNNING_IN_CLOUD_RUN,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -96,15 +105,6 @@ def __get_conn_impersonate() -> pymysql.connections.Connection:
 #   becuase somehow in gunicorn it doesn't load the .env file
 load_dotenv(find_dotenv())
 
-DB_CONNECTION_STRING = config("DATABASE_CONNECTION_STRING", default=None)  # pylint: disable=invalid-name
-DB_POOL_SIZE = config("DATABASE_POOL_SIZE", default=5, cast=int)  # pylint: disable=invalid-name
-DB_MAX_OVERFLOW = config("DATABASE_MAX_OVERFLOW", default=10, cast=int)  # pylint: disable=invalid-name
-DB_ECHO = config("DATABASE_ECHO", default=False, cast=bool)  # pylint: disable=invalid-name
-KEEP_FORCE_CONNECTION_STRING = config(
-    "KEEP_FORCE_CONNECTION_STRING", default=False, cast=bool
-)  # pylint: disable=invalid-name
-KEEP_DB_PRE_PING_ENABLED = config("KEEP_DB_PRE_PING_ENABLED", default=False, cast=bool)  # pylint: disable=invalid-name
-
 
 def dumps(_json) -> str:
     """
@@ -148,6 +148,8 @@ def create_db_engine():
                 DB_CONNECTION_STRING,
                 pool_size=DB_POOL_SIZE,
                 max_overflow=DB_MAX_OVERFLOW,
+                pool_recycle=DB_POOL_RECYCLE,
+                pool_timeout=DB_POOL_TIMEOUT,
                 json_serializer=dumps,
                 echo=DB_ECHO,
                 pool_pre_ping=True if KEEP_DB_PRE_PING_ENABLED else False,
