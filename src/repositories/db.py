@@ -83,6 +83,7 @@ from src.models.db.tenant import *  # pylint: disable=unused-wildcard-import
 
 from src.models.incident import IncidentDto, IncidentDtoIn, IncidentSorting
 from src.models.time_stamp import TimeStampFilter
+from src.repositories.metrics import incidents_opened_total
 
 logger = logging.getLogger(__name__)
 
@@ -3057,6 +3058,18 @@ def create_incident_from_dict(
         session.add(new_incident)
         session.commit()
         session.refresh(new_incident)
+    # Product BI: count every opened incident with a bounded `source` label.
+    # Instrumentation must never break the write path.
+    try:
+        if incident_data.get("rule_id"):
+            source = "rule"
+        elif is_predicted:
+            source = "ai"
+        else:
+            source = "manual"
+        incidents_opened_total.labels(tenant_id=tenant_id, source=source).inc()
+    except Exception:
+        logger.debug("Failed to record incidents_opened_total", exc_info=True)
     return new_incident
 
 

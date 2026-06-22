@@ -35,6 +35,10 @@ KEEP_LIMITER_DEFAULT_LIMIT = starlette_config("KEEP_LIMIT_CONCURRENCY", default=
 KEEP_METRICS_LIMIT = starlette_config("KEEP_LIMIT_CONCURRENCY", default="10/minute", cast=str)
 
 KEEP_READ_ONLY = starlette_config("KEEP_READ_ONLY", default="false", cast=bool)
+# Product BI: periodically recompute the point-in-time incident gauges
+# (alerts-associated-to-incidents, incidents-with-ticket).
+KEEP_INCIDENT_METRICS_JOB = starlette_config("KEEP_INCIDENT_METRICS_JOB", default="true", cast=bool)
+KEEP_INCIDENT_METRICS_REFRESH_INTERVAL = starlette_config("KEEP_INCIDENT_METRICS_REFRESH_INTERVAL", default=300, cast=int)
 KEEP_PROVIDER_DISTRIBUTION_ENABLED = starlette_config("KEEP_PROVIDER_DISTRIBUTION_ENABLED", default="true", cast=bool)
 KEEP_PLATFORM_URL = starlette_config("KEEP_PLATFORM_URL", default="https://platform.keephq.dev")
 

@@ -95,10 +95,47 @@ rules_engine_duration_seconds = Histogram(
 ### INCIDENTS
 INCIDENT_METRIC_PREFIX = "keep_incident_"
 
+# Total incidents opened. `source` is bounded to how the incident was created
+# (manual|rule|ai) — rule_name was dropped from the label set as it is
+# unbounded (cardinality firewall). Use increase(...[$__range]) for "opened in
+# the selected interval".
 incidents_opened_total = Counter(
     f"{INCIDENT_METRIC_PREFIX}opened_total",
     "Total number of incidents opened",
-    labelnames=["tenant_id", "rule_id", "rule_name"],
+    labelnames=["tenant_id", "source"],
+)
+
+# Point-in-time count of alerts currently associated to incidents, refreshed
+# periodically from the DB (src/services/incident_metrics.py). Every worker
+# computes the same DB-derived value, so `livemax` de-duplicates it across
+# processes (rather than summing identical values like livesum would); livemax
+# (not max) drops values from dead workers on restart.
+incident_alerts_associated_gauge = Gauge(
+    f"{INCIDENT_METRIC_PREFIX}alerts_associated",
+    "Number of alerts currently associated to incidents",
+    labelnames=["tenant_id"],
+    multiprocess_mode="livemax",
+)
+
+# Point-in-time count of incidents linked to an external ticket, by provider
+# (e.g. servicenow). Refreshed from incident enrichments. Same livemax rationale
+# as above.
+incidents_with_ticket_gauge = Gauge(
+    f"{INCIDENT_METRIC_PREFIX}with_ticket",
+    "Number of incidents currently linked to an external ticket, by provider",
+    labelnames=["tenant_id", "ticket_provider"],
+    multiprocess_mode="livemax",
+)
+
+### AUTH / USERS
+# Failed login attempts. `reason` is bounded (empty_password|invalid_credentials).
+# Incremented on the gateway /signin 401 path (DB auth). noauth never fails and
+# external IdP (auth0/keycloak/okta/...) failures happen off-box and are not
+# captured here.
+login_failures_total = Counter(
+    f"{METRIC_PREFIX}login_failures_total",
+    "Total number of failed login attempts (HTTP 401 on /signin)",
+    labelnames=["reason"],
 )
 
 ### MAINTENANCE
