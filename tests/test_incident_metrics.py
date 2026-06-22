@@ -5,33 +5,29 @@ Tests for the Phase 3 product-BI gateway metrics:
 - keep_login_failures_total
 """
 
-from prometheus_client import CollectorRegistry, multiprocess
+from unittest.mock import patch
 
+import src.repositories.db as db_module
+import src.repositories.metrics as metrics_module
+import src.services.incident_metrics as incident_metrics_module
 from src.models.db.alert import IncidentEnrichment, LastAlertToIncident
-from src.repositories.db import create_incident_from_dict
 from src.repositories.dependencies import SINGLE_TENANT_UUID
-from src.services.identity_manager.identity_managers.db.db_identitymanager import \
-    _record_login_failure
-from src.services.incident_metrics import (_count_alerts_in_incidents,
-                                           _count_incidents_with_ticket,
-                                           _ticket_provider,
-                                           refresh_incident_metrics)
+from src.services.identity_manager.identity_managers.db.db_identitymanager import (
+    _record_login_failure,
+)
+from src.services.incident_metrics import (
+    _count_alerts_in_incidents,
+    _count_incidents_with_ticket,
+    _ticket_provider,
+    refresh_incident_metrics,
+)
 
-
-def _read_metric(metric_name: str, labels: dict) -> float:
-    """Sum the multiprocess samples matching metric_name + labels."""
-    registry = CollectorRegistry()
-    multiprocess.MultiProcessCollector(registry)
-    total = 0.0
-    found = False
-    for metric in registry.collect():
-        for sample in metric.samples:
-            if sample.name != metric_name:
-                continue
-            if all(sample.labels.get(k) == v for k, v in labels.items()):
-                total += sample.value
-                found = True
-    return total if found else None
+# Note: metric values are asserted by patching the prometheus metric objects and
+# checking the .labels()/.inc()/.set() calls rather than reading them back via a
+# MultiProcessCollector — multiprocess readback is order-dependent under the full
+# suite (the real scrape path is covered separately). create_incident_from_dict
+# is reached through db_module so its module-global metric can be patched.
+create_incident_from_dict = db_module.create_incident_from_dict
 
 
 # --- _ticket_provider classification (pure) ---------------------------------
@@ -135,19 +131,12 @@ def test_count_incidents_with_ticket(db_session):
 
 
 def test_incident_opened_counter_source_manual(db_session):
-    before = (
-        _read_metric(
-            "keep_incident_opened_total",
-            {"tenant_id": SINGLE_TENANT_UUID, "source": "manual"},
-        )
-        or 0.0
+    with patch.object(db_module, "incidents_opened_total") as metric:
+        _make_incident(db_session)
+    metric.labels.assert_called_once_with(
+        tenant_id=SINGLE_TENANT_UUID, source="manual"
     )
-    _make_incident(db_session)
-    after = _read_metric(
-        "keep_incident_opened_total",
-        {"tenant_id": SINGLE_TENANT_UUID, "source": "manual"},
-    )
-    assert after == before + 1
+    metric.labels.return_value.inc.assert_called_once()
 
 
 def test_refresh_sets_gauges(db_session):
@@ -168,29 +157,25 @@ def test_refresh_sets_gauges(db_session):
     )
     db_session.commit()
 
-    refresh_incident_metrics()
+    with patch.object(
+        incident_metrics_module, "incident_alerts_associated_gauge"
+    ) as g_alerts, patch.object(
+        incident_metrics_module, "incidents_with_ticket_gauge"
+    ) as g_ticket:
+        refresh_incident_metrics()
 
-    assert (
-        _read_metric(
-            "keep_incident_alerts_associated", {"tenant_id": SINGLE_TENANT_UUID}
-        )
-        == 1
+    g_alerts.labels.assert_any_call(tenant_id=SINGLE_TENANT_UUID)
+    g_alerts.labels.return_value.set.assert_any_call(1)
+    g_ticket.labels.assert_any_call(
+        tenant_id=SINGLE_TENANT_UUID, ticket_provider="servicenow"
     )
-    assert (
-        _read_metric(
-            "keep_incident_with_ticket",
-            {"tenant_id": SINGLE_TENANT_UUID, "ticket_provider": "servicenow"},
-        )
-        == 1
-    )
+    g_ticket.labels.return_value.set.assert_any_call(1)
 
 
 def test_login_failure_counter():
-    before = (
-        _read_metric("keep_login_failures_total", {"reason": "invalid_credentials"})
-        or 0.0
-    )
-    _record_login_failure("invalid_credentials")
-    _record_login_failure("invalid_credentials")
-    after = _read_metric("keep_login_failures_total", {"reason": "invalid_credentials"})
-    assert after == before + 2
+    with patch.object(metrics_module, "login_failures_total") as metric:
+        _record_login_failure("invalid_credentials")
+        _record_login_failure("invalid_credentials")
+    metric.labels.assert_called_with(reason="invalid_credentials")
+    assert metric.labels.call_count == 2
+    assert metric.labels.return_value.inc.call_count == 2
