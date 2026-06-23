@@ -703,6 +703,7 @@ def setup_alerts(elastic_client, db_session, request):
                 application=detail.get("application"),
                 service=detail.get("service"),
                 name=detail.get("name"),
+                environment=detail.get("environment", "production"),
                 started_at=last_received,
                 last_received=last_received,
             )
@@ -907,6 +908,7 @@ def create_alert(db_session):
                 application=event_data.get("application"),
                 service=event_data.get("service"),
                 name=event_data.get("name"),
+                environment=event_data.get("environment", "production"),
                 started_at=timestamp.isoformat() if timestamp else None,
                 last_received=timestamp.isoformat() if timestamp else None,
             )
