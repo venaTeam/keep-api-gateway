@@ -139,6 +139,9 @@ class LastAlert(SQLModel, table=True):
             "alert_id",
             "fingerprint",
         ),
+        # Lets the planner join back from a CEL-filtered alert set into lastalert
+        # (alert_id had no index), so the preset-filter alert.* indexes are usable.
+        Index("idx_lastalert_tenant_alert_id", "tenant_id", "alert_id"),
         {},
     )
 
@@ -295,6 +298,16 @@ class Alert(SQLModel, table=True):
             "tenant_id",
             "provider_id",
         ),
+        # Preset CEL filter predicates compile onto alert.*: operator (~33 presets),
+        # application (~22), source->provider_type (~5). tenant_id-leading.
+        Index(
+            "idx_alert_tenant_operator_application",
+            "tenant_id",
+            "operator",
+            "application",
+        ),
+        Index("idx_alert_tenant_application", "tenant_id", "application"),
+        Index("idx_alert_tenant_provider_type", "tenant_id", "provider_type"),
     )
 
     class Config:
