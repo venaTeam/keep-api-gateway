@@ -1,4 +1,5 @@
 ﻿import logging
+import os
 import src.utils.logging
 from src.config.core import starlette_config
 from src.services.identity_manager.identitymanagerfactory import IdentityManagerTypes
@@ -35,6 +36,9 @@ KEEP_LIMITER_DEFAULT_LIMIT = starlette_config("KEEP_LIMIT_CONCURRENCY", default=
 KEEP_METRICS_LIMIT = starlette_config("KEEP_LIMIT_CONCURRENCY", default="10/minute", cast=str)
 
 KEEP_READ_ONLY = starlette_config("KEEP_READ_ONLY", default="false", cast=bool)
+# Product BI — active-users (DAU/WAU/MAU) refresh job (Phase 1).
+KEEP_ACTIVE_USERS_JOB = starlette_config("KEEP_ACTIVE_USERS_JOB", default="true", cast=bool)
+KEEP_ACTIVE_USERS_REFRESH_INTERVAL = starlette_config("KEEP_ACTIVE_USERS_REFRESH_INTERVAL", default=300, cast=int)
 # Product BI: periodically recompute the point-in-time incident gauges
 # (alerts-associated-to-incidents, incidents-with-ticket).
 KEEP_INCIDENT_METRICS_JOB = starlette_config("KEEP_INCIDENT_METRICS_JOB", default="true", cast=bool)
@@ -59,11 +63,44 @@ logger = logging.getLogger(__name__)
 
 
 
+def _clear_prometheus_multiproc_dir():
+    """
+    Empty the prometheus multiprocess directory before workers start.
+
+    prometheus_client multiprocess mode writes one set of mmap files per PID and
+    never cleans them up on its own. Across restarts these accumulate without
+    bound (we observed ~287k files / 18GB), and because the /metrics scrape reads
+    *every* file in the dir, collection slows to the point the endpoint hangs and
+    starves the worker pool. Clearing the dir once in the gunicorn master (before
+    any worker forks/writes) keeps it bounded; child_exit() reaps per-worker
+    files as workers die. Required by the prometheus_client multiprocess docs.
+    """
+    import glob
+
+    prom_dir = os.environ.get("PROMETHEUS_MULTIPROC_DIR")
+    if not prom_dir or not os.path.isdir(prom_dir):
+        return
+    removed = 0
+    for path in glob.glob(os.path.join(prom_dir, "*.db")):
+        try:
+            os.remove(path)
+            removed += 1
+        except OSError:
+            pass
+    logger.info(
+        "Cleared prometheus multiproc dir", extra={"dir": prom_dir, "removed": removed}
+    )
+
+
 def on_starting(server=None):
     """This function is called by the gunicorn server when it starts"""
+    # Must run in the master before workers fork so we never delete a live
+    # worker's files.
+    _clear_prometheus_multiproc_dir()
+
     from src.repositories.init import init_services
     from src.routes.dashboard import provision_dashboards
-    
+
     init_services(auth_type=AUTH_TYPE, provision_dashboards_func=provision_dashboards)
 
 
@@ -75,5 +112,23 @@ def post_worker_init(worker):
     print("Logging initialized in worker")
 
 
+def child_exit(server, worker):
+    """
+    gunicorn hook: reap a dead worker's prometheus mmap files.
+
+    Without this, a restarted/crashed worker's gauge files linger and pollute the
+    scrape (live* gauges keep counting dead PIDs; max/min retain stale extremes).
+    """
+    try:
+        from prometheus_client import multiprocess
+
+        multiprocess.mark_process_dead(worker.pid)
+    except Exception:
+        logging.getLogger(__name__).debug(
+            "mark_process_dead failed", exc_info=True
+        )
+
+
 post_worker_init = post_worker_init
+child_exit = child_exit
 

@@ -21,7 +21,7 @@ from src.repositories.db import engine
 
 # This import is required to create the tables
 from src.repositories.facets import get_facet_options, get_facets
-from src.models.alert import AlertSeverity, AlertStatus
+from src.models.alert import AlertEnvironment, AlertSeverity, AlertStatus
 from src.models.db.alert import (
     Alert,
     AlertField,
@@ -173,6 +173,12 @@ _STRICT_SCHEMA_FIELD_CONFIGS = [
                 key=lambda s: s.order,
             )
         ],
+    ),
+    FieldMappingConfiguration(
+        map_from_pattern="environment",
+        map_to=["alert.environment"],
+        data_type=DataType.STRING,
+        enum_values=[item.value for _, item in enumerate(AlertEnvironment)],
     ),
     FieldMappingConfiguration(
         map_from_pattern="assignee",

@@ -22,6 +22,7 @@ from src.routes import (
     sse_routes,
     status,
     tags,
+    ui_events,
     whoami,
 )
 from src.routes.auth import groups as auth_groups
@@ -38,6 +39,7 @@ def setup_routers(app: FastAPI):
     app.include_router(settings.router, prefix="/settings", tags=["settings"])
     app.include_router(whoami.router, prefix="/whoami", tags=["whoami"])
     app.include_router(sse_routes.router, prefix="/sse", tags=["sse"])
+    app.include_router(ui_events.router, prefix="/ui", tags=["ui"])
     app.include_router(status.router, prefix="/status", tags=["status"])
     app.include_router(rules.router, prefix="/rules", tags=["rules"])
     app.include_router(preset.router, prefix="/preset", tags=["preset"])

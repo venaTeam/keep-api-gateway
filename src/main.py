@@ -44,6 +44,8 @@ from src.config.config import (
     AUTH_TYPE,
     CONSUMER,
     HOST,
+    KEEP_ACTIVE_USERS_JOB,
+    KEEP_ACTIVE_USERS_REFRESH_INTERVAL,
     KEEP_API_URL,
     KEEP_DEBUG_TASKS,
     KEEP_INCIDENT_METRICS_JOB,
@@ -150,6 +152,16 @@ async def lifespan(app: FastAPI):
     if KEEP_DEBUG_TASKS:
         logger.info("Starting background task to check for pending tasks")
         asyncio.create_task(check_pending_tasks(background_tasks))
+
+    # Product BI: periodically refresh the active-users (DAU/WAU/MAU) gauge.
+    if KEEP_ACTIVE_USERS_JOB:
+        from src.services.active_users import active_users_refresh_loop
+
+        active_users_task = asyncio.create_task(
+            active_users_refresh_loop(KEEP_ACTIVE_USERS_REFRESH_INTERVAL)
+        )
+        background_tasks.add(active_users_task)
+        active_users_task.add_done_callback(background_tasks.discard)
 
     # Startup
     await startup()

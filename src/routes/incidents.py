@@ -22,6 +22,7 @@ from src.services.ai_suggestion_bl import AISuggestionBl
 from src.services.enrichments_bl import EnrichmentsBl
 from src.services.incident_reports import IncidentReportsBl
 from src.services.incidents_bl import IncidentBl
+from src.services.product_metrics import record_user_action
 from src.config.consts import REDIS
 from src.repositories.cel_to_sql.sql_providers.base import CelToSqlException
 from src.repositories.db import (
@@ -102,7 +103,9 @@ def create_incident(
 ) -> IncidentDto:
     tenant_id = authenticated_entity.tenant_id
     incident_bl = IncidentBl(tenant_id, session)
-    return incident_bl.create_incident(incident_dto)
+    new_incident = incident_bl.create_incident(incident_dto)
+    record_user_action(tenant_id=tenant_id, feature="incidents", action="create")
+    return new_incident
 
 
 @router.get(
@@ -414,6 +417,7 @@ def update_incident(
     new_incident_dto = incident_bl.update_incident(
         incident_id, updated_incident_dto, generated_by_ai
     )
+    record_user_action(tenant_id=tenant_id, feature="incidents", action="update")
     return new_incident_dto
 
 
@@ -431,6 +435,7 @@ def bulk_delete_incidents(
     tenant_id = authenticated_entity.tenant_id
     incident_bl = IncidentBl(tenant_id, session)
     incident_bl.bulk_delete_incidents(incident_ids)
+    record_user_action(tenant_id=tenant_id, feature="incidents", action="delete")
     return Response(status_code=202)
 
 
@@ -448,6 +453,7 @@ def delete_incident(
     tenant_id = authenticated_entity.tenant_id
     incident_bl = IncidentBl(tenant_id, session)
     incident_bl.delete_incident(incident_id)
+    record_user_action(tenant_id=tenant_id, feature="incidents", action="delete")
     return Response(status_code=202)
 
 
@@ -788,6 +794,9 @@ def assign_incident(
         f"Incident self-assigned to {authenticated_entity.email}",
     )
     session.commit()
+    record_user_action(
+        tenant_id=authenticated_entity.tenant_id, feature="incidents", action="assign"
+    )
     return Response(status_code=202)
 
 
@@ -810,6 +819,9 @@ def change_incident_status(
 
     new_incident_dto = incident_bl.change_status(
         incident_id, change.status, authenticated_entity, change.dispose_on_new_alert
+    )
+    record_user_action(
+        tenant_id=tenant_id, feature="incidents", action="change_status"
     )
 
     return new_incident_dto
@@ -884,6 +896,16 @@ def add_comment(
 
     session.commit()
     session.refresh(comment)
+
+    record_user_action(
+        tenant_id=authenticated_entity.tenant_id, feature="incidents", action="comment"
+    )
+    if change.tagged_users:
+        record_user_action(
+            tenant_id=authenticated_entity.tenant_id,
+            feature="incidents",
+            action="mention",
+        )
 
     notify_sse(authenticated_entity.tenant_id, "incident-comment", {})
 
