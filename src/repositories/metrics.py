@@ -129,6 +129,32 @@ active_users_gauge = Gauge(
     multiprocess_mode="livemax",
 )
 
+### PRODUCT BI — USER ACTIONS (Phase 2)
+# Product action counter. Labels are bounded by a server-side allow-list
+# (src/services/product_metrics.py): tenant_id, feature, action, source (ui|api),
+# result (success|error). Supersedes the keep-ui keep_ui_action_executions_total.
+user_action_total = Counter(
+    f"{METRIC_PREFIX}user_action_total",
+    "Product actions by feature/action, with UI-vs-API origin and result",
+    labelnames=["tenant_id", "feature", "action", "source", "result"],
+)
+
+# Dedicated alert status-change counter (resulting-status distribution is a
+# headline question). to_status is bounded to the alert status enum.
+alert_status_change_total = Counter(
+    f"{METRIC_PREFIX}alert_status_change_total",
+    "Alert status changes by resulting status",
+    labelnames=["tenant_id", "to_status"],
+)
+
+# Page views, moved server-side from the keep-ui in-memory counter. Fed by the
+# keep-ui beacon (POST /ui/page-view); route is a bounded Next.js route template.
+ui_page_loads_total = Counter(
+    f"{METRIC_PREFIX}ui_page_loads_total",
+    "keep-ui page views by route",
+    labelnames=["tenant_id", "route"],
+)
+
 ### MAINTENANCE
 MAINTENANCE_METRIC_PREFIX = "keep_maintenance_"
 
