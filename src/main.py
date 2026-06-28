@@ -44,8 +44,12 @@ from src.config.config import (
     AUTH_TYPE,
     CONSUMER,
     HOST,
+    KEEP_ACTIVE_USERS_JOB,
+    KEEP_ACTIVE_USERS_REFRESH_INTERVAL,
     KEEP_API_URL,
     KEEP_DEBUG_TASKS,
+    KEEP_INCIDENT_METRICS_JOB,
+    KEEP_INCIDENT_METRICS_REFRESH_INTERVAL,
     KEEP_LIMIT_CONCURRENCY,
     KEEP_METRICS,
     KEEP_OTEL_ENABLED,
@@ -149,8 +153,28 @@ async def lifespan(app: FastAPI):
         logger.info("Starting background task to check for pending tasks")
         asyncio.create_task(check_pending_tasks(background_tasks))
 
+    # Product BI: periodically refresh the active-users (DAU/WAU/MAU) gauge.
+    if KEEP_ACTIVE_USERS_JOB:
+        from src.services.active_users import active_users_refresh_loop
+
+        active_users_task = asyncio.create_task(
+            active_users_refresh_loop(KEEP_ACTIVE_USERS_REFRESH_INTERVAL)
+        )
+        background_tasks.add(active_users_task)
+        active_users_task.add_done_callback(background_tasks.discard)
+
     # Startup
     await startup()
+
+    # Product BI: periodically refresh the point-in-time incident gauges.
+    if KEEP_INCIDENT_METRICS_JOB:
+        from src.services.incident_metrics import incident_metrics_refresh_loop
+
+        incident_metrics_task = asyncio.create_task(
+            incident_metrics_refresh_loop(KEEP_INCIDENT_METRICS_REFRESH_INTERVAL)
+        )
+        background_tasks.add(incident_metrics_task)
+        incident_metrics_task.add_done_callback(background_tasks.discard)
 
     # yield the background tasks, this is available for the app to use in request context
     yield {"background_tasks": background_tasks}

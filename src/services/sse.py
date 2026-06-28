@@ -10,6 +10,8 @@ import json
 import logging
 from typing import Any, AsyncGenerator, Dict, List
 
+from src.repositories.metrics import connected_users_gauge
+
 logger = logging.getLogger(__name__)
 
 
@@ -51,7 +53,12 @@ class SSEBroadcaster:
                     "total_connections": len(self._connections[tenant_id])
                 }
             )
-        
+        # Metrics must never break the SSE connection.
+        try:
+            connected_users_gauge.labels(tenant_id=tenant_id).inc()
+        except Exception:
+            logger.debug("Failed to increment connected_users gauge", exc_info=True)
+
         try:
             # Send initial connection event
             yield self._format_sse("connected", {"status": "connected"})
@@ -68,6 +75,12 @@ class SSEBroadcaster:
             logger.debug(f"SSE connection cancelled for tenant {tenant_id}")
             raise
         finally:
+            try:
+                connected_users_gauge.labels(tenant_id=tenant_id).dec()
+            except Exception:
+                logger.debug(
+                    "Failed to decrement connected_users gauge", exc_info=True
+                )
             async with self._lock:
                 if tenant_id in self._connections:
                     try:
