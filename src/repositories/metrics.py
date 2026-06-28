@@ -101,6 +101,34 @@ incidents_opened_total = Counter(
     labelnames=["tenant_id", "rule_id", "rule_name"],
 )
 
+### ACTIVE & CONNECTED USERS (Product BI — Phase 1)
+# Replaces the keep-ui in-memory `keep_ui_active_users` gauge, which was driven
+# by a random localStorage UUID, had no tenant dimension and was replica-unsafe.
+# Both gauges below are keyed by the real authenticated tenant.
+
+# Live/concurrent users: incremented on SSE subscribe, decremented on disconnect.
+# Connections are partitioned across workers/replicas, so `livesum` aggregates
+# the per-process counts into the true total.
+connected_users_gauge = Gauge(
+    f"{METRIC_PREFIX}connected_users",
+    "Currently connected live users (authenticated SSE subscriptions)",
+    labelnames=["tenant_id"],
+    multiprocess_mode="livesum",
+)
+
+# DAU/WAU/MAU: distinct users with an audited action in a rolling window,
+# recomputed periodically from AlertAudit. Every worker computes the same
+# DB-derived value, so taking the max de-duplicates it across processes
+# (rather than summing identical values like livesum would). `livemax` (not
+# `max`) so values from dead workers are not retained across restarts — relies
+# on mark_process_dead() being called on worker exit.
+active_users_gauge = Gauge(
+    f"{METRIC_PREFIX}active_users",
+    "Distinct users with an audited action within the rolling window (DAU/WAU/MAU)",
+    labelnames=["tenant_id", "window"],
+    multiprocess_mode="livemax",
+)
+
 ### PRODUCT BI — USER ACTIONS (Phase 2)
 # Product action counter. Labels are bounded by a server-side allow-list
 # (src/services/product_metrics.py): tenant_id, feature, action, source (ui|api),

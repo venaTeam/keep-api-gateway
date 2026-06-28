@@ -399,6 +399,54 @@ def test_not_equal(db_session, setup_alerts):
     assert elastic_filtered_alerts[0] == db_filtered_alerts[0]
 
 
+def test_search_by_environment(db_session, create_alert):
+    """`environment` is a first-class, CEL-filterable column (DB search path).
+
+    Uses the DB-only search path (no Elasticsearch dependency): one alert with an
+    explicit `environment="test"` and one that falls back to the "production"
+    default, then filters by each via CEL.
+    """
+    os.environ["ELASTIC_ENABLED"] = "false"
+
+    base = datetime.datetime.utcnow()
+    create_alert(
+        "env-test-alert",
+        AlertStatus.FIRING,
+        base,
+        {"severity": "critical", "environment": "test"},
+    )
+    create_alert(
+        "env-prod-alert",
+        AlertStatus.FIRING,
+        base + datetime.timedelta(seconds=1),
+        {"severity": "critical"},  # no environment -> server/column default "production"
+    )
+
+    test_alerts = SearchEngine(tenant_id=SINGLE_TENANT_UUID).search_alerts(
+        SearchQuery(
+            sql_query={
+                "sql": "(environment = :environment_1)",
+                "params": {"environment_1": "test"},
+            },
+            cel_query="(environment == 'test')",
+        )
+    )
+    assert len(test_alerts) == 1
+    assert test_alerts[0].environment == "test"
+
+    prod_alerts = SearchEngine(tenant_id=SINGLE_TENANT_UUID).search_alerts(
+        SearchQuery(
+            sql_query={
+                "sql": "(environment = :environment_1)",
+                "params": {"environment_1": "production"},
+            },
+            cel_query="(environment == 'production')",
+        )
+    )
+    assert len(prod_alerts) == 1
+    assert prod_alerts[0].environment == "production"
+
+
 @pytest.mark.skip(reason="alertenrichment removal (Option A): dynamic enrichment fields have no typed lastalert column and are dropped by the strict allow-list; this test asserts the legacy dynamic-field behavior. See HANDOFF.md.")
 @pytest.mark.parametrize(
     "setup_alerts",
