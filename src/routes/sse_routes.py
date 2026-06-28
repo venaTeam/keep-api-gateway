@@ -13,7 +13,9 @@ from typing import List, Optional, Union
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from sqlmodel import Session
 
+from src.repositories.db import engine
 from src.services.sse import sse_broadcaster
 from src.services.identity_manager.authenticatedentity import AuthenticatedEntity
 from src.services.identity_manager.identitymanagerfactory import IdentityManagerFactory
@@ -25,21 +27,21 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-async def get_sse_authenticated_entity(
+def get_sse_authenticated_entity(
     request: Request,
     token: Optional[str] = Query(None, description="Authentication token for SSE connection"),
 ) -> AuthenticatedEntity:
     """
     Get authenticated entity for SSE connections.
-    
+
     This dependency supports both authenticated and no-auth modes:
     - In noauth mode: Returns a default single-tenant entity if no token provided
     - In authenticated mode: Validates the token and returns the authenticated entity
-    
+
     Args:
         request: The FastAPI request object
         token: Optional token passed as query parameter (since EventSource can't send headers)
-        
+
     Returns:
         AuthenticatedEntity for the connection
     """
@@ -74,8 +76,15 @@ async def get_sse_authenticated_entity(
     # Get the auth verifier and authenticate
     try:
         auth_verifier = IdentityManagerFactory.get_auth_verifier(["read:alert"])
-        authenticated_entity = await auth_verifier(request, token=token)
-        return authenticated_entity
+        with Session(engine) as session:
+            return auth_verifier(
+                request,
+                api_key=None,
+                authorization=None,
+                token=token,
+                body=None,
+                session=session,
+            )
     except Exception as e:
         # If authentication fails in noauth mode, fall back to single tenant
         if auth_type == "noauth":
@@ -89,9 +98,7 @@ async def get_sse_authenticated_entity(
 
 @router.post("/subscribe")
 async def sse_subscribe(
-    authenticated_entity: AuthenticatedEntity = Depends(
-        IdentityManagerFactory.get_auth_verifier(["read:alert"])
-    ),
+    authenticated_entity: AuthenticatedEntity = Depends(get_sse_authenticated_entity),
 ) -> StreamingResponse:
     """
     Subscribe to Server-Sent Events for real-time updates.

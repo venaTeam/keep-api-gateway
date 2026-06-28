@@ -9,6 +9,7 @@ from src.repositories.cel_to_sql.properties_metadata import (
     FieldMappingConfiguration,
     PropertiesMetadata,
 )
+from src.repositories.cel_to_sql.sql_providers.base import CelToSqlException
 from src.repositories.cel_to_sql.sql_providers.get_cel_to_sql_provider_for_dialect import (
     get_cel_to_sql_provider_for_dialect,
 )
@@ -88,3 +89,17 @@ def test_order_by_exp(testcase_key):
     instance = get_cel_to_sql_provider_for_dialect(dialect_name, properties_metadata)
     actual_sql_filter = instance.get_order_by_expression(sort_options)
     assert actual_sql_filter == expected_sql
+
+
+@pytest.mark.parametrize("dialect_name", ["sqlite", "mysql", "postgresql"])
+def test_order_by_unknown_field_raises_clean_exception(dialect_name):
+    """Sorting by an unmapped field (e.g. the stale camelCase ``lastReceived``
+    instead of ``last_received``) must raise a CelToSqlException the route can
+    turn into a 400, not an AttributeError that crashes the worker."""
+    instance = get_cel_to_sql_provider_for_dialect(dialect_name, properties_metadata)
+
+    with pytest.raises(CelToSqlException):
+        instance.get_order_by_expression([("lastReceived", "DESC")])
+
+    with pytest.raises(CelToSqlException):
+        instance.get_field_expression("lastReceived")

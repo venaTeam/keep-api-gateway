@@ -139,6 +139,9 @@ class LastAlert(SQLModel, table=True):
             "alert_id",
             "fingerprint",
         ),
+        # Lets the planner join back from a CEL-filtered alert set into lastalert
+        # (alert_id had no index), so the preset-filter alert.* indexes are usable.
+        Index("idx_lastalert_tenant_alert_id", "tenant_id", "alert_id"),
         {},
     )
 
@@ -214,6 +217,10 @@ class Alert(SQLModel, table=True):
     impact: str | None = Field(sa_column=Column(TEXT, nullable=True))
     runbook_url: str | None = Field(sa_column=Column(TEXT, nullable=True))
     alert_rule_url: str | None = Field(sa_column=Column(TEXT, nullable=True))
+    environment: str = Field(
+        default="production",
+        sa_column=Column(String(50), nullable=False, server_default="production"),
+    )
 
     # === Source 2: Appchi System Fields (6) ===
     source: list[str] | None = Field(
@@ -291,6 +298,16 @@ class Alert(SQLModel, table=True):
             "tenant_id",
             "provider_id",
         ),
+        # Preset CEL filter predicates compile onto alert.*: operator (~33 presets),
+        # application (~22), source->provider_type (~5). tenant_id-leading.
+        Index(
+            "idx_alert_tenant_operator_application",
+            "tenant_id",
+            "operator",
+            "application",
+        ),
+        Index("idx_alert_tenant_application", "tenant_id", "application"),
+        Index("idx_alert_tenant_provider_type", "tenant_id", "provider_type"),
     )
 
     class Config:

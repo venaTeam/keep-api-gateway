@@ -4,7 +4,12 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from src.models.alert import AlertDto, AlertSeverity, AlertStatus
+from src.models.alert import (
+    AlertDto,
+    AlertEnvironment,
+    AlertSeverity,
+    AlertStatus,
+)
 from tests.fixtures.client import client, test_app  # noqa
 
 
@@ -221,3 +226,36 @@ def test_alert_dto_has_no_dismissed_field():
         last_received="2024-01-01T00:00:00.000Z",
     )
     assert "dismissed" not in alert.__fields__
+
+
+def test_alert_dto_environment_defaults_to_production():
+    """A missing environment resolves to 'production'."""
+    alert = create_basic_alert(
+        name="No Env Alert", last_received="2024-01-01T00:00:00.000Z"
+    )
+    assert alert.environment == AlertEnvironment.PRODUCTION.value
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["production", "integration", "load", "development", "test"],
+)
+def test_alert_dto_environment_valid_values_preserved(value):
+    """Every valid enum value passes through unchanged."""
+    alert = create_basic_alert(
+        name=f"Env {value} Alert",
+        last_received="2024-01-01T00:00:00.000Z",
+        environment=value,
+    )
+    assert alert.environment == value
+
+
+@pytest.mark.parametrize("value", ["", "bogus", "PRODUCTION", "prod", None])
+def test_alert_dto_environment_invalid_falls_back_to_production(value):
+    """Empty/invalid environment values fall back to 'production'."""
+    alert = create_basic_alert(
+        name="Bad Env Alert",
+        last_received="2024-01-01T00:00:00.000Z",
+        environment=value,
+    )
+    assert alert.environment == AlertEnvironment.PRODUCTION.value
