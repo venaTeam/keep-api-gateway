@@ -39,7 +39,7 @@ class ExternalAIDto(BaseModel):
         AI services are stateless by design,
         so we need to remind about the client each time we want them to be executed.
         """
-        from repositories.db import get_session
+        from repositories.db import get_session_sync
         from utils.tenant_utils import get_or_create_api_key
 
         if (
@@ -60,12 +60,13 @@ class ExternalAIDto(BaseModel):
             return
 
         self.last_time_reminded = datetime.now()
-        back_api_key = get_or_create_api_key(
-            session=next(get_session()),
-            tenant_id=tenant_id,
-            created_by="system",
-            unique_api_key_id=self.name.lower().replace(" ", "_"),
-        )
+        with get_session_sync() as session:
+            back_api_key = get_or_create_api_key(
+                session=session,
+                tenant_id=tenant_id,
+                created_by="system",
+                unique_api_key_id=self.name.lower().replace(" ", "_"),
+            )
 
         try:
             response = requests.post(

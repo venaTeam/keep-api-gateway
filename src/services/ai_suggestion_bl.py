@@ -27,6 +27,8 @@ class AISuggestionBl:
     def __init__(self, tenant_id: str, session: Session | None = None) -> None:
         self.logger = logging.getLogger(__name__)
         self.tenant_id = tenant_id
+        # Only close the session in __exit__/close if we created it here.
+        self._owns_session = session is None
         self.session = session if session else get_session_sync()
 
         # Todo: interface it with any model
@@ -43,6 +45,17 @@ class AISuggestionBl:
             raise HTTPException(
                 status_code=400, detail="AI service is not enabled for the client."
             )
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.close()
+
+    def close(self):
+        if self._owns_session and self.session is not None:
+            self.session.close()
+            self.session = None
 
     def get_suggestion_by_input(self, suggestion_input: Dict) -> Optional[AISuggestion]:
         """
