@@ -16,10 +16,9 @@ from threading import Timer
 # tb: small hack to avoid the InsecureRequestWarning logs
 import urllib3
 from pythonjsonlogger import jsonlogger
-from sqlmodel import Session
 
 from src.config.consts import RUNNING_IN_CLOUD_RUN
-from src.repositories.db import get_session, push_logs_to_db
+from src.repositories.db import get_session_sync, push_logs_to_db
 from src.models.db.provider import ProviderExecutionLog
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -89,8 +88,9 @@ class ProviderDBHandler(logging.Handler):
         _records = self.records.copy()
         self.records = []
 
+        session = None
         try:
-            session = Session(next(get_session()).bind)
+            session = get_session_sync()
             log_entries = []
 
             for record in _records:
@@ -113,13 +113,14 @@ class ProviderDBHandler(logging.Handler):
 
             session.add_all(log_entries)
             session.commit()
-            session.close()
         except Exception as e:
             # Use the parent logger to avoid infinite recursion
             logging.getLogger(__name__).error(
                 f"Failed to flush provider logs: {str(e)}"
             )
         finally:
+            if session is not None:
+                session.close()
             # Clear the timer reference
             self._flush_timer = None
 
