@@ -7,7 +7,7 @@ import json5
 
 
 from src.config.core import config
-from src.repositories.db import get_session
+from src.repositories.db import get_session_sync
 from src.models.alert import AlertDto
 from src.models.incident import IncidentDto
 
@@ -54,14 +54,13 @@ class ContextManager:
         from utils.tenant_utils import get_or_create_api_key
 
         if self._api_key is None:
-            session = next(get_session())
-            self._api_key = get_or_create_api_key(
-                session=session,
-                created_by="system",
-                tenant_id=self.tenant_id,
-                unique_api_key_id="webhook",
-            )
-            session.close()
+            with get_session_sync() as session:
+                self._api_key = get_or_create_api_key(
+                    session=session,
+                    created_by="system",
+                    tenant_id=self.tenant_id,
+                    unique_api_key_id="webhook",
+                )
         return self._api_key
 
 

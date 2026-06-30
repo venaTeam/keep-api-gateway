@@ -15,6 +15,16 @@ from src.services.identity_manager.identity_managers.db.db_authverifier import D
 from src.services.identity_manager.identitymanager import BaseIdentityManager
 
 
+def _record_login_failure(reason: str) -> None:
+    """Increment the failed-login counter. Never raises."""
+    try:
+        from src.repositories.metrics import login_failures_total
+
+        login_failures_total.labels(reason=reason).inc()
+    except Exception:
+        pass
+
+
 class DbIdentityManager(BaseIdentityManager):
     def __init__(self, tenant_id, context_manager: ContextManager, **kwargs):
         super().__init__(tenant_id, context_manager, **kwargs)
@@ -32,6 +42,7 @@ class DbIdentityManager(BaseIdentityManager):
         def signin(body: dict):
             # block empty passwords (e.g. user provisioned)
             if not body.get("password"):
+                _record_login_failure("empty_password")
                 return JSONResponse(
                     status_code=401,
                     content={"message": "Empty password"},
@@ -40,6 +51,7 @@ class DbIdentityManager(BaseIdentityManager):
             # validate the user/password
             user = get_user(body.get("username"), body.get("password"))
             if not user:
+                _record_login_failure("invalid_credentials")
                 return JSONResponse(
                     status_code=401,
                     content={"message": "Invalid username or password"},

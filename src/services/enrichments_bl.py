@@ -97,12 +97,26 @@ class EnrichmentsBl:
         self.__logs: list[EnrichmentLog] = []
         self.enrichment_event_id: UUID | None = None
         self.event_producer = event_producer
+        # Only close the session in __exit__/close if we created it here; a
+        # caller-provided session stays owned (and closed) by the caller.
+        self._owns_session = db is None
         if not EnrichmentsBl.ENRICHMENT_DISABLED:
             self.db_session = db or get_session_sync()
             self.elastic_client = ElasticClient(tenant_id=tenant_id)
         else:
             self.db_session = None
             self.elastic_client = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.close()
+
+    def close(self):
+        if self._owns_session and self.db_session is not None:
+            self.db_session.close()
+            self.db_session = None
 
     async def run_mapping_rule_by_id(self, rule_id: int, alert_id: UUID) -> AlertDto:
         rule = get_mapping_rule_by_id(self.tenant_id, rule_id, session=self.db_session)
@@ -737,7 +751,39 @@ class EnrichmentsBl:
             entity_type=entity_type,
         )
 
-    async def enrich_entity(
+    async def enrich_entity(self, **kwargs):
+        """
+        Thin wrapper around the enrichment impl that records product-BI metrics
+        (keep_user_action_total / keep_alert_status_change_total) for user-facing
+        alert actions, on both the success and error paths. All callers pass
+        keyword arguments. Metric recording never raises.
+        """
+        from src.services.product_metrics import record_alert_enrichment
+
+        action_type = kwargs.get("action_type")
+        enrichments = kwargs.get("enrichments") or {}
+        is_alert = kwargs.get("entity_type", "alert") != "incident"
+        try:
+            result = await self._enrich_entity_impl(**kwargs)
+        except Exception:
+            if is_alert and action_type is not None:
+                record_alert_enrichment(
+                    tenant_id=self.tenant_id,
+                    action_type=action_type,
+                    enrichments=enrichments,
+                    result="error",
+                )
+            raise
+        if is_alert and action_type is not None:
+            record_alert_enrichment(
+                tenant_id=self.tenant_id,
+                action_type=action_type,
+                enrichments=enrichments,
+                result="success",
+            )
+        return result
+
+    async def _enrich_entity_impl(
         self,
         fingerprint: str | UUID,
         enrichments: dict,
