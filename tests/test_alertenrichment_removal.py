@@ -6,7 +6,8 @@ Covers the canonical shared-logic spec for keep-api-gateway:
     strict=False discards with a warning
   - note-preservation guard
   - status_disposable: cleared on a non-resolved re-fire when TRUE
-  - dismiss survive-resolve: permanent / dismiss_until survive, until_resolved clears
+  - dismiss survive-resolve: only time-boxed dismiss_until survives; permanent
+    and until_resolved auto-undismiss on resolve
   - D1: enrich-before-first-alert -> no column write, AlertAudit still created
   - deleted typed column set/clear
   - DTO build sources user state + tracking from LastAlert
@@ -302,8 +303,10 @@ def test_dismiss_until_resolved_clears_on_resolve(db_session):
     assert la.dismiss_mode is None
 
 
-@pytest.mark.parametrize("mode", ["permanent", "dismiss_until"])
+@pytest.mark.parametrize("mode", ["dismiss_until"])
 def test_dismiss_survives_resolve(db_session, mode):
+    # Only a time-boxed dismiss_until survives an interim resolve; it
+    # self-expires on its own clock.
     fp = f"fp-survive-{mode}"
     alert = _make_alert(db_session, fp, status="firing")
     _make_last_alert(db_session, alert, status="suppressed", dismiss_mode=mode)
@@ -316,6 +319,47 @@ def test_dismiss_survives_resolve(db_session, mode):
     la = get_last_alert_by_fingerprint(SINGLE_TENANT_UUID, fp, db_session)
     assert la.status == "suppressed"
     assert la.dismiss_mode == mode
+
+
+def test_permanent_dismiss_undismisses_on_resolve(db_session):
+    # A "keep on new alerts" (permanent) dismiss auto-undismisses when the alert
+    # returns RESOLVED — a fresh lifecycle begins.
+    fp = "fp-perm-resolve"
+    alert = _make_alert(db_session, fp, status="firing")
+    _make_last_alert(db_session, alert, status="suppressed", dismiss_mode="permanent")
+
+    resolved = _make_alert(
+        db_session, fp, status=AlertStatus.RESOLVED.value, ts=datetime.now(timezone.utc)
+    )
+    set_last_alert(SINGLE_TENANT_UUID, resolved, session=db_session)
+
+    la = get_last_alert_by_fingerprint(SINGLE_TENANT_UUID, fp, db_session)
+    assert la.status is None
+    assert la.dismiss_mode is None
+    assert la.status_disposable is False
+
+
+def test_apply_dispose_on_new_alert_emits_flag_for_dismiss_and_status():
+    # A status/dismiss write always carries status_disposable so a "keep"
+    # (dispose_on_new_alert=False) action explicitly resets a prior True.
+    from src.services.enrichments_bl import EnrichmentsBl
+
+    # Pure dismiss (dismiss_mode, no explicit status)
+    out = EnrichmentsBl._apply_dispose_on_new_alert({"dismiss_mode": "permanent"}, True)
+    assert out["status_disposable"] is True
+    out = EnrichmentsBl._apply_dispose_on_new_alert({"dismiss_mode": "permanent"}, False)
+    assert out["status_disposable"] is False
+
+    # Change-status (explicit status)
+    out = EnrichmentsBl._apply_dispose_on_new_alert({"status": "acknowledged"}, True)
+    assert out["status_disposable"] is True
+    out = EnrichmentsBl._apply_dispose_on_new_alert({"status": "acknowledged"}, False)
+    assert out["status_disposable"] is False
+
+    # A write with neither status nor dismiss_mode is left untouched so
+    # unrelated enrichments (note, ticket) never reset the flag.
+    out = EnrichmentsBl._apply_dispose_on_new_alert({"note": "on it"}, False)
+    assert "status_disposable" not in out
 
 
 def test_set_last_alert_writes_tracking(db_session):
