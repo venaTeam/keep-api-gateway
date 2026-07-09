@@ -651,9 +651,16 @@ class EnrichmentsBl:
         """'Dispose on new alert' for status is now expressed via the
         typed `status_disposable` flag (cleared on the next non-resolved re-fire
         in set_last_alert), not a disposable_* JSONB wrapper.
+
+        Applies to both a `status` write (change-status / assign) and a
+        `dismiss_mode` write (a pure dismiss). The flag is written on EVERY
+        such action — `True` for "Dispose on new alerts", `False` for the
+        default "Keep on new alerts" — so a "keep" action explicitly resets a
+        previously-disposable status/dismiss back to non-disposable instead of
+        silently leaving the old flag in place.
         """
-        if dispose_on_new_alert and "status" in enrichments:
-            enrichments = {**enrichments, "status_disposable": True}
+        if "status" in enrichments or "dismiss_mode" in enrichments:
+            enrichments = {**enrichments, "status_disposable": dispose_on_new_alert}
         return enrichments
 
     async def batch_enrich(
