@@ -6,8 +6,9 @@ Covers the canonical shared-logic spec for keep-api-gateway:
     strict=False discards with a warning
   - note-preservation guard
   - status_disposable: cleared on a non-resolved re-fire when TRUE
-  - dismiss survive-resolve: only time-boxed dismiss_until survives; permanent
-    and until_resolved auto-undismiss on resolve
+  - dismiss cleared on resolve: a RESOLVED occurrence clears every dismiss
+    (permanent, dismiss_until, until_resolved) — status takes the resolved
+    value and the write is marked disposable
   - D1: enrich-before-first-alert -> no column write, AlertAudit still created
   - deleted typed column set/clear
   - DTO build sources user state + tracking from LastAlert
@@ -265,8 +266,10 @@ def test_status_disposable_cleared_on_non_resolved_refire(db_session):
     set_last_alert(SINGLE_TENANT_UUID, newer, session=db_session)
 
     la = get_last_alert_by_fingerprint(SINGLE_TENANT_UUID, "fp-disp", db_session)
-    assert la.status is None
-    assert la.status_disposable is False
+    # Reverted lifecycle: a disposable status takes the re-fire's status and
+    # stays disposable (rather than clearing to None/False).
+    assert la.status == "firing"
+    assert la.status_disposable is True
 
 
 def test_status_disposable_false_persists_on_refire(db_session):
@@ -299,17 +302,18 @@ def test_dismiss_until_resolved_clears_on_resolve(db_session):
     set_last_alert(SINGLE_TENANT_UUID, resolved, session=db_session)
 
     la = get_last_alert_by_fingerprint(SINGLE_TENANT_UUID, "fp-untilres", db_session)
-    assert la.status is None
+    # Reverted lifecycle: a resolve clears the dismiss and writes the resolved
+    # status (disposable).
+    assert la.status == "resolved"
     assert la.dismiss_mode is None
 
 
-@pytest.mark.parametrize("mode", ["dismiss_until"])
-def test_dismiss_survives_resolve(db_session, mode):
-    # Only a time-boxed dismiss_until survives an interim resolve; it
-    # self-expires on its own clock.
-    fp = f"fp-survive-{mode}"
+def test_dismiss_until_cleared_on_resolve(db_session):
+    # A resolve clears a time-boxed dismiss_until too (does not survive): the
+    # status takes the resolved value and the dismiss columns clear.
+    fp = "fp-survive-dismiss_until"
     alert = _make_alert(db_session, fp, status="firing")
-    _make_last_alert(db_session, alert, status="suppressed", dismiss_mode=mode)
+    _make_last_alert(db_session, alert, status="suppressed", dismiss_mode="dismiss_until")
 
     resolved = _make_alert(
         db_session, fp, status=AlertStatus.RESOLVED.value, ts=datetime.now(timezone.utc)
@@ -317,13 +321,15 @@ def test_dismiss_survives_resolve(db_session, mode):
     set_last_alert(SINGLE_TENANT_UUID, resolved, session=db_session)
 
     la = get_last_alert_by_fingerprint(SINGLE_TENANT_UUID, fp, db_session)
-    assert la.status == "suppressed"
-    assert la.dismiss_mode == mode
+    assert la.status == "resolved"
+    assert la.dismiss_mode is None
+    assert la.status_disposable is True
 
 
 def test_permanent_dismiss_undismisses_on_resolve(db_session):
     # A "keep on new alerts" (permanent) dismiss auto-undismisses when the alert
-    # returns RESOLVED — a fresh lifecycle begins.
+    # returns RESOLVED — a fresh lifecycle begins (status takes the resolved
+    # value, disposable).
     fp = "fp-perm-resolve"
     alert = _make_alert(db_session, fp, status="firing")
     _make_last_alert(db_session, alert, status="suppressed", dismiss_mode="permanent")
@@ -334,9 +340,9 @@ def test_permanent_dismiss_undismisses_on_resolve(db_session):
     set_last_alert(SINGLE_TENANT_UUID, resolved, session=db_session)
 
     la = get_last_alert_by_fingerprint(SINGLE_TENANT_UUID, fp, db_session)
-    assert la.status is None
+    assert la.status == "resolved"
     assert la.dismiss_mode is None
-    assert la.status_disposable is False
+    assert la.status_disposable is True
 
 
 def test_apply_dispose_on_new_alert_emits_flag_for_dismiss_and_status():
