@@ -1,7 +1,7 @@
 from typing import List
 
 import chevron
-from fastapi import APIRouter, Query, Request, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import JSONResponse
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
@@ -15,7 +15,8 @@ from src.repositories.db import (
     get_last_alerts_for_incidents,
     get_last_incidents,
 )
-from src.repositories.dependencies import SINGLE_TENANT_UUID
+from src.services.identity_manager.authenticatedentity import AuthenticatedEntity
+from src.services.identity_manager.identitymanagerfactory import IdentityManagerFactory
 from src.utils.limiter import limiter
 from src.models.alert import AlertDto
 
@@ -27,6 +28,9 @@ CONTENT_TYPE_LATEST = "text/plain; version=0.0.4; charset=utf-8"
 @router.get("")
 def get_metrics(
     labels: List[str] = Query(None),
+    authenticated_entity: AuthenticatedEntity = Depends(
+        IdentityManagerFactory.get_auth_verifier(["read:alert"])
+    ),
 ):
     """
     This endpoint is used by Prometheus to scrape such metrics from the application:
@@ -59,7 +63,7 @@ def get_metrics(
     # they would make us expose our app's pod id's. This is a customer-facing endpoint
     # we're deploying to SaaS, and we want to hide our internal infra.
 
-    tenant_id = SINGLE_TENANT_UUID
+    tenant_id = authenticated_entity.tenant_id
 
     export = str()
 
