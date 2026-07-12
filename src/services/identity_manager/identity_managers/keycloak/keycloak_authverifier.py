@@ -15,6 +15,10 @@ from keycloak import KeycloakOpenID, KeycloakOpenIDConnection
 
 logger = logging.getLogger(__name__)
 
+# VENA-5596: reserved catch-all tenant for authenticated users with no org group.
+GENERAL_TENANT_NAME = "general"
+GENERAL_TENANT_ROLE = Roles.ADMIN.value
+
 
 # PATCH TO MONKEYPATCH KEYCLOAK VERIFY BUG
 # https://github.com/marcospereirampj/python-keycloak/issues/645
@@ -191,6 +195,20 @@ class KeycloakAuthVerifier(AuthVerifierBase):
                     return keep_role.value
         return None
 
+    def _get_or_create_general_tenant(self) -> str:
+        """Reserved catch-all tenant for authenticated users with no org group (VENA-5596).
+
+        Guarded via the tenants cache (like the org path) so we only call
+        create_tenant on first sight and always return a real tenant id.
+        """
+        if GENERAL_TENANT_NAME not in self.tenants:
+            general_tenant_id = create_tenant(tenant_name=GENERAL_TENANT_NAME)
+            self.tenants[GENERAL_TENANT_NAME] = {
+                "tenant_id": general_tenant_id,
+                "tenant_logo_url": None,
+            }
+        return self.tenants[GENERAL_TENANT_NAME]["tenant_id"]
+
     def _verify_bearer_token(
         self, token: str = Depends(oauth2_scheme)
     ) -> AuthenticatedEntity:
@@ -279,6 +297,26 @@ class KeycloakAuthVerifier(AuthVerifierBase):
                     )
             # if no active tenant, we take the first
             else:
+                # VENA-5596: a token carrying no org group means the user has no team.
+                # Route them to the reserved GENERAL tenant instead of raising IndexError.
+                if not groups_that_represent_orgs:
+                    self.logger.info(
+                        "User has no org group; falling back to GENERAL tenant",
+                        extra={"email": email},
+                    )
+                    tenant_id = self._get_or_create_general_tenant()
+                    user_orgs[GENERAL_TENANT_NAME] = self.tenants[GENERAL_TENANT_NAME]
+                    general_entity = AuthenticatedEntity(
+                        tenant_id,
+                        email,
+                        None,
+                        GENERAL_TENANT_ROLE,
+                        org_id=org_id,
+                        org_realm=org_realm,
+                        token=token,
+                    )
+                    general_entity.user_orgs = user_orgs
+                    return general_entity
                 current_tenant_group = groups_that_represent_orgs[0]
                 org_name = self._get_org_name(current_tenant_group)
                 tenant_id = self.tenants.get(org_name).get("tenant_id")
