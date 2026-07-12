@@ -103,7 +103,35 @@ class KeycloakIdentityManager(BaseIdentityManager):
             raise HTTPException(status_code=500, detail="Failed to fetch policies")
 
 
+    def _register_user_orgs_endpoint(self, app) -> None:
+        """Register GET /auth/user/orgs — the multi-org UI tenant switcher endpoint.
+
+        Kept independent of the heavier UMA resource setup in on_start so the
+        switcher works even when SKIP_KEYCLOAK_ONSTART=true (VENA-5596).
+        """
+        from fastapi import Depends
+
+        from src.services.identity_manager.identitymanagerfactory import (
+            IdentityManagerFactory,
+        )
+
+        if "/auth/user/orgs" in [route.path for route in app.routes]:
+            return
+
+        @app.get("/auth/user/orgs")
+        def tenant(
+            authenticated_entity: AuthenticatedEntity = Depends(
+                IdentityManagerFactory.get_auth_verifier([])
+            ),
+        ):
+            return authenticated_entity.user_orgs
+
     def on_start(self, app) -> None:
+        # VENA-5596: the multi-org UI switcher calls GET /auth/user/orgs to list the
+        # user's tenants. Register it up front, independent of the (skippable) UMA
+        # resource setup below, so the switcher works with SKIP_KEYCLOAK_ONSTART=true.
+        if self.keycloak_multi_org:
+            self._register_user_orgs_endpoint(app)
         # if the on start process is disabled:
         if os.environ.get("SKIP_KEYCLOAK_ONSTART", "false") == "true":
             self.logger.info("Skipping keycloak on start")
