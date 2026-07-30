@@ -66,7 +66,14 @@ EXPECTED_INDEXES = {
             "created_at",
         ],
     },
-    "automation_revisions": {},
+    "automation_revisions": {
+        # Postgres does not auto-index FK columns; without this the
+        # revision-history read seq-scans.
+        "ix_automation_revisions_automation_id_created_at": [
+            "automation_id",
+            "created_at",
+        ],
+    },
 }
 
 

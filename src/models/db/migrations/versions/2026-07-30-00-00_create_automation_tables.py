@@ -268,6 +268,16 @@ def upgrade() -> None:
             server_default=sa.text("now()"),
         ),
     )
+    # Revision-history read (`WHERE automation_id = ? ORDER BY created_at`).
+    # Postgres does not auto-index FK columns, so without this the history read
+    # seq-scans. Free to add while the table is empty; retrofitting it later
+    # costs a CREATE INDEX CONCURRENTLY dance. The name is shared with
+    # keep-automation-api's ORM model — keep the two identical.
+    op.create_index(
+        "ix_automation_revisions_automation_id_created_at",
+        "automation_revisions",
+        ["automation_id", "created_at"],
+    )
 
 
 def downgrade() -> None:
