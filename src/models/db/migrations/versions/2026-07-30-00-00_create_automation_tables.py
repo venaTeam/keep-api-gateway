@@ -159,7 +159,10 @@ def upgrade() -> None:
     # The hydration index. `matching_state` LEADS on purpose: the matcher loads
     # every tenant in a single `WHERE matching_state = 'active'` pass (one query
     # per reload interval, not one per tenant), so a tenant-leading index could
-    # not serve it. `tenant_id` rides second to keep that read covering.
+    # not serve it. `tenant_id` rides second for grouped output and an optional
+    # single-tenant reload — NOT to make the read covering, which it is not: the
+    # matcher also reads `triggers`, `cooldown_fields`, `cooldown_seconds` and
+    # `grace_seconds`, so every row is a heap fetch either way.
     op.create_index(
         "ix_automations_matching_state_tenant_id",
         "automations",
