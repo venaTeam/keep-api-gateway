@@ -23,6 +23,14 @@ performed here, and none is needed. Do not assume rows were carried over.
 No cascade-delete FKs anywhere: rows persist forever, delete is a state flip
 (§4.4).
 
+TEXT vs VARCHAR IS DELIBERATE, NOT DRIFT. The 19 string columns declared here as
+`sa.Text()` are plain `str` (-> VARCHAR) in keep-automation-api's ORM models. On
+Postgres those are the same varlena type with identical operators, indexing and
+storage, so nothing behaves differently — only the reported type name differs
+(`text` here, `character varying` from a model-built schema). Left as-is on both
+sides on purpose; do not "align" one to the other. This does NOT extend to
+`tenant_id`, which is `sa.String()` because it must match `tenant.id`.
+
 Enum string values are pinned in automation-contracts.md §"DB enums".
 
 Revision ID: create_automation_tables
