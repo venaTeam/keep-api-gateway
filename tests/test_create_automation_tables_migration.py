@@ -90,6 +90,30 @@ def _run(engine, step):
             step()
 
 
+def _seed_fk_targets(engine):
+    """The gateway-owned tables the revision's FKs point at."""
+    md = sa.MetaData()
+    sa.Table("tenant", md, sa.Column("id", sa.String(), primary_key=True))
+    md.create_all(engine)
+
+
+def created_table_names():
+    """The tables ``upgrade()`` actually creates, observed by executing it.
+
+    Exported so tests/test_autogenerate_automation_filter.py can pin the
+    autogenerate exclusion list against the migration itself instead of against
+    a second literal that drifts silently.
+    """
+    engine = sa.create_engine("sqlite://")
+    try:
+        _seed_fk_targets(engine)
+        before = set(sa.inspect(engine).get_table_names())
+        _run(engine, load_automation_migration().upgrade)
+        return set(sa.inspect(engine).get_table_names()) - before
+    finally:
+        engine.dispose()
+
+
 @pytest.fixture(scope="module")
 def migration():
     return load_automation_migration()
@@ -102,9 +126,7 @@ def engine(tmp_path):
     `tenant.id`."""
     engine = sa.create_engine(f"sqlite:///{tmp_path / 'automations.db'}")
     try:
-        md = sa.MetaData()
-        sa.Table("tenant", md, sa.Column("id", sa.String(), primary_key=True))
-        md.create_all(engine)
+        _seed_fk_targets(engine)
         yield engine
     finally:
         engine.dispose()
