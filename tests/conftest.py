@@ -129,7 +129,7 @@ if "PROMETHEUS_MULTIPROC_DIR" not in os.environ:
     os.environ["PROMETHEUS_MULTIPROC_DIR"] = tempfile.mkdtemp(prefix="prometheus_multiproc_")
 
 # This import is required to create the tables
-from src.repositories.dependencies import SINGLE_TENANT_UUID
+from src.repositories.dependencies import GENERIC_TENANT_UUID
 from src.repositories.elastic import ElasticClient
 from src.models.alert import AlertStatus
 from src.models.db.alert import *
@@ -200,7 +200,7 @@ def mocked_context(ctx_store) -> None:
 @pytest.fixture
 def context_manager():
     os.environ["STORAGE_MANAGER_DIRECTORY"] = "/tmp/storage-manager"
-    return ContextManager(tenant_id=SINGLE_TENANT_UUID)
+    return ContextManager(tenant_id=GENERIC_TENANT_UUID)
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -371,7 +371,7 @@ def db_session(request, monkeypatch, tmp_path):
 
     # 1. Create a tenant
     tenant_data = [
-        Tenant(id=SINGLE_TENANT_UUID, name="test-tenant", created_by="tests@keephq.dev")
+        Tenant(id=GENERIC_TENANT_UUID, name="test-tenant", created_by="tests@keephq.dev")
     ]
     session.add_all(tenant_data)
     session.commit()
@@ -417,7 +417,7 @@ def mocked_context_manager():
         "foreach": {"value": None},
         "env": {},
     }
-    context_manager.tenant_id = SINGLE_TENANT_UUID
+    context_manager.tenant_id = GENERIC_TENANT_UUID
     return context_manager
 
 
@@ -472,7 +472,7 @@ def keycloak_container(docker_ip, docker_services):
 def is_elastic_responsive(host, port, user, password):
     try:
         elastic_client = ElasticClient(
-            tenant_id=SINGLE_TENANT_UUID,
+            tenant_id=GENERIC_TENANT_UUID,
             hosts=[f"http://{host}:{port}"],
             basic_auth=(user, password),
         )
@@ -536,7 +536,7 @@ def elastic_client(request):
         with patch.dict(os.environ, env_vars):
             request.getfixturevalue("elastic_container")
             elastic_client = ElasticClient(
-                tenant_id=SINGLE_TENANT_UUID,
+                tenant_id=GENERIC_TENANT_UUID,
             )
 
             yield elastic_client
@@ -691,7 +691,7 @@ def setup_alerts(elastic_client, db_session, request):
         last_received = detail.get("last_received") or detail.get("last_received") or datetime.utcnow().isoformat()
         alerts.append(
             Alert(
-                tenant_id=SINGLE_TENANT_UUID,
+                tenant_id=GENERIC_TENANT_UUID,
                 provider_type=source,
                 provider_id="test",
                 fingerprint=detail["fingerprint"],
@@ -728,7 +728,7 @@ def setup_alerts(elastic_client, db_session, request):
         else:
             last_alerts.append(
                 LastAlert(
-                    tenant_id=SINGLE_TENANT_UUID,
+                    tenant_id=GENERIC_TENANT_UUID,
                     fingerprint=alert.fingerprint,
                     timestamp=alert.timestamp,
                     first_timestamp=alert.timestamp,
@@ -770,7 +770,7 @@ def setup_stress_alerts_no_elastic(db_session):
             alerts.append(
                 Alert(
                     timestamp=random_timestamp,
-                    tenant_id=SINGLE_TENANT_UUID,
+                    tenant_id=GENERIC_TENANT_UUID,
                     provider_type=detail["source"][0],
                     provider_id="test_{}".format(
                         i % 5
@@ -802,7 +802,7 @@ def setup_stress_alerts_no_elastic(db_session):
             else:
                 last_alerts.append(
                     LastAlert(
-                        tenant_id=SINGLE_TENANT_UUID,
+                        tenant_id=GENERIC_TENANT_UUID,
                         fingerprint=alert.fingerprint,
                         timestamp=alert.timestamp,
                         first_timestamp=alert.timestamp,
@@ -834,7 +834,7 @@ def setup_stress_alerts(
 @pytest.fixture
 def create_alert(db_session):
     def _create_alert(
-        fingerprint, status, timestamp, details=None, tenant_id=SINGLE_TENANT_UUID
+        fingerprint, status, timestamp, details=None, tenant_id=GENERIC_TENANT_UUID
     ):
         details = details or {}
         if fingerprint and "fingerprint" not in details:
@@ -945,7 +945,7 @@ def create_window_maintenance_active(db_session):
         start: datetime,
         end: datetime,
         cel: str,
-        tenant_id: str = SINGLE_TENANT_UUID,
+        tenant_id: str = GENERIC_TENANT_UUID,
         name: str = "Test Maintenance Window",
         description: str = "This is a test maintenance window",
     ):
@@ -975,7 +975,7 @@ def create_window_maintenance_active(db_session):
 
 @pytest.fixture
 def finalize_window_maintenance(db_session):
-    def _finalize_window_maintenance(rule_id, tenant_id: str = SINGLE_TENANT_UUID):
+    def _finalize_window_maintenance(rule_id, tenant_id: str = GENERIC_TENANT_UUID):
         rule: MaintenanceWindowRule = (
             db_session.query(MaintenanceWindowRule)
             .filter(

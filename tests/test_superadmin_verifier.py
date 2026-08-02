@@ -16,7 +16,7 @@ from fastapi import HTTPException
 from src.services.identity_manager.identity_managers.keycloak.keycloak_authverifier import (
     KeycloakAuthVerifier,
 )
-from src.repositories.dependencies import SINGLE_TENANT_UUID
+from src.repositories.dependencies import GENERIC_TENANT_UUID
 from src.services.identity_manager.rbac import Roles
 
 
@@ -86,7 +86,7 @@ def test_verify_token_superadmin_by_email_no_org_group():
     assert entity.email == "alice@keep.dev"
     assert entity.groups == []
     # tenant-less superadmin falls back to the default tenant as active context
-    assert entity.tenant_id == SINGLE_TENANT_UUID
+    assert entity.tenant_id == GENERIC_TENANT_UUID
 
 
 def test_verify_token_superadmin_by_group_no_org_group():

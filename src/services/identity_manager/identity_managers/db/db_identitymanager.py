@@ -1,4 +1,4 @@
-﻿import os
+import os
 
 import jwt
 from fastapi import HTTPException
@@ -8,7 +8,6 @@ from src.repositories.db import create_user as create_user_in_db
 from src.repositories.db import delete_user as delete_user_from_db
 from src.repositories.db import get_user
 from src.repositories.db import get_users as get_users_from_db
-from src.repositories.dependencies import SINGLE_TENANT_UUID
 from src.models.user import User
 from src.services.context_manager import ContextManager
 from src.services.identity_manager.identity_managers.db.db_authverifier import DbAuthVerifier
@@ -49,7 +48,8 @@ class DbIdentityManager(BaseIdentityManager):
                 )
 
             # validate the user/password
-            user = get_user(body.get("username"), body.get("password"))
+            tenant_id = body.get("tenant_id") or body.get("tenantId") or self.tenant_id
+            user = get_user(body.get("username"), body.get("password"), tenant_id=tenant_id)
             if not user:
                 _record_login_failure("invalid_credentials")
                 return JSONResponse(
@@ -64,7 +64,7 @@ class DbIdentityManager(BaseIdentityManager):
             token = jwt.encode(
                 {
                     "email": user.username,
-                    "tenant_id": SINGLE_TENANT_UUID,
+                    "tenant_id": user.tenant_id,
                     "role": user.role,
                 },
                 jwt_secret,
@@ -73,7 +73,7 @@ class DbIdentityManager(BaseIdentityManager):
             # return the token
             return {
                 "accessToken": token,
-                "tenantId": SINGLE_TENANT_UUID,
+                "tenantId": user.tenant_id,
                 "email": user.username,
                 "role": user.role,
             }
@@ -81,7 +81,7 @@ class DbIdentityManager(BaseIdentityManager):
         self.logger.info("Added signin endpoint")
 
     def get_users(self, tenant_id=None) -> list[User]:
-        users = get_users_from_db(tenant_id)
+        users = get_users_from_db(tenant_id or self.tenant_id)
         users = [
             User(
                 email=f"{user.username}",
@@ -113,7 +113,7 @@ class DbIdentityManager(BaseIdentityManager):
 
     def delete_user(self, user_email: str) -> dict:
         try:
-            delete_user_from_db(user_email)
+            delete_user_from_db(user_email, tenant_id=self.tenant_id)
             return {"status": "OK"}
         except Exception:
             raise HTTPException(status_code=404, detail="User not found")

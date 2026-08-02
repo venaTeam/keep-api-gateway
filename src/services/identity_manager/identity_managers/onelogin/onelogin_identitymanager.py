@@ -1,4 +1,4 @@
-﻿import os
+import os
 
 from src.models.user import Group, Role, User
 from src.services.context_manager import ContextManager
@@ -99,7 +99,7 @@ class OneLoginIdentityManager(BaseIdentityManager):
 
     def get_auth_verifier(self, scopes: list) -> AuthVerifierBase:
         """Get the auth verifier for OneLogin - this still works"""
-        return OneLoginAuthVerifier(scopes)
+        return OneLoginAuthVerifier(scopes, tenant_id=self.tenant_id)
 
     def get_groups(self) -> list[Group]:
         """Get all groups from OneLogin - disabled"""
