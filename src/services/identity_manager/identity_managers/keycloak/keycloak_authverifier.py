@@ -8,6 +8,7 @@ from keycloak.uma_permissions import UMAPermission
 
 from src.config.core import config
 from src.repositories.db import create_tenant, get_tenants
+from src.repositories.dependencies import SINGLE_TENANT_UUID
 from src.services.identity_manager.authenticatedentity import AuthenticatedEntity
 from src.services.identity_manager.authverifierbase import AuthVerifierBase, oauth2_scheme
 from src.services.identity_manager.rbac import Roles
@@ -108,6 +109,19 @@ class KeycloakAuthVerifier(AuthVerifierBase):
             self.keycloak_multi_org = False
 
         self.groups_separator = os.environ.get("KEYCLOAK_GROUPS_SEPERATOR", "-").lower()
+        # VENA-5596 superadmin allowlist. A user is a global superadmin if their
+        # email is in KEEP_SUPERADMIN_USERS or any of their token group paths is
+        # in KEEP_SUPERADMIN_GROUPS (both comma-separated, matched case-insensitively).
+        self.superadmin_users = {
+            u.strip().lower()
+            for u in config("KEEP_SUPERADMIN_USERS", default="").split(",")
+            if u.strip()
+        }
+        self.superadmin_groups = {
+            g.strip().lower()
+            for g in config("KEEP_SUPERADMIN_GROUPS", default="").split(",")
+            if g.strip()
+        }
         self._tenants = []
 
     @property
@@ -179,6 +193,17 @@ class KeycloakAuthVerifier(AuthVerifierBase):
         )
 
         return org_name
+
+    def _is_superadmin(self, email, user_groups) -> bool:
+        # Global superadmin (VENA-5596): email allowlisted, or a member of a
+        # superadmin group. Independent of any org/tenant.
+        if email and email.lower() in self.superadmin_users:
+            return True
+        if self.superadmin_groups:
+            for group in user_groups:
+                if group.lower() in self.superadmin_groups:
+                    return True
+        return False
 
     def _get_role_in_org(self, user_groups, org_name):
         # for the org_name (e.g. keep-org-a) iterate over the groups and find the role
@@ -272,13 +297,15 @@ class KeycloakAuthVerifier(AuthVerifierBase):
                             detail="Invalid Keycloak token - could not find any group that represents the org and the role",
                         )
                 role = self._get_role_in_org(groups, org_name)
-                if not role:
+                # A global superadmin may activate any tenant even without an org
+                # role there; the role is overridden to superadmin below.
+                if not role and not self._is_superadmin(email, groups):
                     raise HTTPException(
                         status_code=401,
                         detail="Invalid Keycloak token - could not find any group that represents the org and the role",
                     )
             # if no active tenant, we take the first
-            else:
+            elif groups_that_represent_orgs:
                 current_tenant_group = groups_that_represent_orgs[0]
                 org_name = self._get_org_name(current_tenant_group)
                 tenant_id = self.tenants.get(org_name).get("tenant_id")
@@ -309,6 +336,18 @@ class KeycloakAuthVerifier(AuthVerifierBase):
                         status_code=401,
                         detail="Invalid Keycloak token - no role in groups",
                     )
+            # no org group at all -- valid only for a global superadmin
+            # (VENA-5596). Fall back to the default tenant as their active context
+            # (AuthenticatedEntity.tenant_id is required); they can switch tenants.
+            elif self._is_superadmin(email, groups):
+                role = "superadmin"
+                if not tenant_id:
+                    tenant_id = SINGLE_TENANT_UUID
+            else:
+                raise HTTPException(
+                    status_code=401,
+                    detail="Invalid Keycloak token - no group that represents an org",
+                )
         # Keycloak single tenant
         else:
             role = (
@@ -325,6 +364,16 @@ class KeycloakAuthVerifier(AuthVerifierBase):
 
             role = role[0]
 
+        # Expose the raw Keycloak group paths so per-tenant authorization can
+        # match them against tenant_role_grant.subject (VENA-5596).
+        entity_groups = payload.get(self.groups_claims, [])
+
+        # Global superadmin overrides any org-derived role (VENA-5596). A
+        # superadmin in an org group keeps that tenant as their active context
+        # but gets the superadmin role everywhere.
+        if self._is_superadmin(email, entity_groups):
+            role = "superadmin"
+
         # finally, check if the role is in the allowed roles
         authenticated_entity = AuthenticatedEntity(
             tenant_id,
@@ -337,6 +386,8 @@ class KeycloakAuthVerifier(AuthVerifierBase):
         )
         if user_orgs:
             authenticated_entity.user_orgs = user_orgs
+
+        authenticated_entity.groups = entity_groups
 
         return authenticated_entity
 
