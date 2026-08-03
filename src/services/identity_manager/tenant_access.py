@@ -31,10 +31,16 @@ def get_groups(entity: AuthenticatedEntity) -> list[str]:
 
 def get_subjects(entity: AuthenticatedEntity) -> list[str]:
     """The identifiers to match against `tenant_role_grant.subject`: the caller's
-    email plus their Keycloak group paths."""
+    username AND email (a user grant may be keyed by either), plus their Keycloak
+    group paths."""
     subjects: list[str] = []
+    # entity.email is the token's preferred_username (usually the username).
     if getattr(entity, "email", None):
         subjects.append(entity.email)
+    # entity.user_email is the actual email claim, if present.
+    user_email = getattr(entity, "user_email", None)
+    if user_email and user_email not in subjects:
+        subjects.append(user_email)
     subjects.extend(get_groups(entity))
     return subjects
 

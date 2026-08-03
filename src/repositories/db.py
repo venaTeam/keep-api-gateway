@@ -85,6 +85,7 @@ from src.models.db.tenant_role_grant import TenantRoleGrant
 
 from src.exceptions.tenant_exceptions import (
     OperatorGroupTaken,
+    OperatorNameTaken,
     TenantNameConflict,
     TenantNotFound,
 )
@@ -4886,14 +4887,30 @@ def remove_grant(tenant_id: str, subject: str) -> bool:
 def create_operator(group: str, tenant_id: str, name: str | None = None) -> Operator:
     """Create an operator for `group` (globally unique) linked to `tenant_id`.
     `name` (the routing key) defaults to the group; `apikey` is model-generated.
-    A group collision raises OperatorGroupTaken."""
+
+    Both `name` and `group` are globally unique, so raise the SPECIFIC conflict:
+    OperatorNameTaken vs OperatorGroupTaken (don't report a name clash as a group
+    clash)."""
+    op_name = name or group
     with Session(engine) as session:
-        operator = Operator(name=name or group, group=group, tenant_id=tenant_id)
+        # Explicit checks give the right error message. The DB constraints below
+        # are still the source of truth (and catch races).
+        if session.exec(select(Operator).where(Operator.name == op_name)).first():
+            raise OperatorNameTaken(op_name)
+        if session.exec(select(Operator).where(Operator.group == group)).first():
+            raise OperatorGroupTaken(group)
+
+        operator = Operator(name=op_name, group=group, tenant_id=tenant_id)
         session.add(operator)
         try:
             session.commit()
         except IntegrityError as exc:
             session.rollback()
+            # Race: someone inserted the same name/group between check and commit.
+            if session.exec(
+                select(Operator).where(Operator.name == op_name)
+            ).first():
+                raise OperatorNameTaken(op_name) from exc
             raise OperatorGroupTaken(group) from exc
         session.refresh(operator)
         return operator
@@ -4918,6 +4935,13 @@ def operator_groups_in_use() -> set[str]:
     """Groups that already back an operator (any tenant)."""
     with Session(engine) as session:
         return set(session.exec(select(Operator.group)).all())
+
+
+def get_operator_by_name(name: str) -> Operator | None:
+    """Resolve an operator by its routing-key name (unique). Used at ingestion
+    to route an alert to the operator's tenant (VENA-5596 Epic 5)."""
+    with Session(engine) as session:
+        return session.exec(select(Operator).where(Operator.name == name)).first()
 
 
 def create_single_tenant_for_e2e(tenant_id: str) -> None:

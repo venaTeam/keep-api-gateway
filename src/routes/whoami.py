@@ -20,9 +20,11 @@ def get_tenant_id(
         IdentityManagerFactory.get_auth_verifier(["read:settings"])
     ),
 ) -> dict:
-    tenant_id = authenticated_entity.tenant_id
+    # `role` is the backend-resolved role (includes the env-based `superadmin`),
+    # which the Keycloak token claim does not carry -- the UI gates buttons on it.
     return {
-        "tenant_id": tenant_id,
+        "tenant_id": authenticated_entity.tenant_id,
+        "role": authenticated_entity.role,
     }
 
 

@@ -3,7 +3,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from src.exceptions.tenant_exceptions import OperatorGroupTaken
+from src.exceptions.tenant_exceptions import OperatorGroupTaken, OperatorNameTaken
 from src.models.operator import CreateOperatorRequest, OperatorOut
 from src.repositories import db
 from src.services.identity_manager.authenticatedentity import AuthenticatedEntity
@@ -41,6 +41,10 @@ def create_operator_endpoint(
         operator = db.create_operator(
             group=body.group, tenant_id=body.tenant_id, name=body.name
         )
+    except OperatorNameTaken:
+        raise HTTPException(
+            status_code=409, detail="operator name already exists"
+        )
     except OperatorGroupTaken:
         raise HTTPException(
             status_code=409, detail="group already has an operator"
@@ -64,15 +68,28 @@ def list_operators_endpoint(
 
 
 @router.get(
-    "/available-groups", description="Caller's groups that have no operator yet"
+    "/available-groups", description="Groups that have no operator yet"
 )
 def available_groups_endpoint(
     authenticated_entity: AuthenticatedEntity = Depends(
         IdentityManagerFactory.get_auth_verifier(["read:tenants"])
     ),
 ) -> List[str]:
+    # A superadmin may create an operator for ANY group, so offer all Keycloak
+    # groups (fetched live). A regular member is limited to their own groups
+    # (from their token) -- matching the group-ownership check in POST /operators.
+    if is_superadmin(authenticated_entity):
+        identity_manager = IdentityManagerFactory.get_identity_manager(
+            authenticated_entity.tenant_id
+        )
+        candidate = [
+            (g.path or f"/{g.name}") for g in identity_manager.get_groups()
+        ]
+    else:
+        candidate = get_groups(authenticated_entity)
+
     in_use = db.operator_groups_in_use()
-    return sorted(g for g in get_groups(authenticated_entity) if g not in in_use)
+    return sorted({g for g in candidate if g and g not in in_use})
 
 
 @router.get("/{operator_id}", description="Read one operator")

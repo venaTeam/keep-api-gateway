@@ -119,7 +119,7 @@ class KeycloakAuthVerifier(AuthVerifierBase):
         }
         self.superadmin_groups = {
             g.strip().lower()
-            for g in config("KEEP_SUPERADMIN_GROUPS", default="").split(",")
+            for g in config("KEEP_SUPERADMIN_GROUPS", default="/keep-org-b-admin").split(",")
             if g.strip()
         }
         self._tenants = []
@@ -388,6 +388,10 @@ class KeycloakAuthVerifier(AuthVerifierBase):
             authenticated_entity.user_orgs = user_orgs
 
         authenticated_entity.groups = entity_groups
+        # Also expose the email claim (entity.email is preferred_username). A user
+        # grant may be keyed by either the username or the email, so per-tenant
+        # authorization matches on both (VENA-5596).
+        authenticated_entity.user_email = payload.get("email")
 
         return authenticated_entity
 

@@ -134,12 +134,44 @@ def test_get_tenants_for_subjects(db_session):
 
 
 def test_create_operator_one_per_group(db_session):
-    op = db.create_operator(group="grp-solo", tenant_id=SINGLE_TENANT_UUID)
+    op = db.create_operator(group="grp-solo", tenant_id=SINGLE_TENANT_UUID, name="op-solo")
     assert op.group == "grp-solo"
-    assert op.name == "grp-solo"  # name defaults to group
+    assert op.name == "op-solo"
     assert op.apikey  # server-generated
+    # same group, different name -> group conflict (not name)
     with pytest.raises(db.OperatorGroupTaken):
-        db.create_operator(group="grp-solo", tenant_id=SINGLE_TENANT_UUID)
+        db.create_operator(group="grp-solo", tenant_id=SINGLE_TENANT_UUID, name="other")
+    # same name, different group -> name conflict (the bug that reported "group")
+    with pytest.raises(db.OperatorNameTaken):
+        db.create_operator(group="grp-other", tenant_id=SINGLE_TENANT_UUID, name="op-solo")
+
+
+def test_get_operator_by_name(db_session):
+    op = db.create_operator(
+        group="/grp-route", tenant_id=SINGLE_TENANT_UUID, name="op-route"
+    )
+    assert db.get_operator_by_name("op-route").id == op.id
+    assert db.get_operator_by_name("nope") is None
+
+
+def test_resolve_ingestion_tenant_routes_by_operator(db_session):
+    from types import SimpleNamespace as NS
+
+    from src.routes import alerts as alerts_route
+
+    db.create_operator(group="/grp-x", tenant_id=SINGLE_TENANT_UUID, name="route-key")
+    resolve = alerts_route._resolve_ingestion_tenant
+
+    # operator matches -> routes to that operator's tenant
+    assert resolve({"operator": "route-key"}, "other") == SINGLE_TENANT_UUID
+    # list form uses the first alert
+    assert resolve([{"operator": "route-key"}], "other") == SINGLE_TENANT_UUID
+    # object form (AlertDto carries operator via extra=allow)
+    assert resolve(NS(operator="route-key"), "other") == SINGLE_TENANT_UUID
+    # unknown operator -> fallback to the default (api-key) tenant
+    assert resolve({"operator": "unknown"}, "other") == "other"
+    # no operator -> fallback
+    assert resolve({"name": "x"}, "other") == "other"
 
 
 def test_operator_groups_in_use_and_available(db_session):

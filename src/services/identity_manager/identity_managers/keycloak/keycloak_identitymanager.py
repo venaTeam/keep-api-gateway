@@ -433,6 +433,7 @@ class KeycloakIdentityManager(BaseIdentityManager):
                 role = self.get_user_current_role(user_id=user.get("id"))
                 user_dto = User(
                     email=user.get("email", ""),
+                    username=user.get("username", ""),
                     name=user.get("firstName", ""),
                     role=role,
                     created_at=user.get("createdTimestamp", ""),
@@ -670,6 +671,7 @@ class KeycloakIdentityManager(BaseIdentityManager):
                     Group(
                         id=group_id,
                         name=group_name,
+                        path=group.get("path"),
                         roles=roles,
                         memberCount=member_count,
                         members=member_names,

@@ -1,7 +1,7 @@
 import logging
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from src.exceptions.tenant_exceptions import TenantNameConflict, TenantNotFound
 from src.models.tenant import (
@@ -164,10 +164,12 @@ def add_role_endpoint(
     }
 
 
-@router.delete("/{tenant_id}/roles/{subject:path}", description="Remove a role grant")
+@router.delete("/{tenant_id}/roles", description="Remove a role grant")
 def remove_role_endpoint(
     tenant_id: str,
-    subject: str,
+    # subject is a query param (not a path segment) because group subjects are
+    # slash-prefixed paths (e.g. /keep-org-a-admin) that would break a path param.
+    subject: str = Query(..., description="The grant subject (email or group path)"),
     authenticated_entity: AuthenticatedEntity = Depends(require_tenant_admin),
 ) -> dict:
     _guard_self_modification(authenticated_entity, subject)
