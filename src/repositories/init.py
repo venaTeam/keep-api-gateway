@@ -13,24 +13,51 @@ from src.providers.providers_service import ProvidersService
 
 logger = logging.getLogger(__name__)
 
+# The gateway owns provisioning (as it owns the schema), so unlike
+# keep-event-handler this stays on by default.
 PROVISION_RESOURCES = os.environ.get("PROVISION_RESOURCES", "true") == "true"
+# Provisioning runs in gunicorn's master before the socket binds, so an exception
+# CrashLoopBackOffs the pod. Every step is idempotent, so failures are logged and
+# startup continues unless this is set.
+PROVISIONING_FATAL = os.environ.get("KEEP_PROVISIONING_FATAL", "false") == "true"
 
 
 def provision_resources(provision_dashboards_func=None):
-    if PROVISION_RESOURCES:
-        logger.info("Loading providers into cache")
-        # provision providers from env. relevant only on single tenant.
-        logger.info("Provisioning providers")
-        ProvidersService.provision_providers(SINGLE_TENANT_UUID)
-        logger.info("Providers loaded successfully")
-        if provision_dashboards_func:
-            provision_dashboards_func(SINGLE_TENANT_UUID)
-            logger.info("Dashboards provisioned successfully")
-        logger.info("Provisioning deduplication rules")
-        provision_deduplication_rules_from_env(SINGLE_TENANT_UUID)
-        logger.info("Deduplication rules provisioned successfully")
-    else:
+    if not PROVISION_RESOURCES:
         logger.info("Provisioning resources is disabled")
+        return
+
+    # Guarded independently: one failure must not skip the remaining steps.
+    steps = [
+        (
+            "providers",
+            lambda: ProvidersService.provision_providers(SINGLE_TENANT_UUID),
+        ),
+    ]
+    if provision_dashboards_func:
+        steps.append(
+            ("dashboards", lambda: provision_dashboards_func(SINGLE_TENANT_UUID))
+        )
+    steps.append(
+        (
+            "deduplication rules",
+            lambda: provision_deduplication_rules_from_env(SINGLE_TENANT_UUID),
+        )
+    )
+
+    for name, step in steps:
+        logger.info("Provisioning %s", name)
+        try:
+            step()
+            logger.info("%s provisioned successfully", name)
+        except Exception:
+            if PROVISIONING_FATAL:
+                raise
+            logger.exception(
+                "Failed to provision %s — continuing startup (set "
+                "KEEP_PROVISIONING_FATAL=true to fail fast instead)",
+                name,
+            )
 
 
 def init_services(auth_type: str, provision_dashboards_func=None, skip_ngrok=False):

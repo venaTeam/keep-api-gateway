@@ -16,6 +16,8 @@ for creating the database and tables, while the worker processes should only be 
 import hashlib
 import logging
 import os
+from contextlib import contextmanager
+from functools import lru_cache
 
 import alembic.command
 import alembic.config
@@ -165,24 +167,169 @@ def try_create_single_tenant(tenant_id: str, create_default_user=True) -> None:
             pass
 
 
+# Arbitrary, but must be identical in every process that migrates.
+_MIGRATION_LOCK_KEY = int(
+    os.environ.get("KEEP_MIGRATION_ADVISORY_LOCK_KEY", "8274419300112233")
+)
+# How long to wait for the migrating replica before giving up on the lock.
+_MIGRATION_LOCK_TIMEOUT = int(
+    os.environ.get("KEEP_MIGRATION_LOCK_TIMEOUT_SECONDS", "600")
+)
+_MIGRATION_LOCK_POLL_SECONDS = float(
+    os.environ.get("KEEP_MIGRATION_LOCK_POLL_SECONDS", "2")
+)
+
+
+def get_alembic_config() -> "alembic.config.Config":
+    """Alembic config with an absolute script_location.
+
+    alembic.ini uses relative paths, which break when the app runs as an
+    installed package from an arbitrary working directory.
+    """
+    config_path = os.path.dirname(os.path.abspath(__file__)) + "/../../" + "alembic.ini"
+    cfg = alembic.config.Config(file_=config_path)
+    cfg.set_main_option(
+        "script_location",
+        os.path.dirname(os.path.abspath(__file__)) + "/../models/db/migrations",
+    )
+    return cfg
+
+
+@lru_cache(maxsize=1)
+def get_script_head() -> str | None:
+    """The head revision shipped in this image's migration scripts.
+
+    Cached because the scripts never change at runtime and /readyz asks for this
+    on every probe.
+    """
+    from alembic.script import ScriptDirectory
+
+    try:
+        return ScriptDirectory.from_config(get_alembic_config()).get_current_head()
+    except Exception:
+        logger.exception("Failed to read the alembic script head")
+        return None
+
+
+def get_db_revision() -> str | None:
+    """The revision currently stamped in the database, or None if the
+    `alembic_version` table doesn't exist / is empty."""
+    from sqlalchemy import inspect as sa_inspect, text
+
+    inspector = sa_inspect(engine)
+    if "alembic_version" not in inspector.get_table_names():
+        return None
+    with engine.connect() as conn:
+        row = conn.execute(text("SELECT version_num FROM alembic_version")).first()
+    return row[0] if row else None
+
+
+def schema_at_head() -> tuple[bool, str | None, str | None]:
+    """(at_head, db_revision, script_head) — /readyz must not advertise a pod
+    whose DB is behind the migrations in its own image."""
+    db_revision = get_db_revision()
+    script_head = get_script_head()
+    at_head = bool(db_revision) and bool(script_head) and db_revision == script_head
+    return at_head, db_revision, script_head
+
+
+@contextmanager
+def _migration_lock():
+    """Serialize `alembic upgrade head` across replicas with a Postgres advisory
+    lock.
+
+    Migrations run in-process on every pod's startup, so on a deploy with a
+    pending migration all replicas attempt the same DDL; the losers fail with
+    "already exists", which kills gunicorn's master and CrashLoopBackOffs the
+    pod. With the lock exactly one replica migrates and the rest no-op.
+
+    No-op on non-Postgres dialects (SQLite in tests) — no concurrent replicas.
+    """
+    if engine.dialect.name != "postgresql":
+        yield True
+        return
+
+    import time
+
+    from sqlalchemy import text
+
+    conn = engine.connect()
+    try:
+        # try + poll rather than the blocking pg_advisory_lock: `lock_timeout`
+        # does not reliably bound advisory-lock waits, and an unbounded wait
+        # here would hang pod startup.
+        deadline = time.monotonic() + _MIGRATION_LOCK_TIMEOUT
+        acquired = False
+        while True:
+            try:
+                acquired = bool(
+                    conn.execute(
+                        text("SELECT pg_try_advisory_lock(:key)"),
+                        {"key": _MIGRATION_LOCK_KEY},
+                    ).scalar()
+                )
+                conn.commit()
+            except Exception:
+                logger.warning(
+                    "Error while acquiring the migration advisory lock; "
+                    "proceeding without it",
+                    exc_info=True,
+                )
+                yield False
+                return
+            if acquired:
+                break
+            if time.monotonic() >= deadline:
+                logger.warning(
+                    "Could not acquire the migration advisory lock within %ss "
+                    "(another replica is migrating); proceeding without it",
+                    _MIGRATION_LOCK_TIMEOUT,
+                )
+                yield False
+                return
+            logger.info(
+                "Another replica holds the migration lock; waiting for it to "
+                "finish migrating"
+            )
+            time.sleep(_MIGRATION_LOCK_POLL_SECONDS)
+
+        logger.info("Acquired migration advisory lock %s", _MIGRATION_LOCK_KEY)
+        try:
+            yield True
+        finally:
+            try:
+                conn.execute(
+                    text("SELECT pg_advisory_unlock(:key)"),
+                    {"key": _MIGRATION_LOCK_KEY},
+                )
+                conn.commit()
+                logger.info("Released migration advisory lock %s", _MIGRATION_LOCK_KEY)
+            except Exception:
+                # Session-scoped, so closing the connection releases it anyway.
+                logger.warning("Failed to release migration advisory lock", exc_info=True)
+    finally:
+        conn.close()
+
+
 def migrate_db():
     """
     Run migrations to make sure the DB is up-to-date.
+
+    Serialized behind an advisory lock so only one replica applies a pending
+    migration (see `_migration_lock`).
+
+    Runs in gunicorn's `on_starting`, i.e. before the socket binds, so the
+    Deployment needs a `startupProbe` sized to the worst-case migration or the
+    liveness probe kills the pod mid-migration.
     """
     if os.environ.get("SKIP_DB_CREATION", "false") == "true":
         logger.info("Skipping running migrations...")
         return None
 
     logger.info("Running migrations...")
-    config_path = os.path.dirname(os.path.abspath(__file__)) + "/../../" + "alembic.ini"
-    config = alembic.config.Config(file_=config_path)
-    # Re-defined because alembic.ini uses relative paths which doesn't work
-    # when running the app as a pyhton pakage (could happen form any path)
-    config.set_main_option(
-        "script_location",
-        os.path.dirname(os.path.abspath(__file__)) + "/../models/db/migrations",
-    )
-    alembic.command.upgrade(config, "head")
+    config = get_alembic_config()
+    with _migration_lock():
+        alembic.command.upgrade(config, "head")
     logger.info("Finished migrations")
 
 
