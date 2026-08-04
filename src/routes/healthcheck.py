@@ -26,12 +26,11 @@ logger = logging.getLogger(__name__)
 # hang and tie up a worker slot.
 READYZ_CHECK_TIMEOUT = float(os.environ.get("KEEP_READYZ_CHECK_TIMEOUT", "5"))
 
+# Mounted without a prefix, so both paths are absolute.
 router = APIRouter()
-# Mounted without a prefix, so the path is /readyz rather than /healthcheck/readyz.
-probes_router = APIRouter()
 
 
-@router.get("", description="simple healthcheck endpoint")
+@router.get("/healthcheck", description="Liveness: the process can serve requests")
 def healthcheck() -> dict:
     """
     Does nothing but return 200 response code
@@ -120,9 +119,8 @@ async def _bounded(awaitable, name: str) -> tuple[bool, dict]:
         return False, {"error": f"{type(exc).__name__}: {exc}"}
 
 
-@probes_router.get(
+@router.get(
     "/readyz",
-    include_in_schema=False,
     description="Readiness: DB reachable and at head, Kafka producer connected",
 )
 async def readyz(response: Response) -> dict:
