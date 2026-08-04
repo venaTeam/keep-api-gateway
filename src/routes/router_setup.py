@@ -33,10 +33,8 @@ def setup_routers(app: FastAPI):
     app.include_router(providers.router, prefix="/providers", tags=["providers"])
     # app.include_router(actions.router, prefix="/actions", tags=["actions"])
     app.include_router(ai.router, prefix="/ai", tags=["ai"])
-    app.include_router(healthcheck.router, prefix="/healthcheck", tags=["healthcheck"])
-    # /readyz at the root — the readinessProbe target. Liveness stays on
-    # /healthcheck above.
-    app.include_router(healthcheck.probes_router, tags=["healthcheck"])
+    # No prefix: /healthcheck (liveness) and /readyz (readiness) are absolute.
+    app.include_router(healthcheck.router, tags=["healthcheck"])
     app.include_router(alerts.router, prefix="/alerts", tags=["alerts"])
     app.include_router(incidents.router, prefix="/incidents", tags=["incidents"])
     app.include_router(settings.router, prefix="/settings", tags=["settings"])

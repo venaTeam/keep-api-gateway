@@ -22,8 +22,7 @@ from src.routes import healthcheck
 @pytest.fixture
 def probe_client():
     app = FastAPI()
-    app.include_router(healthcheck.probes_router)
-    app.include_router(healthcheck.router, prefix="/healthcheck")
+    app.include_router(healthcheck.router)
     return TestClient(app)
 
 
