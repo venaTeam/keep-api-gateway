@@ -1,4 +1,5 @@
 ﻿import asyncio
+import functools
 import logging
 import os
 
@@ -33,6 +34,7 @@ from src.utils.logging import CONFIG as logging_config, setup_logging
 from src.middlewares import LoggingMiddleware
 from src.routes.router_setup import setup_routers
 from src.services.producers.event_subscriber import EventSubscriber
+from src.services.producers.factory import start_event_producer
 from src.services.identity_manager.identitymanagerfactory import (
     IdentityManagerFactory,
     IdentityManagerTypes,
@@ -44,6 +46,9 @@ from src.config.config import (
     AUTH_TYPE,
     CONSUMER,
     HOST,
+    KEEP_CONSUMER_JOIN_TIMEOUT,
+    KEEP_CONSUMER_START_DELAY,
+    KEEP_CONSUMER_STOP_TIMEOUT,
     KEEP_ACTIVE_USERS_JOB,
     KEEP_ACTIVE_USERS_REFRESH_INTERVAL,
     KEEP_API_URL,
@@ -92,6 +97,9 @@ async def check_pending_tasks(background_tasks: set):
         await asyncio.sleep(1)
 
 
+_event_subscriber_task = None
+
+
 async def startup():
     """
     This runs for every worker on startup.
@@ -104,20 +112,40 @@ async def startup():
 
     logger.info("Starting the services")
 
-    # Start the consumer
+    # Connect eagerly: a cold producer makes the first alert on a fresh pod pay
+    # the bootstrap cost, and diverts it to the DLQ if the brokers aren't up yet.
+    # Never raises — /readyz keeps the pod NotReady until the producer connects.
+    await start_event_producer()
+
     if CONSUMER:
-        try:
-            logger.info("Starting the consumer")
-            event_subscriber = EventSubscriber.get_instance()
-            # TODO: there is some "race condition" since if the consumer starts before the server,
-            #       and start getting events, it will fail since the server is not ready yet
-            #       we should add a "wait" here to make sure the server is ready
-            await event_subscriber.start()
-            logger.info("Consumer started successfully")
-        except Exception:
-            logger.exception("Failed to start the consumer")
+        # The task reference is kept module-level because the loop only holds a
+        # weak reference to it, and so shutdown() can cancel a start that hasn't
+        # happened yet.
+        global _event_subscriber_task
+        _event_subscriber_task = asyncio.create_task(
+            _start_event_subscriber_when_ready()
+        )
 
     logger.info("Services started successfully")
+
+
+async def _start_event_subscriber_when_ready():
+    """Start the EventSubscriber once the app is serving requests.
+
+    Yields control so lifespan startup completes before the consumer threads
+    begin calling back into this process.
+    """
+    try:
+        await asyncio.sleep(KEEP_CONSUMER_START_DELAY)
+        logger.info("Starting the consumer")
+        event_subscriber = EventSubscriber.get_instance()
+        await event_subscriber.start()
+        logger.info("Consumer started successfully")
+    except asyncio.CancelledError:
+        logger.info("Consumer start cancelled (shutting down)")
+        raise
+    except Exception:
+        logger.exception("Failed to start the consumer")
 
 
 async def shutdown():
@@ -127,14 +155,44 @@ async def shutdown():
     """
     logger.info("Shutting down Keep")
     if CONSUMER:
+        # Settle the deferred start first, otherwise a short-lived process can
+        # shut down before it fires and the consumer threads start *after*
+        # shutdown, never joined.
+        global _event_subscriber_task
+        task = _event_subscriber_task
+        _event_subscriber_task = None
+        if task is not None and not task.done():
+            task.cancel()
+            # Both are needed: CancelledError derives from BaseException, so
+            # `except Exception` alone would not catch it.
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+
         logger.info("Stopping the consumer")
         event_subscriber = EventSubscriber.get_instance()
         try:
-            await event_subscriber.stop()
-        # in pytest, there could be race condition
-        except TypeError:
-            pass
-        logger.info("Consumer stopped successfully")
+            # stop() is synchronous (it joins threads), so it must not be
+            # awaited. Offload it, bounded, off the event loop.
+            await asyncio.wait_for(
+                asyncio.get_running_loop().run_in_executor(
+                    None,
+                    functools.partial(
+                        event_subscriber.stop,
+                        join_timeout=KEEP_CONSUMER_JOIN_TIMEOUT,
+                    ),
+                ),
+                timeout=KEEP_CONSUMER_STOP_TIMEOUT,
+            )
+            logger.info("Consumer stopped successfully")
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Consumer did not stop within %ss; continuing shutdown",
+                KEEP_CONSUMER_STOP_TIMEOUT,
+            )
+        except Exception:
+            logger.exception("Failed to stop the consumer")
 
     logger.info("Keep shutdown complete")
 
