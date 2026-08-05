@@ -34,6 +34,7 @@ from src.repositories.db import (
     get_alerts_metrics_by_provider,
     get_last_alerts,
     get_last_alerts_by_fingerprints,
+    get_operator_by_name,
     get_session,
     is_all_alerts_resolved,
 )
@@ -79,6 +80,39 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 REDIS = os.environ.get("REDIS", "false") == "true"
+
+
+def _extract_operator(event) -> str | None:
+    """Best-effort read of the alert's `operator` routing key from an incoming
+    event, which may be a single AlertDto, a list, or a raw dict. For a batch we
+    use the first alert's operator (VENA-5596 Epic 5)."""
+    item = event[0] if isinstance(event, list) and event else event
+    if item is None:
+        return None
+    if isinstance(item, dict):
+        return item.get("operator")
+    return getattr(item, "operator", None)
+
+
+def _resolve_ingestion_tenant(event, default_tenant_id: str) -> str:
+    """Route an alert to the tenant that owns its `operator`. Falls back to
+    `default_tenant_id` (the API-key's tenant) when the alert carries no operator
+    or the operator matches no tenant (VENA-5596 Epic 5)."""
+    operator_name = _extract_operator(event)
+    if not operator_name:
+        return default_tenant_id
+    operator = get_operator_by_name(operator_name)
+    if operator is None:
+        logger.info(
+            "Alert operator matched no tenant; using default",
+            extra={"operator": operator_name, "tenant_id": default_tenant_id},
+        )
+        return default_tenant_id
+    logger.info(
+        "Routing alert by operator",
+        extra={"operator": operator_name, "tenant_id": operator.tenant_id},
+    )
+    return operator.tenant_id
 
 
 class AlertHistoryResponse(BaseModel):
@@ -547,11 +581,14 @@ async def receive_generic_event(
         bg_tasks (BackgroundTasks): Background tasks handler.
         tenant_id (str, optional): Defaults to Depends(verify_api_key).
     """
+    # Route by operator: an alert whose operator maps to a tenant goes there,
+    # else it stays in the API-key's tenant (VENA-5596 Epic 5).
+    tenant_id = _resolve_ingestion_tenant(event, authenticated_entity.tenant_id)
     # Use the abstract event producer (Redis or Kafka)
     try:
         task_name = await event_producer.produce(
             event=event,
-            tenant_id=authenticated_entity.tenant_id,
+            tenant_id=tenant_id,
             provider_type=None,  # Generic event
             provider_id=provider_id,
             fingerprint=fingerprint,
@@ -623,10 +660,13 @@ async def receive_event(
     # We do NOT parse the event here anymore, we pass the raw body (event) to the worker
     # We do NOT resolve the provider here anymore, we pass the provider_name to the worker
 
+    # Route by operator: an alert whose operator maps to a tenant goes there,
+    # else it stays in the API-key's tenant (VENA-5596 Epic 5).
+    tenant_id = _resolve_ingestion_tenant(event, authenticated_entity.tenant_id)
     # Use the abstract event producer (Redis or Kafka)
     task_name = await event_producer.produce(
         event=event,
-        tenant_id=authenticated_entity.tenant_id,
+        tenant_id=tenant_id,
         provider_type=provider_type,
         provider_id=provider_id,
         fingerprint=fingerprint,

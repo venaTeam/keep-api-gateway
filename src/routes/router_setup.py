@@ -13,6 +13,7 @@ from src.routes import (
     maintenance,
     mapping,
     metrics,
+    operators,
     preset,
     provider_images,
     providers,
@@ -22,6 +23,7 @@ from src.routes import (
     sse_routes,
     status,
     tags,
+    tenants,
     ui_events,
     whoami,
 )
@@ -37,6 +39,8 @@ def setup_routers(app: FastAPI):
     app.include_router(alerts.router, prefix="/alerts", tags=["alerts"])
     app.include_router(incidents.router, prefix="/incidents", tags=["incidents"])
     app.include_router(settings.router, prefix="/settings", tags=["settings"])
+    app.include_router(tenants.router, prefix="/tenants", tags=["tenants"])
+    app.include_router(operators.router, prefix="/operators", tags=["operators"])
     app.include_router(whoami.router, prefix="/whoami", tags=["whoami"])
     app.include_router(sse_routes.router, prefix="/sse", tags=["sse"])
     app.include_router(ui_events.router, prefix="/ui", tags=["ui"])
