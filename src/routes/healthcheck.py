@@ -20,6 +20,12 @@ import os
 from fastapi import APIRouter, Response
 from sqlalchemy import text
 
+# Imported as modules, not names: the checks below read `db.engine`,
+# `db_on_start.schema_at_head` and `factory.get_producer_instance` at call time,
+# so each one stays late-bound to whatever the module currently holds.
+from src.repositories import db, db_on_start
+from src.services.producers import factory
+
 logger = logging.getLogger(__name__)
 
 # Bounded so a sick dependency makes the probe answer "not ready" rather than
@@ -43,17 +49,14 @@ def healthcheck() -> dict:
 
 def _check_db() -> tuple[bool, dict]:
     """DB reachable, and the stamped revision matches this image's alembic head."""
-    from src.repositories.db import engine
-    from src.repositories.db_on_start import schema_at_head
-
     try:
-        with engine.connect() as conn:
+        with db.engine.connect() as conn:
             conn.execute(text("SELECT 1"))
     except Exception as exc:
         return False, {"reachable": False, "error": f"{type(exc).__name__}: {exc}"}
 
     try:
-        at_head, db_revision, script_head = schema_at_head()
+        at_head, db_revision, script_head = db_on_start.schema_at_head()
     except Exception as exc:
         return False, {
             "reachable": True,
@@ -73,11 +76,7 @@ def _check_db() -> tuple[bool, dict]:
 async def _check_producer() -> tuple[bool, dict]:
     """Kafka producer connected. Also nudges a cold producer to reconnect, so a
     pod that can't reach the brokers stays NotReady instead of DLQ-ing alerts."""
-    # Imported here, not at module scope: keeps the probe module free of the
-    # aiokafka import chain, and keeps the lookup patchable.
-    from src.services.producers.factory import get_producer_instance
-
-    producer = get_producer_instance()
+    producer = factory.get_producer_instance()
     if producer is None:
         # startup() creates it, so this means startup hasn't got that far yet.
         return False, {"created": False}

@@ -16,11 +16,14 @@ for creating the database and tables, while the worker processes should only be 
 import hashlib
 import logging
 import os
+import time
 from contextlib import contextmanager
 from functools import lru_cache
 
 import alembic.command
 import alembic.config
+from alembic.script import ScriptDirectory
+from sqlalchemy import inspect as sa_inspect, text
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
@@ -202,8 +205,6 @@ def get_script_head() -> str | None:
     Cached because the scripts never change at runtime and /readyz asks for this
     on every probe.
     """
-    from alembic.script import ScriptDirectory
-
     try:
         return ScriptDirectory.from_config(get_alembic_config()).get_current_head()
     except Exception:
@@ -214,8 +215,6 @@ def get_script_head() -> str | None:
 def get_db_revision() -> str | None:
     """The revision currently stamped in the database, or None if the
     `alembic_version` table doesn't exist / is empty."""
-    from sqlalchemy import inspect as sa_inspect, text
-
     inspector = sa_inspect(engine)
     if "alembic_version" not in inspector.get_table_names():
         return None
@@ -248,10 +247,6 @@ def _migration_lock():
     if engine.dialect.name != "postgresql":
         yield True
         return
-
-    import time
-
-    from sqlalchemy import text
 
     conn = engine.connect()
     try:
