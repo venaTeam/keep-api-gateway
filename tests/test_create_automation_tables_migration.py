@@ -65,6 +65,8 @@ EXPECTED_INDEXES = {
             "automation_id",
             "created_at",
         ],
+        # Tenant-scoped run listing; Postgres does not auto-index FK columns.
+        "ix_automation_runs_tenant_id_created_at": ["tenant_id", "created_at"],
     },
     "automation_revisions": {
         # Postgres does not auto-index FK columns; without this the
@@ -183,16 +185,30 @@ def test_tenant_id_is_not_null_and_fks_to_tenant(migrated_engine, table):
     assert fks[0]["referred_columns"] == ["id"]
 
 
-@pytest.mark.parametrize("table", ("automation_runs", "automation_revisions"))
-def test_child_tables_fk_to_automations(migrated_engine, table):
+def test_automation_revisions_fk_to_automations(migrated_engine):
     fks = [
         fk
-        for fk in sa.inspect(migrated_engine).get_foreign_keys(table)
+        for fk in sa.inspect(migrated_engine).get_foreign_keys("automation_revisions")
         if fk["constrained_columns"] == ["automation_id"]
     ]
-    assert len(fks) == 1, f"{table}.automation_id has no single FK: {fks}"
+    assert len(fks) == 1, f"automation_id has no single FK: {fks}"
     assert fks[0]["referred_table"] == "automations"
     assert fks[0]["referred_columns"] == ["id"]
+
+
+def test_automation_runs_composite_fk_pins_tenant_to_parent(migrated_engine):
+    """`(automation_id, tenant_id)` must exist AS A PAIR on `automations` —
+    the denormalized `tenant_id` cannot disagree with the parent automation's,
+    no matter what the submit code does. A plain `automation_id -> id` FK
+    would leave the mis-stamped-tenant audit row writable."""
+    fks = [
+        fk
+        for fk in sa.inspect(migrated_engine).get_foreign_keys("automation_runs")
+        if fk["constrained_columns"] == ["automation_id", "tenant_id"]
+    ]
+    assert len(fks) == 1, f"no composite (automation_id, tenant_id) FK: {fks}"
+    assert fks[0]["referred_table"] == "automations"
+    assert fks[0]["referred_columns"] == ["id", "tenant_id"]
 
 
 def test_automation_revisions_has_no_tenant_id(migrated_engine):

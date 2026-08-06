@@ -163,6 +163,12 @@ def upgrade() -> None:
             nullable=False,
             server_default=sa.text("now()"),
         ),
+        # Redundant with the PK on `id` as a uniqueness rule — it exists solely
+        # as the target for `automation_runs`' composite FK, which makes a run
+        # row whose `tenant_id` disagrees with its automation's UNWRITABLE at
+        # the database. Submit's code-level tenant re-check (D17) becomes
+        # defense-in-depth instead of the only guard.
+        sa.UniqueConstraint("id", "tenant_id", name="uq_automations_id_tenant_id"),
     )
     # The hydration index. `matching_state` LEADS on purpose: the matcher loads
     # every tenant in a single `WHERE matching_state = 'active'` pass (one query
@@ -200,12 +206,9 @@ def upgrade() -> None:
         "automation_runs",
         sa.Column("run_id", sa.Uuid(), primary_key=True),
         # No ON DELETE cascade: rows persist forever, delete is a state flip (§4.4).
-        sa.Column(
-            "automation_id",
-            sa.Uuid(),
-            sa.ForeignKey("automations.id"),
-            nullable=False,
-        ),
+        # Referential integrity comes from the composite FK below, not an
+        # inline single-column one.
+        sa.Column("automation_id", sa.Uuid(), nullable=False),
         # Denormalized from the parent automation (always equal to it) so a
         # history read is tenant-filtered at the row it returns, rather than
         # trusting a join back to `automations` to have been written.
@@ -240,19 +243,40 @@ def upgrade() -> None:
         sa.UniqueConstraint(
             "history_id", "automation_id", name="uq_automation_runs_history_automation"
         ),
+        # (automation_id, tenant_id) must exist AS A PAIR on `automations`:
+        # this is what forces the denormalized `tenant_id` to actually equal
+        # the parent automation's — a mis-stamped audit row cannot be written,
+        # regardless of what the submit code checks.
+        sa.ForeignKeyConstraint(
+            ["automation_id", "tenant_id"],
+            ["automations.id", "automations.tenant_id"],
+            name="fk_automation_runs_automation_tenant",
+        ),
     )
     # The reconciler's one indexed scan per branch — tenant-less on purpose, an
-    # infra repair loop must see every tenant.
+    # infra repair loop must see every tenant. Partial: the reconciler only
+    # ever reads non-terminal states, and at steady state ~99% of rows are
+    # terminal — a full index would be write cost buying nothing.
     op.create_index(
         "ix_automation_runs_state_created_at",
         "automation_runs",
         ["state", "created_at"],
+        postgresql_where=sa.text("state IN ('pending', 'submitted')"),
     )
     # Run-history reads.
     op.create_index(
         "ix_automation_runs_automation_id_created_at",
         "automation_runs",
         ["automation_id", "created_at"],
+    )
+    # Tenant-scoped run listing / audit view. Without it (Postgres does not
+    # auto-index FK columns) a tenant-wide history read seq-scans the fastest
+    # growing table on the platform, and FK validation on a `tenant` delete
+    # scans it too.
+    op.create_index(
+        "ix_automation_runs_tenant_id_created_at",
+        "automation_runs",
+        ["tenant_id", "created_at"],
     )
 
     op.create_table(
