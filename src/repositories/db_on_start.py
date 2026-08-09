@@ -182,6 +182,9 @@ _MIGRATION_LOCK_POLL_SECONDS = float(
     os.environ.get("KEEP_MIGRATION_LOCK_POLL_SECONDS", "2")
 )
 
+# Rollback lever for `schema_at_head` — exact comparison instead of "not behind".
+SCHEMA_STRICT = os.environ.get("KEEP_READYZ_SCHEMA_STRICT", "false") == "true"
+
 
 def get_alembic_config() -> "alembic.config.Config":
     """Alembic config with an absolute script_location.
@@ -199,14 +202,28 @@ def get_alembic_config() -> "alembic.config.Config":
 
 
 @lru_cache(maxsize=1)
+def _script_directory() -> "ScriptDirectory | None":
+    """This image's migration scripts. Cached: /readyz walks them on every probe
+    while the DB and the image disagree."""
+    try:
+        return ScriptDirectory.from_config(get_alembic_config())
+    except Exception:
+        logger.exception("Failed to load the alembic script directory")
+        return None
+
+
+@lru_cache(maxsize=1)
 def get_script_head() -> str | None:
     """The head revision shipped in this image's migration scripts.
 
     Cached because the scripts never change at runtime and /readyz asks for this
     on every probe.
     """
+    script = _script_directory()
+    if script is None:
+        return None
     try:
-        return ScriptDirectory.from_config(get_alembic_config()).get_current_head()
+        return script.get_current_head()
     except Exception:
         logger.exception("Failed to read the alembic script head")
         return None
@@ -223,13 +240,58 @@ def get_db_revision() -> str | None:
     return row[0] if row else None
 
 
+def _db_is_at_or_ahead(db_revision: str, script_head: str) -> bool:
+    """True unless the database is genuinely *behind* this image's head.
+
+    Two shapes count as ahead, both ordinary: the stamped revision descends from
+    our head (a newer replica already migrated), or it is unknown to our scripts
+    entirely (an image rollback, which must not wedge the pod).
+    """
+    script = _script_directory()
+    if script is None:
+        return False
+
+    try:
+        ancestry = {
+            revision.revision
+            for revision in script.iterate_revisions(db_revision, "base")
+        }
+    except Exception:
+        # Not resolvable here at all: the DB was stamped by an image newer than
+        # this one. Loud, because it also means someone rolled back.
+        logger.warning(
+            "Database revision %s is not present in this image's migrations; "
+            "treating the schema as ahead of this image (image rollback?)",
+            db_revision,
+        )
+        return True
+
+    return script_head in ancestry
+
+
 def schema_at_head() -> tuple[bool, str | None, str | None]:
     """(at_head, db_revision, script_head) — /readyz must not advertise a pod
-    whose DB is behind the migrations in its own image."""
+    whose DB is behind the migrations in its own image.
+
+    "At head" means *not behind*, not *identical*: `/readyz` backs the
+    startupProbe, so a false negative kills the pod, and under exact equality an
+    older image could never start against a migrated DB — no image rollback.
+    `KEEP_READYZ_SCHEMA_STRICT=true` restores the exact comparison.
+    """
     db_revision = get_db_revision()
     script_head = get_script_head()
-    at_head = bool(db_revision) and bool(script_head) and db_revision == script_head
-    return at_head, db_revision, script_head
+
+    # Nothing stamped, or we cannot read our own scripts: no basis to claim ready.
+    if not db_revision or not script_head:
+        return False, db_revision, script_head
+
+    if db_revision == script_head:
+        return True, db_revision, script_head
+
+    if SCHEMA_STRICT:
+        return False, db_revision, script_head
+
+    return _db_is_at_or_ahead(db_revision, script_head), db_revision, script_head
 
 
 @contextmanager

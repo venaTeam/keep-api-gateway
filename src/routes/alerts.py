@@ -85,9 +85,9 @@ logger = logging.getLogger(__name__)
 
 REDIS = os.environ.get("REDIS", "false") == "true"
 
-# The DLQ topic is not consumed by keep-event-handler, so an alert that lands
-# there is lost. Answering 503 makes the sender retry; set this to restore the
-# old "202 accepted" contract for senders that must not see an error.
+# The DLQ topic exists, but nothing consumes it — an alert that lands there is
+# retained and never ingested. Answering 503 makes the sender retry; set this to
+# restore the old "202 accepted" contract for senders that must not see an error.
 KEEP_ALERT_DLQ_ACCEPT = os.environ.get("KEEP_ALERT_DLQ_ACCEPT", "false") == "true"
 KEEP_ALERT_DLQ_RETRY_AFTER = os.environ.get("KEEP_ALERT_DLQ_RETRY_AFTER", "5")
 
@@ -118,6 +118,34 @@ def _ingestion_response(task_name, source: str) -> JSONResponse:
                 "written to the dead-letter topic; it will not be processed. "
                 "Please retry."
             ),
+        },
+        status_code=503,
+        headers={"Retry-After": KEEP_ALERT_DLQ_RETRY_AFTER},
+    )
+
+
+def _publish_failed_response(
+    exc: Exception, source: str, trace_id: str
+) -> JSONResponse:
+    """Answer a publish that reached no topic at all.
+
+    Both the main send and the DLQ fallback failed — the ordinary shape of a
+    Kafka outage, since `KAFKA_DLQ_BOOTSTRAP_SERVERS` defaults to the main
+    brokers. Unhandled, this reaches the catch-all in `main.py` as a 500, which
+    carries no "retry me" semantics; senders were asked to retry on 503.
+    """
+    alert_ingestion_error_total.labels(
+        source=source, error_type=type(exc).__name__
+    ).inc()
+    logger.exception(
+        "Failed to publish alert to any topic; rejecting so the sender retries",
+        extra={"trace_id": trace_id, "source": source},
+    )
+    return JSONResponse(
+        content={
+            "detail": (
+                "Alert could not be published to the ingestion topic. Please retry."
+            )
         },
         status_code=503,
         headers={"Retry-After": KEEP_ALERT_DLQ_RETRY_AFTER},
@@ -603,10 +631,9 @@ async def receive_generic_event(
             provider_name=None,
         )
     except Exception as e:
-        alert_ingestion_error_total.labels(
-            source="generic", error_type=type(e).__name__
-        ).inc()
-        raise
+        return _publish_failed_response(
+            e, source="generic", trace_id=request.state.trace_id
+        )
 
     return _ingestion_response(task_name, source="generic")
 
@@ -673,10 +700,7 @@ async def receive_event(
             provider_name=provider_name,
         )
     except Exception as e:
-        alert_ingestion_error_total.labels(
-            source=provider_type, error_type=type(e).__name__
-        ).inc()
-        raise
+        return _publish_failed_response(e, source=provider_type, trace_id=trace_id)
 
     return _ingestion_response(task_name, source=provider_type)
 

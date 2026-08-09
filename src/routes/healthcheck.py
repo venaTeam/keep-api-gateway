@@ -7,10 +7,15 @@ Two endpoints, one per probe:
   answer for liveness on an HTTP server: if it replies at all, the process can
   serve. Checking dependencies here would restart every replica at once on a
   Postgres blip. There is no separate `/livez` because this already is it.
-* `/readyz` — **readiness**. DB reachable, schema at head, producer connected.
+* `/readyz` — DB reachable, schema not behind this image, producer connected.
 
-Pair with a `startupProbe` sized to the worst-case migration: migrations run
-before the socket binds, so liveness would otherwise kill the pod mid-way.
+`/readyz` is wired to the **startupProbe**, sized to the worst-case migration:
+migrations run before the socket binds, so liveness would otherwise kill the pod
+mid-way. Deliberately not the readinessProbe yet — a schema comparison going
+false on every replica at once would empty the Service mid-rollout.
+
+Because it gates startup, a false negative kills the container, so both
+judgements are levered: `KEEP_READYZ_SCHEMA_STRICT`, `KEEP_READYZ_REQUIRE_PRODUCER`.
 """
 
 import asyncio
@@ -29,8 +34,13 @@ from src.services.producers import factory
 logger = logging.getLogger(__name__)
 
 # Bounded so a sick dependency makes the probe answer "not ready" rather than
-# hang and tie up a worker slot.
-READYZ_CHECK_TIMEOUT = float(os.environ.get("KEEP_READYZ_CHECK_TIMEOUT", "5"))
+# hang and tie up a worker slot. The checks run in sequence, so the endpoint's
+# worst case is 2x this — keep it under the probe's own `timeoutSeconds`.
+READYZ_CHECK_TIMEOUT = float(os.environ.get("KEEP_READYZ_CHECK_TIMEOUT", "2"))
+
+# Set false during a Kafka incident: with this on and the brokers down, no pod
+# can finish starting, instead of starting and answering the retryable 503.
+REQUIRE_PRODUCER = os.environ.get("KEEP_READYZ_REQUIRE_PRODUCER", "true") == "true"
 
 # Mounted without a prefix, so both paths are absolute.
 router = APIRouter()
@@ -131,8 +141,9 @@ async def readyz(response: Response) -> dict:
         asyncio.to_thread(_check_db), "database"
     )
     producer_ok, checks["producer"] = await _bounded(_check_producer(), "producer")
+    checks["producer"]["required"] = REQUIRE_PRODUCER
 
-    ready = db_ok and producer_ok
+    ready = db_ok and (producer_ok or not REQUIRE_PRODUCER)
 
     if not ready:
         response.status_code = 503

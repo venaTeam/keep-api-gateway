@@ -74,6 +74,45 @@ def test_readyz_503_when_schema_is_behind(probe_client):
     assert response.json()["checks"]["database"]["at_head"] is False
 
 
+def test_readyz_ignores_a_cold_producer_when_not_required(probe_client, monkeypatch):
+    """`/readyz` backs the startupProbe, so a failing check kills the container:
+    with the brokers down, no pod could finish starting. This is the lever out."""
+    monkeypatch.setattr(healthcheck, "REQUIRE_PRODUCER", False)
+
+    with patch.object(
+        healthcheck, "_check_db", return_value=(True, {"reachable": True, "at_head": True})
+    ):
+        with patch(
+            "src.services.producers.factory.get_producer_instance",
+            return_value=_producer(False),
+        ):
+            response = probe_client.get("/readyz")
+
+    assert response.status_code == 200
+    # Still reported, just not gating — the operator can see it is cold.
+    assert response.json()["checks"]["producer"]["required"] is False
+
+
+def test_readyz_still_fails_on_the_database_when_producer_not_required(
+    probe_client, monkeypatch
+):
+    """The lever must not turn `/readyz` into an unconditional 200."""
+    monkeypatch.setattr(healthcheck, "REQUIRE_PRODUCER", False)
+
+    with patch.object(
+        healthcheck,
+        "_check_db",
+        return_value=(False, {"reachable": False}),
+    ):
+        with patch(
+            "src.services.producers.factory.get_producer_instance",
+            return_value=_producer(True),
+        ):
+            response = probe_client.get("/readyz")
+
+    assert response.status_code == 503
+
+
 def test_readyz_503_when_producer_is_cold(probe_client):
     """A cold producer means the next alert goes to the DLQ topic and is never
     ingested, so the pod is not ready to receive traffic."""

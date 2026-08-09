@@ -65,6 +65,42 @@ def test_missing_task_name_falls_back_to_async_task():
     assert b"async-task" in response.body
 
 
+def test_publish_failure_answers_503_not_500():
+    """Neither topic accepted the event, but the sender must still get a
+    retryable status — unhandled, this is a 500, which senders don't retry."""
+    with patch.object(alerts, "alert_ingestion_error_total") as metric:
+        response = alerts._publish_failed_response(
+            RuntimeError("no brokers"), source="grafana", trace_id="t-1"
+        )
+
+    assert response.status_code == 503
+    assert response.headers["Retry-After"]
+    metric.labels.assert_called_once_with(source="grafana", error_type="RuntimeError")
+    metric.labels.return_value.inc.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_produce_raises_when_both_topics_are_unreachable():
+    """Why the route needs its own 503: KAFKA_DLQ_BOOTSTRAP_SERVERS defaults to
+    the *main* brokers, so an outage usually takes the fallback with it."""
+    from src.services.producers.kafka_producer import KafkaEventProducer
+
+    with patch("src.services.producers.kafka_producer.AIOKafkaProducer"):
+        producer = KafkaEventProducer()
+
+    producer._started = True
+    producer.producer = MagicMock()
+    producer.producer.send_and_wait = AsyncMock(side_effect=RuntimeError("no broker"))
+    producer.dlq_producer = MagicMock()
+    producer.dlq_producer.start = AsyncMock()
+    producer.dlq_producer.send_and_wait = AsyncMock(
+        side_effect=RuntimeError("no broker")
+    )
+
+    with pytest.raises(Exception):
+        await producer.produce(event={"a": 1}, trace_id="t-2")
+
+
 @pytest.mark.asyncio
 async def test_kafka_producer_marks_the_dlq_sink():
     """The producer's return value carries the DLQ marker, which is what makes
