@@ -1,4 +1,4 @@
-"""Prometheus multiprocess-dir resolution (src/repositories/metrics.py).
+"""Prometheus multiprocess-dir resolution (src/repositories/prometheus_multiproc.py).
 
 Regression for the incident that committed four ``counter_<pid>.db`` files to
 keep-event-handler's repo root: a *set-but-empty* PROMETHEUS_MULTIPROC_DIR
@@ -10,7 +10,7 @@ default registry).
 """
 import os
 
-from src.repositories.metrics import _resolve_prometheus_multiproc_dir
+from src.repositories.prometheus_multiproc import _resolve_prometheus_multiproc_dir
 
 
 def test_empty_env_falls_back_to_default_not_cwd(monkeypatch):
@@ -42,7 +42,7 @@ def test_uncreatable_dir_falls_back_to_tempdir_and_logs(
 
     import tempfile
 
-    with caplog.at_level("ERROR", logger="src.repositories.metrics"):
+    with caplog.at_level("ERROR", logger="src.repositories.prometheus_multiproc"):
         resolved = _resolve_prometheus_multiproc_dir()
 
     assert resolved == os.path.join(tempfile.gettempdir(), "prometheus")
