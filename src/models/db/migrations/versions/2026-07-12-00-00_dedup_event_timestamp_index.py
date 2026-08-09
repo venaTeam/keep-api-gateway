@@ -30,6 +30,7 @@ def upgrade() -> None:
         "ix_alert_deduplication_event_timestamp",
         "alertdeduplicationevent",
         ["timestamp"],
+        if_not_exists=True,
     )
 
 

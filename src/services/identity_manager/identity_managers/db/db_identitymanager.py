@@ -91,7 +91,7 @@ class DbIdentityManager(BaseIdentityManager):
 
         self.logger.info("Added signin endpoint")
 
-    def get_users(self, tenant_id=None) -> list[User]:
+    def get_users(self, tenant_id=None, search=None) -> list[User]:
         users = get_users_from_db(tenant_id or self.tenant_id)
         users = [
             User(

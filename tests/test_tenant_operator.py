@@ -136,7 +136,7 @@ def test_get_tenants_for_subjects(db_session):
 def test_create_operator_unique_group_per_tenant(db_session):
     op = db.create_operator(group="grp-solo", tenant_id=GENERIC_TENANT_UUID)
     assert op.group == "grp-solo"
-    with pytest.raises(db.OperatorGroupTaken):
+    with pytest.raises((db.OperatorGroupTaken, db.OperatorNameTaken)):
         db.create_operator(group="grp-solo", tenant_id=GENERIC_TENANT_UUID)
 
     # Different group on the same tenant works

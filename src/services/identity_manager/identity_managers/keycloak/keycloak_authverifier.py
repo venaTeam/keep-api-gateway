@@ -347,10 +347,16 @@ class KeycloakAuthVerifier(AuthVerifierBase):
                 if not tenant_id:
                     tenant_id = GENERIC_TENANT_UUID
             else:
-                raise HTTPException(
-                    status_code=401,
-                    detail="Invalid Keycloak token - no group that represents an org",
+                # No org group: fall back to the default generic tenant context
+                if not tenant_id:
+                    tenant_id = GENERIC_TENANT_UUID
+                roles = (
+                    payload.get("resource_access", {})
+                    .get(self.keycloak_client_id, {})
+                    .get("roles", [])
                 )
+                roles = [r for r in roles if not r.startswith("uma_protection")]
+                role = roles[0] if roles else payload.get("keep_role") or "editor"
         # Keycloak single tenant
         else:
             role = (
