@@ -30,7 +30,7 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.create_index("ix_alertraw_timestamp", "alertraw", ["timestamp"])
+    op.create_index("ix_alertraw_timestamp", "alertraw", ["timestamp"], if_not_exists=True)
 
 
 def downgrade() -> None:
