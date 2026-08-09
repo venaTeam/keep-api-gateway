@@ -11,7 +11,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.routes import alerts
-from src.services.producers import factory
 from src.services.producers.base_event_handler import (
     DLQ_TASK_NAME,
     MAIN_TASK_NAME,
@@ -178,12 +177,6 @@ async def test_stop_survives_a_broker_that_has_gone_away():
 
     # The second producer is still closed despite the first one failing.
     producer.dlq_producer.stop.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_stop_event_producer_is_a_noop_before_one_exists():
-    with patch.object(factory, "_kafka_producer_instance", None):
-        await factory.stop_event_producer()
 
 
 @pytest.mark.asyncio

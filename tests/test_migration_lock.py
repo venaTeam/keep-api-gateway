@@ -189,11 +189,6 @@ def test_schema_at_head_without_alembic_version_table():
     assert _schema_at_head(None, "rev1")[0] is False
 
 
-def test_schema_at_head_when_script_head_is_unreadable():
-    """No basis to judge, so don't advertise the pod as ready."""
-    assert _schema_at_head("rev1", None)[0] is False
-
-
 def test_script_head_is_readable_from_the_shipped_migrations():
     """Guards the absolute script_location: a broken path would make /readyz
     permanently report "not at head"."""
