@@ -413,8 +413,27 @@ class KeycloakIdentityManager(BaseIdentityManager):
         org_id = authenticated_entity.org_id
         return f"{self.server_url}realms/{tenant_realm}/wizard/?org_id={org_id}/#iss={self.server_url}/realms/{tenant_realm}"
 
-    def get_users(self) -> list[User]:
+    def get_users(self, search: str | None = None) -> list[User]:
         try:
+            # Search path (for the async picker): let Keycloak filter server-side
+            # and SKIP the per-user groups/role lookups. Fetching every user and
+            # enriching each with 2 more Admin API calls times out (504) on a large
+            # LDAP directory -- so search returns lightweight, matches-only results.
+            if search:
+                users = self.keycloak_admin.get_users(
+                    {"search": search, "max": 20}
+                )
+                return [
+                    User(
+                        email=u.get("email", ""),
+                        username=u.get("username", ""),
+                        name=u.get("firstName", "") or u.get("username", ""),
+                        created_at=u.get("createdTimestamp", ""),
+                    )
+                    for u in users
+                    if "username" in u
+                ]
+
             # TODO: query only users that Keep created (so not show all LDAP users)
             users = self.keycloak_admin.get_users({})
             users = [user for user in users if "firstName" in user]
@@ -433,6 +452,7 @@ class KeycloakIdentityManager(BaseIdentityManager):
                 role = self.get_user_current_role(user_id=user.get("id"))
                 user_dto = User(
                     email=user.get("email", ""),
+                    username=user.get("username", ""),
                     name=user.get("firstName", ""),
                     role=role,
                     created_at=user.get("createdTimestamp", ""),
@@ -650,8 +670,27 @@ class KeycloakIdentityManager(BaseIdentityManager):
             self.logger.error("Failed to delete resource from Keycloak: %s", str(e))
             raise HTTPException(status_code=500, detail="Failed to delete resource")
 
-    def get_groups(self) -> list[dict]:
+    def get_groups(self, search: str | None = None) -> list[dict]:
         try:
+            # Search path (async picker): filter server-side and SKIP the
+            # per-group member fetch, which is what makes this slow at scale.
+            if search:
+                groups = self.keycloak_admin.get_groups(
+                    query={
+                        "briefRepresentation": True,
+                        "search": search,
+                        "max": 20,
+                    }
+                )
+                return [
+                    Group(
+                        id=g["id"],
+                        name=g["name"],
+                        path=g.get("path"),
+                    )
+                    for g in groups
+                ]
+
             groups = self.keycloak_admin.get_groups(
                 query={"briefRepresentation": False}
             )
@@ -670,6 +709,7 @@ class KeycloakIdentityManager(BaseIdentityManager):
                     Group(
                         id=group_id,
                         name=group_name,
+                        path=group.get("path"),
                         roles=roles,
                         memberCount=member_count,
                         members=member_names,

@@ -85,6 +85,7 @@ from src.models.db.tenant_role_grant import TenantRoleGrant
 
 from src.exceptions.tenant_exceptions import (
     OperatorGroupTaken,
+    OperatorNameTaken,
     TenantNameConflict,
     TenantNotFound,
 )
@@ -4424,6 +4425,30 @@ def get_last_alert_by_fingerprint(
         return session.exec(query).first()
 
 
+def apply_dismiss_lifecycle(last_alert: LastAlert, alert_status: str) -> bool:
+    """Clear dismiss/status enrichment when a new occurrence ends the dismissal.
+
+    Kept in sync with the event-handler copy. Returns True if it mutated
+    ``last_alert``. Rules:
+      - A time-boxed "keep" dismiss (dismiss_until, not disposable) survives any
+        new occurrence — it self-expires on its own clock.
+      - A RESOLVED occurrence ends every other dismissal (fresh lifecycle): the
+        alert shows Resolved and a later firing occurrence fires normally.
+      - A non-resolved (firing) occurrence ends only a "dispose on new alerts"
+        dismissal/status (status_disposable); a "keep" dismissal persists."""
+    if alert_status == AlertStatus.RESOLVED.value:
+        should_clear = True
+    else:
+        should_clear = last_alert.status_disposable
+    if not should_clear:
+        return False
+    last_alert.status = alert_status
+    last_alert.status_disposable = True
+    last_alert.dismiss_mode = None
+    last_alert.dismissed_until = None
+    return True
+
+
 def set_last_alert(
     tenant_id: str,
     alert: Alert,
@@ -4489,21 +4514,9 @@ def set_last_alert(
                                 continue
                             setattr(last_alert, _col, _val)
 
-                    # Status/dismiss clearing on this occurrence's
-                    # provider status (replaces dispose/make-permanent).
-                    resolved = alert.status == AlertStatus.RESOLVED.value
-                    if not resolved:
-                        if last_alert.status_disposable:
-                            last_alert.status = None
-                            last_alert.status_disposable = False
-                    else:
-                        if last_alert.dismiss_mode not in (
-                            "permanent",
-                            "dismiss_until",
-                        ):
-                            last_alert.status = None
-                            last_alert.dismiss_mode = None
-                            last_alert.dismissed_until = None
+                    # Status/dismiss clearing on this occurrence's provider
+                    # status (auto-undismiss on resolve; dispose-on-new-alert).
+                    apply_dismiss_lifecycle(last_alert, alert.status)
 
                     session.add(last_alert)
 
@@ -4888,14 +4901,30 @@ def remove_grant(tenant_id: str, subject: str) -> bool:
 def create_operator(group: str, tenant_id: str, name: str | None = None) -> Operator:
     """Create an operator for `group` (globally unique) linked to `tenant_id`.
     `name` (the routing key) defaults to the group; `apikey` is model-generated.
-    A group collision raises OperatorGroupTaken."""
+
+    Both `name` and `group` are globally unique, so raise the SPECIFIC conflict:
+    OperatorNameTaken vs OperatorGroupTaken (don't report a name clash as a group
+    clash)."""
+    op_name = name or group
     with Session(engine) as session:
-        operator = Operator(name=name or group, group=group, tenant_id=tenant_id)
+        # Explicit checks give the right error message. The DB constraints below
+        # are still the source of truth (and catch races).
+        if session.exec(select(Operator).where(Operator.name == op_name)).first():
+            raise OperatorNameTaken(op_name)
+        if session.exec(select(Operator).where(Operator.group == group)).first():
+            raise OperatorGroupTaken(group)
+
+        operator = Operator(name=op_name, group=group, tenant_id=tenant_id)
         session.add(operator)
         try:
             session.commit()
         except IntegrityError as exc:
             session.rollback()
+            # Race: someone inserted the same name/group between check and commit.
+            if session.exec(
+                select(Operator).where(Operator.name == op_name)
+            ).first():
+                raise OperatorNameTaken(op_name) from exc
             raise OperatorGroupTaken(group) from exc
         session.refresh(operator)
         return operator
@@ -4920,6 +4949,13 @@ def operator_groups_in_use() -> set[str]:
     """Groups that already back an operator (any tenant)."""
     with Session(engine) as session:
         return set(session.exec(select(Operator.group)).all())
+
+
+def get_operator_by_name(name: str) -> Operator | None:
+    """Resolve an operator by its routing-key name (unique). Used at ingestion
+    to route an alert to the operator's tenant (VENA-5596 Epic 5)."""
+    with Session(engine) as session:
+        return session.exec(select(Operator).where(Operator.name == name)).first()
 
 
 def create_single_tenant_for_e2e(tenant_id: str) -> None:

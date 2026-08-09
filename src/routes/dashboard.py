@@ -3,9 +3,11 @@ import logging
 import os
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
-import requests
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
 from src.repositories.db import (
@@ -182,81 +184,101 @@ def get_metric_widgets(
     return data
 
 
-@router.get("/ticket-count")
-def get_ticket_count(
-    authenticated_entity: AuthenticatedEntity = Depends(
-        IdentityManagerFactory.get_auth_verifier(["read:dashboards"])
-    ),
-    team: str | None = None,
-    state: str | None = None,  # expected: open, in_progress, all
-    detection: str | None = None,  # expected: direct, hamal, all
-):
-    """
-    Get ticket count from ticket_count provider.
-    Returns the count from the provider's count_url endpoint.
-    """
-    tenant_id = authenticated_entity.tenant_id
+def _resolve_ticket_url(tenant_id: str) -> str:
+    """Return the ticket_count provider's count_url or raise the matching HTTPException.
 
+    Performs blocking DB and secret-manager I/O, so callers on the event loop must run
+    it via run_in_threadpool.
+    """
     installed_providers = ProvidersFactory.get_installed_providers(
         tenant_id, include_details=True
     )
-
-    ticket_count_provider = None
-    for provider in installed_providers:
-        if provider.type == "ticket_count":
-            ticket_count_provider = provider
-            break
-
-    if not ticket_count_provider:
+    provider = next((p for p in installed_providers if p.type == "ticket_count"), None)
+    if provider is None:
         raise HTTPException(status_code=404, detail="ticket_count provider not found")
 
-    ticket_url = ticket_count_provider.details.get("authentication", {}).get(
-        "count_url"
-    )
-
+    ticket_url = provider.details.get("authentication", {}).get("count_url")
     if not ticket_url:
         raise HTTPException(
             status_code=400,
             detail="ticket_count provider missing count_url configuration",
         )
+    return ticket_url
+
+
+def _compose_ticket_url(
+    ticket_url: str,
+    team: str | None,
+    state: str | None,
+    detection: str | None,
+) -> str:
+    """Merge the team/state/detection filters into the provider count_url query string."""
+    params: dict[str, str] = {}
+    if team:
+        params["team"] = team
+    if state:
+        params["state"] = state
+    if detection and detection in ("direct", "hamal"):
+        params["system_failure"] = "true" if detection == "hamal" else "false"
+
+    parsed = urlparse(ticket_url)
+    existing_qs = dict(parse_qsl(parsed.query)) if parsed.query else {}
+    merged_qs = {**existing_qs, **params}
+    new_query = urlencode(merged_qs)
+    return urlunparse(parsed._replace(query=new_query))
+
+
+async def _fetch_count_payload(url: str):
+    """Fetch the raw JSON payload from the provider's count_url over async HTTP.
+
+    Preserves the legacy call semantics: no TLS verification, a 10s timeout, and
+    redirects disabled (previously enforced globally via the requests monkeypatch).
+    """
+    async with httpx.AsyncClient(
+        verify=False, timeout=10.0, follow_redirects=False
+    ) as client:
+        response = await client.get(url)
+        response.raise_for_status()
+        return response.json()
+
+
+@router.get("/ticket-count")
+async def get_ticket_count(
+    authenticated_entity: AuthenticatedEntity = Depends(
+        IdentityManagerFactory.get_auth_verifier(["read:dashboards"])
+    ),
+    team: str | None = None,
+    state: str | None = None,
+    detection: str | None = None,
+):
+    """
+    Get ticket count from the ticket_count provider's count_url.
+
+    Query params: team; state (open/in_progress/all); detection (direct/hamal/all,
+    mapped to the provider's system_failure flag).
+
+    The provider lookup runs in a thread pool because it performs blocking DB and
+    secret-manager I/O; the outbound HTTP call is awaited so a slow or unreachable
+    provider never holds a FastAPI worker thread.
+    """
+    tenant_id = authenticated_entity.tenant_id
+    ticket_url = await run_in_threadpool(_resolve_ticket_url, tenant_id)
+    composed_url = _compose_ticket_url(ticket_url, team, state, detection)
 
     try:
-        from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
-
-        params: dict[str, str] = {}
-        if team:
-            params["team"] = team
-        if state:
-            params["state"] = state
-        if detection and detection in ("direct", "hamal"):
-            params["system_failure"] = "true" if detection == "hamal" else "false"
-
-        parsed = urlparse(ticket_url)
-        existing_qs = dict(parse_qsl(parsed.query)) if parsed.query else {}
-        merged_qs = {**existing_qs, **params}
-        new_query = urlencode(merged_qs)
-        composed_url = urlunparse(parsed._replace(query=new_query))
-
-        response = requests.get(composed_url, timeout=10, verify=False)
-        response.raise_for_status()
-        data = response.json()
-
-        try:
-            if isinstance(data, dict) and "Team not found" in data:
-                return data
-        except Exception:
-            pass
-
-        count = data.get("count", 0)
-        return {"count": count}
-    except requests.exceptions.RequestException as e:
+        data = await _fetch_count_payload(composed_url)
+    except httpx.HTTPError as e:
         logger.exception(
             "Failed to fetch ticket count from provider URL",
-            extra={"tenant_id": tenant_id, "url": ticket_url},
+            extra={"tenant_id": tenant_id},
         )
         raise HTTPException(
             status_code=500,
             detail=f"Failed to fetch ticket count: {str(e)}",
         )
 
-
+    if isinstance(data, dict) and "Team not found" in data:
+        return data
+    if isinstance(data, dict):
+        return {"count": data.get("count", 0)}
+    return {"count": 0}

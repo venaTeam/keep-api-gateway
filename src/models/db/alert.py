@@ -22,7 +22,7 @@ class AlertToIncident(SQLModel, table=True):
     tenant_id: str = Field(foreign_key="tenant.id")
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
-    alert_id: UUID = Field(foreign_key="alert.id", primary_key=True)
+    alert_id: UUID = Field(primary_key=True)
     incident_id: UUID = Field(
         sa_column=Column(
             UUIDType(binary=False),
@@ -44,7 +44,7 @@ class AlertToIncident(SQLModel, table=True):
 class LastAlert(SQLModel, table=True):
     tenant_id: str = Field(foreign_key="tenant.id", nullable=False, primary_key=True)
     fingerprint: str = Field(primary_key=True, index=True)
-    alert_id: UUID = Field(foreign_key="alert.id")
+    alert_id: UUID = Field()
     timestamp: datetime = Field(nullable=False, index=True)
     first_timestamp: datetime = Field(nullable=False, index=True)
     alert_hash: str | None = Field(nullable=True, index=True)
@@ -195,7 +195,7 @@ class Alert(SQLModel, table=True):
     #            with 1M alerts, we see queries goes from >30s to 0s with the index
     #            todo: on MSSQL, the index is "nonclustered" index which cannot be controlled by SQLModel
     timestamp: datetime = Field(
-        sa_column=Column(DATETIME_COLUMN_TYPE, index=True, nullable=False),
+        sa_column=Column(DATETIME_COLUMN_TYPE, index=True, nullable=False, primary_key=True),
         default_factory=lambda: datetime.utcnow().replace(
             microsecond=int(datetime.utcnow().microsecond / 1000) * 1000
         ),
@@ -387,6 +387,11 @@ class AlertDeduplicationEvent(SQLModel, table=True):
             "provider_type",
             "date_hour",
         ),
+        # SC-05: `timestamp` is the future daily-partition key (partitioning is done
+        # by the DBA, who has elevated DDL rights). Index it to support the time-range
+        # scans that retention/partition-pruning rely on. The date_hour/provider
+        # indexes above are kept for the dedup-distribution analytics queries.
+        Index("ix_alert_deduplication_event_timestamp", "timestamp"),
     )
 
     class Config:
@@ -414,6 +419,12 @@ class AlertField(SQLModel, table=True):
 
 
 class AlertRaw(SQLModel, table=True):
+    # SC-05: alertraw is intended to be range-partitioned by `timestamp` (daily)
+    # with short-TTL partition-drop retention. Partitioning is performed by the DBA
+    # (elevated DDL permissions), NOT by app migrations. The app change here is:
+    #   (1) alertraw is written only for failed events (error-only DLQ), and
+    #   (2) a plain `timestamp` index (`ix_alertraw_timestamp`) — the future
+    #       partition key — to support time-range retention/pruning.
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     tenant_id: str = Field(foreign_key="tenant.id", index=True)
     raw_alert: dict = Field(sa_column=Column(JSON().with_variant(PG_JSONB, "postgresql")))
@@ -428,6 +439,7 @@ class AlertRaw(SQLModel, table=True):
     __table_args__ = (
         Index("ix_alert_raw_tenant_id_error", "tenant_id", "error"),
         Index("ix_alert_raw_tenant_id_timestamp", "tenant_id", "timestamp"),
+        Index("ix_alertraw_timestamp", "timestamp"),
     )
 
     class Config:
@@ -447,7 +459,11 @@ class AlertAudit(SQLModel, table=True):
     description: str = Field(sa_column=Column(TEXT))
 
     mentions: list["CommentMention"] = Relationship(
-        back_populates="alert_audit", sa_relationship_kwargs={"lazy": "selectin"}
+        back_populates="alert_audit",
+        sa_relationship_kwargs={
+            "lazy": "selectin",
+            "primaryjoin": "foreign(CommentMention.comment_id) == AlertAudit.id",
+        },
     )
 
     __table_args__ = (
@@ -466,7 +482,6 @@ class CommentMention(SQLModel, table=True):
     comment_id: UUID = Field(
         sa_column=Column(
             UUIDType(binary=False),
-            ForeignKey("alertaudit.id", ondelete="CASCADE"),
             nullable=False,
         )
     )
@@ -475,7 +490,11 @@ class CommentMention(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
 
     alert_audit: AlertAudit = Relationship(
-        back_populates="mentions", sa_relationship_kwargs={"lazy": "selectin"}
+        back_populates="mentions",
+        sa_relationship_kwargs={
+            "lazy": "selectin",
+            "primaryjoin": "foreign(CommentMention.comment_id) == AlertAudit.id",
+        },
     )
 
     __table_args__ = (
