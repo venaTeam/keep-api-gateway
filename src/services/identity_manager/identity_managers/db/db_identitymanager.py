@@ -1,4 +1,5 @@
 import os
+import random
 
 import jwt
 from fastapi import HTTPException
@@ -6,8 +7,9 @@ from fastapi.responses import JSONResponse
 
 from src.repositories.db import create_user as create_user_in_db
 from src.repositories.db import delete_user as delete_user_from_db
-from src.repositories.db import get_user
+from src.repositories.db import get_user, get_tenants_for_subjects
 from src.repositories.db import get_users as get_users_from_db
+from src.repositories.dependencies import GENERIC_TENANT_UUID
 from src.models.user import User
 from src.services.context_manager import ContextManager
 from src.services.identity_manager.identity_managers.db.db_authverifier import DbAuthVerifier
@@ -48,14 +50,23 @@ class DbIdentityManager(BaseIdentityManager):
                 )
 
             # validate the user/password
-            tenant_id = body.get("tenant_id") or body.get("tenantId") or self.tenant_id
-            user = get_user(body.get("username"), body.get("password"), tenant_id=tenant_id)
+            user = get_user(body.get("username"), body.get("password"), tenant_id=None)
             if not user:
                 _record_login_failure("invalid_credentials")
                 return JSONResponse(
                     status_code=401,
                     content={"message": "Invalid username or password"},
                 )
+
+            # check what tenants this user belongs to
+            user_tenants = get_tenants_for_subjects([user.username])
+            if not user_tenants:
+                tenant_id = GENERIC_TENANT_UUID
+            elif len(user_tenants) == 1:
+                tenant_id = user_tenants[0].id
+            else:
+                tenant_id = random.choice(user_tenants).id
+
             # generate a JWT secret
             jwt_secret = os.environ.get("KEEP_JWT_SECRET")
             if not jwt_secret:
@@ -64,7 +75,7 @@ class DbIdentityManager(BaseIdentityManager):
             token = jwt.encode(
                 {
                     "email": user.username,
-                    "tenant_id": user.tenant_id,
+                    "tenant_id": tenant_id,
                     "role": user.role,
                 },
                 jwt_secret,
@@ -73,7 +84,7 @@ class DbIdentityManager(BaseIdentityManager):
             # return the token
             return {
                 "accessToken": token,
-                "tenantId": user.tenant_id,
+                "tenantId": tenant_id,
                 "email": user.username,
                 "role": user.role,
             }

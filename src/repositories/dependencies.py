@@ -8,6 +8,7 @@ logger = logging.getLogger(__name__)
 
 # Generic default tenant id
 GENERIC_TENANT_UUID = "keep"
+SINGLE_TENANT_UUID = GENERIC_TENANT_UUID
 SINGLE_TENANT_EMAIL = "admin@keephq"
 
 

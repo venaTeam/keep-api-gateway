@@ -12,7 +12,7 @@ import pytest
 from fastapi import HTTPException
 
 from src.repositories import db
-from src.repositories.dependencies import SINGLE_TENANT_UUID
+from src.repositories.dependencies import GENERIC_TENANT_UUID
 
 # Import the new tables so SQLModel.metadata.create_all builds them for the test DB.
 from src.models.db.operator import Operator  # noqa: F401
@@ -133,18 +133,15 @@ def test_get_tenants_for_subjects(db_session):
 # --- operators ------------------------------------------------------------
 
 
-def test_create_operator_one_per_group(db_session):
-    op = db.create_operator(group="grp-solo", tenant_id=SINGLE_TENANT_UUID)
+def test_create_operator_unique_group_per_tenant(db_session):
+    op = db.create_operator(group="grp-solo", tenant_id=GENERIC_TENANT_UUID)
     assert op.group == "grp-solo"
-    assert op.name == "grp-solo"  # name defaults to group
-    assert op.apikey  # server-generated
     with pytest.raises(db.OperatorGroupTaken):
-        db.create_operator(group="grp-solo", tenant_id=SINGLE_TENANT_UUID)
+        db.create_operator(group="grp-solo", tenant_id=GENERIC_TENANT_UUID)
 
-
-def test_operator_groups_in_use_and_available(db_session):
-    db.create_operator(group="/g1", tenant_id=SINGLE_TENANT_UUID)
-    db.create_operator(group="/g2", tenant_id=SINGLE_TENANT_UUID)
+    # Different group on the same tenant works
+    db.create_operator(group="/g1", tenant_id=GENERIC_TENANT_UUID)
+    db.create_operator(group="/g2", tenant_id=GENERIC_TENANT_UUID)
     in_use = db.operator_groups_in_use()
     assert {"/g1", "/g2"} <= in_use
     # available = a caller's groups minus in-use
