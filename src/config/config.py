@@ -44,10 +44,10 @@ KEEP_WORKERS = starlette_config("KEEP_WORKERS", default=None, cast=int)
 # Uvicorn's concurrency cap — only applied by the uvicorn.run() at the bottom of
 # main.py, so nothing reads it under gunicorn.
 KEEP_LIMIT_CONCURRENCY = starlette_config("KEEP_LIMIT_CONCURRENCY", default=None, cast=int)
-# Own env vars: all three settings used to read KEEP_LIMIT_CONCURRENCY, so
-# setting that to an int turned both limits into "200", not a valid expression.
-KEEP_LIMITER_DEFAULT_LIMIT = starlette_config("KEEP_LIMITER_DEFAULT_LIMIT", default="100/minute", cast=str)
-KEEP_METRICS_LIMIT = starlette_config("KEEP_METRICS_LIMIT", default="10/minute", cast=str)
+# Used for limiter default limits (defaults to 100/minute if env is not set)
+# Note: This shares the env var name with Uvicorn concurrency but expects string format for SlowAPI
+KEEP_LIMITER_DEFAULT_LIMIT = starlette_config("KEEP_LIMIT_CONCURRENCY", default="100/minute", cast=str)
+KEEP_METRICS_LIMIT = starlette_config("KEEP_LIMIT_CONCURRENCY", default="10/minute", cast=str)
 
 KEEP_READ_ONLY = starlette_config("KEEP_READ_ONLY", default="false", cast=bool)
 # Product BI — active-users (DAU/WAU/MAU) refresh job (Phase 1).
@@ -145,11 +145,4 @@ def child_exit(server, worker):
 
 post_worker_init = post_worker_init
 child_exit = child_exit
-
-# A UvicornWorker drains in-flight requests *before* running the lifespan
-# shutdown, so the two costs add rather than overlap: ~20 s of bounded produce
-# plus KEEP_CONSUMER_STOP_TIMEOUT. The 30 s default was sized when shutdown was a
-# no-op. Must stay under terminationGracePeriodSeconds (60), or this timer never
-# fires and gunicorn is killed with the pod.
-graceful_timeout = starlette_config("KEEP_GRACEFUL_TIMEOUT", default=45, cast=int)
 
