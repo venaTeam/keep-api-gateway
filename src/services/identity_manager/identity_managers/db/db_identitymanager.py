@@ -1,4 +1,5 @@
-﻿import os
+import os
+import random
 
 import jwt
 from fastapi import HTTPException
@@ -6,9 +7,9 @@ from fastapi.responses import JSONResponse
 
 from src.repositories.db import create_user as create_user_in_db
 from src.repositories.db import delete_user as delete_user_from_db
-from src.repositories.db import get_user
+from src.repositories.db import get_user, get_tenants_for_subjects
 from src.repositories.db import get_users as get_users_from_db
-from src.repositories.dependencies import SINGLE_TENANT_UUID
+from src.repositories.dependencies import GENERIC_TENANT_UUID
 from src.models.user import User
 from src.services.context_manager import ContextManager
 from src.services.identity_manager.identity_managers.db.db_authverifier import DbAuthVerifier
@@ -49,13 +50,23 @@ class DbIdentityManager(BaseIdentityManager):
                 )
 
             # validate the user/password
-            user = get_user(body.get("username"), body.get("password"))
+            user = get_user(body.get("username"), body.get("password"), tenant_id=None)
             if not user:
                 _record_login_failure("invalid_credentials")
                 return JSONResponse(
                     status_code=401,
                     content={"message": "Invalid username or password"},
                 )
+
+            # check what tenants this user belongs to
+            user_tenants = get_tenants_for_subjects([user.username])
+            if not user_tenants:
+                tenant_id = GENERIC_TENANT_UUID
+            elif len(user_tenants) == 1:
+                tenant_id = user_tenants[0].id
+            else:
+                tenant_id = random.choice(user_tenants).id
+
             # generate a JWT secret
             jwt_secret = os.environ.get("KEEP_JWT_SECRET")
             if not jwt_secret:
@@ -64,7 +75,7 @@ class DbIdentityManager(BaseIdentityManager):
             token = jwt.encode(
                 {
                     "email": user.username,
-                    "tenant_id": SINGLE_TENANT_UUID,
+                    "tenant_id": tenant_id,
                     "role": user.role,
                 },
                 jwt_secret,
@@ -73,15 +84,15 @@ class DbIdentityManager(BaseIdentityManager):
             # return the token
             return {
                 "accessToken": token,
-                "tenantId": SINGLE_TENANT_UUID,
+                "tenantId": tenant_id,
                 "email": user.username,
                 "role": user.role,
             }
 
         self.logger.info("Added signin endpoint")
 
-    def get_users(self, tenant_id=None, search: str | None = None) -> list[User]:
-        users = get_users_from_db(tenant_id)
+    def get_users(self, tenant_id=None) -> list[User]:
+        users = get_users_from_db(tenant_id or self.tenant_id)
         users = [
             User(
                 email=f"{user.username}",
@@ -113,7 +124,7 @@ class DbIdentityManager(BaseIdentityManager):
 
     def delete_user(self, user_email: str) -> dict:
         try:
-            delete_user_from_db(user_email)
+            delete_user_from_db(user_email, tenant_id=self.tenant_id)
             return {"status": "OK"}
         except Exception:
             raise HTTPException(status_code=404, detail="User not found")

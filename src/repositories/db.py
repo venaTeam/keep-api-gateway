@@ -56,7 +56,7 @@ from src.repositories.db_utils import (
     get_json_extract_field,
     get_or_create,
 )
-from src.repositories.dependencies import SINGLE_TENANT_UUID
+from src.repositories.dependencies import GENERIC_TENANT_UUID
 
 # This import is required to create the tables
 from src.models.action_type import ActionType
@@ -1273,18 +1273,19 @@ def get_api_key(
 
 
 
-# this is only for single tenant
-def get_user(username, password, update_sign_in=True):
+def get_user(username, password, tenant_id=None, update_sign_in=True):
     from src.models.db.user import User
 
     password_hash = hashlib.sha256(password.encode()).hexdigest()
     with Session(engine, expire_on_commit=False) as session:
-        user = session.exec(
+        query = (
             select(User)
-            .where(User.tenant_id == SINGLE_TENANT_UUID)
             .where(User.username == username)
             .where(User.password_hash == password_hash)
-        ).first()
+        )
+        if tenant_id:
+            query = query.where(User.tenant_id == tenant_id)
+        user = session.exec(query).first()
         if user and update_sign_in:
             user.last_sign_in = datetime.utcnow()
             session.add(user)
@@ -1295,25 +1296,26 @@ def get_user(username, password, update_sign_in=True):
 def get_users(tenant_id=None):
     from src.models.db.user import User
 
-    tenant_id = tenant_id or SINGLE_TENANT_UUID
-
     with Session(engine) as session:
-        users = session.exec(select(User).where(User.tenant_id == tenant_id)).all()
+        query = select(User)
+        if tenant_id:
+            query = query.where(User.tenant_id == tenant_id)
+        users = session.exec(query).all()
     return users
 
 
-def delete_user(username):
+def delete_user(username, tenant_id=None):
     from src.models.db.user import User
 
     with Session(engine) as session:
-        user = session.exec(
-            select(User)
-            .where(User.tenant_id == SINGLE_TENANT_UUID)
-            .where(User.username == username)
-        ).first()
+        query = select(User).where(User.username == username)
+        if tenant_id:
+            query = query.where(User.tenant_id == tenant_id)
+        user = session.exec(query).first()
         if user:
             session.delete(user)
             session.commit()
+
 
 
 def user_exists(tenant_id, username, session: Optional[Session] = None):

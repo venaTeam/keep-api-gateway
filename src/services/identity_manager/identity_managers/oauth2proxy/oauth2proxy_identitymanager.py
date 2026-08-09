@@ -1,4 +1,4 @@
-﻿from src.repositories.db import get_users as get_users_from_db
+from src.repositories.db import get_users as get_users_from_db
 from src.models.user import User
 from src.services.context_manager import ContextManager
 from src.services.identity_manager.identity_managers.oauth2proxy.oauth2proxy_authverifier import (
@@ -27,7 +27,7 @@ class Oauth2proxyIdentityManager(BaseIdentityManager):
         return users
 
     def get_auth_verifier(self, scopes) -> Oauth2proxyAuthVerifier:
-        return Oauth2proxyAuthVerifier(scopes)
+        return Oauth2proxyAuthVerifier(scopes, tenant_id=self.tenant_id)
 
     # Not implemented
     def create_user(self, **kawrgs) -> User:

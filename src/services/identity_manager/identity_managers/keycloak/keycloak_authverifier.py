@@ -8,7 +8,7 @@ from keycloak.uma_permissions import UMAPermission
 
 from src.config.core import config
 from src.repositories.db import create_tenant, get_tenants
-from src.repositories.dependencies import SINGLE_TENANT_UUID
+from src.repositories.dependencies import GENERIC_TENANT_UUID
 from src.services.identity_manager.authenticatedentity import AuthenticatedEntity
 from src.services.identity_manager.authverifierbase import AuthVerifierBase, oauth2_scheme
 from src.services.identity_manager.rbac import Roles
@@ -342,7 +342,7 @@ class KeycloakAuthVerifier(AuthVerifierBase):
             elif self._is_superadmin(email, groups):
                 role = "superadmin"
                 if not tenant_id:
-                    tenant_id = SINGLE_TENANT_UUID
+                    tenant_id = GENERIC_TENANT_UUID
             else:
                 raise HTTPException(
                     status_code=401,
