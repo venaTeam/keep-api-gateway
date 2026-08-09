@@ -18,12 +18,11 @@ import logging
 import os
 import time
 from contextlib import contextmanager
-from functools import lru_cache
 
 import alembic.command
 import alembic.config
 from alembic.script import ScriptDirectory
-from sqlalchemy import inspect as sa_inspect, text
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
@@ -175,8 +174,17 @@ _MIGRATION_LOCK_KEY = int(
     os.environ.get("KEEP_MIGRATION_ADVISORY_LOCK_KEY", "8274419300112233")
 )
 # How long to wait for the migrating replica before giving up on the lock.
+#
+# Must comfortably EXCEED the startupProbe budget (periodSeconds x
+# failureThreshold), so the probe decides when to give up rather than this timer.
+# Giving up means attempting DDL another replica is part-way through — the
+# "column already exists" crash the lock exists to prevent — whereas being killed
+# by the probe costs a restart from a pod that never began migrating. An advisory
+# lock is session-scoped, so a holder that dies releases it automatically; the
+# only reason to stop waiting is a holder that is alive and slow, and for that,
+# waiting is the safer answer.
 _MIGRATION_LOCK_TIMEOUT = int(
-    os.environ.get("KEEP_MIGRATION_LOCK_TIMEOUT_SECONDS", "600")
+    os.environ.get("KEEP_MIGRATION_LOCK_TIMEOUT_SECONDS", "3600")
 )
 _MIGRATION_LOCK_POLL_SECONDS = float(
     os.environ.get("KEEP_MIGRATION_LOCK_POLL_SECONDS", "2")
@@ -201,42 +209,58 @@ def get_alembic_config() -> "alembic.config.Config":
     return cfg
 
 
-@lru_cache(maxsize=1)
+# Memoised on success only. `lru_cache` would also cache a None from a transient
+# failure, and /readyz would then report "not at head" for the life of the
+# process with no recovery short of a restart.
+_script_directory_cache: "ScriptDirectory | None" = None
+_script_head_cache: str | None = None
+
+
 def _script_directory() -> "ScriptDirectory | None":
     """This image's migration scripts. Cached: /readyz walks them on every probe
     while the DB and the image disagree."""
+    global _script_directory_cache
+    if _script_directory_cache is not None:
+        return _script_directory_cache
     try:
-        return ScriptDirectory.from_config(get_alembic_config())
+        _script_directory_cache = ScriptDirectory.from_config(get_alembic_config())
     except Exception:
         logger.exception("Failed to load the alembic script directory")
-        return None
+    return _script_directory_cache
 
 
-@lru_cache(maxsize=1)
 def get_script_head() -> str | None:
-    """The head revision shipped in this image's migration scripts.
+    """The head revision shipped in this image's migration scripts."""
+    global _script_head_cache
+    if _script_head_cache is not None:
+        return _script_head_cache
 
-    Cached because the scripts never change at runtime and /readyz asks for this
-    on every probe.
-    """
     script = _script_directory()
     if script is None:
         return None
     try:
-        return script.get_current_head()
+        _script_head_cache = script.get_current_head()
     except Exception:
         logger.exception("Failed to read the alembic script head")
-        return None
+    return _script_head_cache
 
 
 def get_db_revision() -> str | None:
     """The revision currently stamped in the database, or None if the
-    `alembic_version` table doesn't exist / is empty."""
-    inspector = sa_inspect(engine)
-    if "alembic_version" not in inspector.get_table_names():
+    `alembic_version` table doesn't exist / is empty.
+
+    Queried directly rather than via `inspect().get_table_names()`, which is a
+    catalog scan — /readyz asks for this on every probe, and the missing-table
+    case is the rare one. Callers reach here after `_check_db` has already proved
+    the database reachable, so a failure means "no usable revision", which is the
+    safe answer for a probe.
+    """
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(text("SELECT version_num FROM alembic_version")).first()
+    except Exception:
+        logger.debug("Could not read alembic_version", exc_info=True)
         return None
-    with engine.connect() as conn:
-        row = conn.execute(text("SELECT version_num FROM alembic_version")).first()
     return row[0] if row else None
 
 
