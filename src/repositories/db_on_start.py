@@ -276,10 +276,10 @@ def _db_is_at_or_ahead(db_revision: str, script_head: str) -> bool:
         return False
 
     try:
-        ancestry = {
-            revision.revision
+        return any(
+            revision.revision == script_head
             for revision in script.iterate_revisions(db_revision, "base")
-        }
+        )
     except Exception:
         # Not resolvable here at all: the DB was stamped by an image newer than
         # this one. Loud, because it also means someone rolled back.
@@ -289,8 +289,6 @@ def _db_is_at_or_ahead(db_revision: str, script_head: str) -> bool:
             db_revision,
         )
         return True
-
-    return script_head in ancestry
 
 
 def schema_at_head() -> tuple[bool, str | None, str | None]:

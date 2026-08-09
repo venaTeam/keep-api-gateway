@@ -145,6 +145,15 @@ async def readyz(response: Response) -> dict:
 
     ready = db_ok and (producer_ok or not REQUIRE_PRODUCER)
 
+    if not producer_ok and not REQUIRE_PRODUCER:
+        # Otherwise the lever hides the thing it was flipped for, and the pod
+        # looks healthy while every publish it accepts is failing.
+        logger.warning(
+            "Kafka producer is unhealthy but not gating readiness "
+            "(KEEP_READYZ_REQUIRE_PRODUCER=false)",
+            extra={"producer": checks["producer"]},
+        )
+
     if not ready:
         response.status_code = 503
         logger.warning("Readiness check failed", extra={"checks": checks})

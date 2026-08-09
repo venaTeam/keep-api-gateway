@@ -89,7 +89,24 @@ REDIS = os.environ.get("REDIS", "false") == "true"
 # retained and never ingested. Answering 503 makes the sender retry; set this to
 # restore the old "202 accepted" contract for senders that must not see an error.
 KEEP_ALERT_DLQ_ACCEPT = os.environ.get("KEEP_ALERT_DLQ_ACCEPT", "false") == "true"
-KEEP_ALERT_DLQ_RETRY_AFTER = os.environ.get("KEEP_ALERT_DLQ_RETRY_AFTER", "5")
+# Not DLQ-specific: it is the Retry-After on every rejected publish, diverted or
+# not. Old name still read so a chart that sets it keeps working.
+KEEP_ALERT_RETRY_AFTER = os.environ.get(
+    "KEEP_ALERT_RETRY_AFTER", os.environ.get("KEEP_ALERT_DLQ_RETRY_AFTER", "5")
+)
+
+
+def _retry_later(detail: str, **body) -> JSONResponse:
+    """The single "this alert was not ingested, send it again" answer.
+
+    Both rejection paths go through here so the retry contract cannot drift
+    between them — senders were asked to key off 503 plus `Retry-After`.
+    """
+    return JSONResponse(
+        content={**body, "detail": detail},
+        status_code=503,
+        headers={"Retry-After": KEEP_ALERT_RETRY_AFTER},
+    )
 
 
 def _ingestion_response(task_name, source: str) -> JSONResponse:
@@ -110,17 +127,10 @@ def _ingestion_response(task_name, source: str) -> JSONResponse:
     if KEEP_ALERT_DLQ_ACCEPT:
         return JSONResponse(content=body, status_code=202)
 
-    return JSONResponse(
-        content={
-            **body,
-            "detail": (
-                "Alert could not be published to the ingestion topic and was "
-                "written to the dead-letter topic; it will not be processed. "
-                "Please retry."
-            ),
-        },
-        status_code=503,
-        headers={"Retry-After": KEEP_ALERT_DLQ_RETRY_AFTER},
+    return _retry_later(
+        "Alert could not be published to the ingestion topic and was written to "
+        "the dead-letter topic; it will not be processed. Please retry.",
+        **body,
     )
 
 
@@ -141,14 +151,11 @@ def _publish_failed_response(
         "Failed to publish alert to any topic; rejecting so the sender retries",
         extra={"trace_id": trace_id, "source": source},
     )
-    return JSONResponse(
-        content={
-            "detail": (
-                "Alert could not be published to the ingestion topic. Please retry."
-            )
-        },
-        status_code=503,
-        headers={"Retry-After": KEEP_ALERT_DLQ_RETRY_AFTER},
+    # trace_id travels in the body so a sender reporting a 503 gives us something
+    # to grep for.
+    return _retry_later(
+        "Alert could not be published to the ingestion topic. Please retry.",
+        trace_id=trace_id,
     )
 
 

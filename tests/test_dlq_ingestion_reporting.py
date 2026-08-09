@@ -76,6 +76,8 @@ def test_publish_failure_answers_503_not_500():
 
     assert response.status_code == 503
     assert response.headers["Retry-After"]
+    # Carried so a sender reporting a 503 gives us something to grep for.
+    assert b"t-1" in response.body
     metric.labels.assert_called_once_with(source="grafana", error_type="RuntimeError")
     metric.labels.return_value.inc.assert_called_once()
 

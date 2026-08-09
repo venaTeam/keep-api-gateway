@@ -59,7 +59,7 @@ async def start_event_producer() -> Optional[EventProducer]:
 async def stop_event_producer() -> None:
     """Close the producer on app shutdown. Never raises — a failure here must not
     hold up the rest of the shutdown."""
-    producer = _kafka_producer_instance
+    producer = get_producer_instance()
     if producer is None:
         return
 
