@@ -41,8 +41,6 @@ KEEP_API_URL = starlette_config("KEEP_API_URL", default=None)
 KEEP_METRICS = starlette_config("KEEP_METRICS", default="true", cast=bool)
 KEEP_OTEL_ENABLED = starlette_config("KEEP_OTEL_ENABLED", default="true", cast=bool)
 KEEP_WORKERS = starlette_config("KEEP_WORKERS", default=None, cast=int)
-# Uvicorn's concurrency cap — only applied by the uvicorn.run() at the bottom of
-# main.py, so nothing reads it under gunicorn.
 KEEP_LIMIT_CONCURRENCY = starlette_config("KEEP_LIMIT_CONCURRENCY", default=None, cast=int)
 # Used for limiter default limits (defaults to 100/minute if env is not set)
 # Note: This shares the env var name with Uvicorn concurrency but expects string format for SlowAPI
