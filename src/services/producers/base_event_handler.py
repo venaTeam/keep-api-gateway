@@ -42,6 +42,10 @@ class EventProducer(abc.ABC):
         it."""
         return None
 
+    async def stop(self) -> None:
+        """Release connections on app shutdown. No-op by default, as `start`."""
+        return None
+
     def last_produce_result(self) -> ProduceResult | None:
         """Sink used by the most recent successful `produce()`, if tracked."""
         return None

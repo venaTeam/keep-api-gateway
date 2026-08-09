@@ -56,8 +56,6 @@ class KafkaEventProducer(EventProducer):
         bootstrap_servers = config("KAFKA_BOOTSTRAP_SERVERS", default="localhost:9092")
         self.bootstrap_servers = _parse_bootstrap_servers(bootstrap_servers)
         self.topic = config("KAFKA_TOPIC", default="keep-events")
-        # 5, not 3: with backoff between attempts (see _produce_with_retry) the
-        # retries need to span a partition-leader election, which takes seconds.
         self.max_retries = int(config("KAFKA_MAX_RETRIES", default="5"))
 
         # --- Bounding the produce path -------------------------------------
@@ -82,6 +80,8 @@ class KafkaEventProducer(EventProducer):
         self.retry_backoff_max = float(
             config("KAFKA_PRODUCE_RETRY_BACKOFF_MAX_SECONDS", default="4")
         )
+        # Per-producer close bound, so shutdown cannot hang on a dead broker.
+        self.stop_timeout = float(config("KAFKA_STOP_TIMEOUT_SECONDS", default="5"))
 
         # DLQ config
         dlq_bootstrap_servers_str = config("KAFKA_DLQ_BOOTSTRAP_SERVERS", default=bootstrap_servers)
@@ -169,6 +169,27 @@ class KafkaEventProducer(EventProducer):
                 "Failed to connect the Kafka producer at startup; will retry on "
                 "first produce"
             )
+
+    async def stop(self) -> None:
+        """Close both producers on shutdown.
+
+        Started eagerly but never closed, they are reclaimed by process exit and
+        aiokafka logs "Unclosed AIOKafkaProducer" on every restart. Each stop is
+        bounded and guarded: shutting down must not hang on a broker that has
+        already gone away.
+        """
+        for name, producer in (("main", self.producer), ("dlq", self.dlq_producer)):
+            try:
+                await asyncio.wait_for(producer.stop(), timeout=self.stop_timeout)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Timed out closing the %s Kafka producer after %ss",
+                    name,
+                    self.stop_timeout,
+                )
+            except Exception:
+                logger.exception("Failed to close the %s Kafka producer", name)
+        self._started = False
 
     async def health(self, attempt_reconnect: bool = False) -> tuple[bool, dict]:
         """Producer connectivity for /readyz. With `attempt_reconnect` the probe

@@ -148,6 +148,51 @@ async def test_kafka_producer_health_reflects_connection_state():
 
 
 @pytest.mark.asyncio
+async def test_stop_closes_both_producers():
+    """Started eagerly and never closed, they are reclaimed by process exit and
+    aiokafka logs "Unclosed AIOKafkaProducer" on every restart."""
+    from src.services.producers.kafka_producer import KafkaEventProducer
+
+    with patch("src.services.producers.kafka_producer.AIOKafkaProducer"):
+        producer = KafkaEventProducer()
+
+    producer._started = True
+    producer.producer = MagicMock(stop=AsyncMock())
+    producer.dlq_producer = MagicMock(stop=AsyncMock())
+
+    await producer.stop()
+
+    producer.producer.stop.assert_awaited_once()
+    producer.dlq_producer.stop.assert_awaited_once()
+    assert producer._started is False
+
+
+@pytest.mark.asyncio
+async def test_stop_survives_a_broker_that_has_gone_away():
+    """Shutdown must not hang or raise because a close failed."""
+    from src.services.producers.kafka_producer import KafkaEventProducer
+
+    with patch("src.services.producers.kafka_producer.AIOKafkaProducer"):
+        producer = KafkaEventProducer()
+
+    producer.producer = MagicMock(stop=AsyncMock(side_effect=OSError("gone")))
+    producer.dlq_producer = MagicMock(stop=AsyncMock())
+
+    await producer.stop()
+
+    # The second producer is still closed despite the first one failing.
+    producer.dlq_producer.stop.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_stop_event_producer_is_a_noop_before_one_exists():
+    from src.services.producers import factory
+
+    with patch.object(factory, "_kafka_producer_instance", None):
+        await factory.stop_event_producer()
+
+
+@pytest.mark.asyncio
 async def test_eager_start_never_raises():
     """A broker that isn't up yet must not stop the gateway from starting."""
     from src.services.producers import factory

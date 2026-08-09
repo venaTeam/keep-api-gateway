@@ -34,7 +34,7 @@ from src.utils.logging import CONFIG as logging_config, setup_logging
 from src.middlewares import LoggingMiddleware
 from src.routes.router_setup import setup_routers
 from src.services.producers.event_subscriber import EventSubscriber
-from src.services.producers.factory import start_event_producer
+from src.services.producers.factory import start_event_producer, stop_event_producer
 from src.services.identity_manager.identitymanagerfactory import (
     IdentityManagerFactory,
     IdentityManagerTypes,
@@ -148,51 +148,59 @@ async def _start_event_subscriber_when_ready():
         logger.exception("Failed to start the consumer")
 
 
+async def _stop_event_subscriber():
+    # Settle the deferred start first, otherwise a short-lived process can
+    # shut down before it fires and the consumer threads start *after*
+    # shutdown, never joined.
+    global _event_subscriber_task
+    task = _event_subscriber_task
+    _event_subscriber_task = None
+    if task is not None and not task.done():
+        task.cancel()
+        # Both are needed: CancelledError derives from BaseException, so
+        # `except Exception` alone would not catch it.
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
+
+    logger.info("Stopping the consumer")
+    event_subscriber = EventSubscriber.get_instance()
+    try:
+        # stop() is synchronous (it joins threads), so it must not be
+        # awaited. Offload it, bounded, off the event loop.
+        await asyncio.wait_for(
+            asyncio.get_running_loop().run_in_executor(
+                None,
+                functools.partial(
+                    event_subscriber.stop,
+                    join_timeout=KEEP_CONSUMER_JOIN_TIMEOUT,
+                ),
+            ),
+            timeout=KEEP_CONSUMER_STOP_TIMEOUT,
+        )
+        logger.info("Consumer stopped successfully")
+    except asyncio.TimeoutError:
+        logger.warning(
+            "Consumer did not stop within %ss; continuing shutdown",
+            KEEP_CONSUMER_STOP_TIMEOUT,
+        )
+    except Exception:
+        logger.exception("Failed to stop the consumer")
+
+
 async def shutdown():
     """
     This runs for every worker on shutdown.
     Read more about lifespan here: https://fastapi.tiangolo.com/advanced/events/#lifespan
     """
     logger.info("Shutting down Keep")
+    # Concurrently: they release unrelated resources, and in series their bounds
+    # would add up past gunicorn's graceful_timeout.
+    stops = [stop_event_producer()]
     if CONSUMER:
-        # Settle the deferred start first, otherwise a short-lived process can
-        # shut down before it fires and the consumer threads start *after*
-        # shutdown, never joined.
-        global _event_subscriber_task
-        task = _event_subscriber_task
-        _event_subscriber_task = None
-        if task is not None and not task.done():
-            task.cancel()
-            # Both are needed: CancelledError derives from BaseException, so
-            # `except Exception` alone would not catch it.
-            try:
-                await task
-            except (asyncio.CancelledError, Exception):
-                pass
-
-        logger.info("Stopping the consumer")
-        event_subscriber = EventSubscriber.get_instance()
-        try:
-            # stop() is synchronous (it joins threads), so it must not be
-            # awaited. Offload it, bounded, off the event loop.
-            await asyncio.wait_for(
-                asyncio.get_running_loop().run_in_executor(
-                    None,
-                    functools.partial(
-                        event_subscriber.stop,
-                        join_timeout=KEEP_CONSUMER_JOIN_TIMEOUT,
-                    ),
-                ),
-                timeout=KEEP_CONSUMER_STOP_TIMEOUT,
-            )
-            logger.info("Consumer stopped successfully")
-        except asyncio.TimeoutError:
-            logger.warning(
-                "Consumer did not stop within %ss; continuing shutdown",
-                KEEP_CONSUMER_STOP_TIMEOUT,
-            )
-        except Exception:
-            logger.exception("Failed to stop the consumer")
+        stops.append(_stop_event_subscriber())
+    await asyncio.gather(*stops, return_exceptions=True)
 
     logger.info("Keep shutdown complete")
 
