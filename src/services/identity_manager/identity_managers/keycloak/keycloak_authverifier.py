@@ -52,6 +52,8 @@ class KeycloakAuthVerifier(AuthVerifierBase):
     def __init__(self, scopes: list[str] = []) -> None:
         super().__init__(scopes)
         self.keycloak_url = os.environ.get("KEYCLOAK_URL")
+        if self.keycloak_url and not self.keycloak_url.endswith("/"):
+            self.keycloak_url += "/"
         self.keycloak_realm = os.environ.get("KEYCLOAK_REALM")
         self.keycloak_client_id = os.environ.get("KEYCLOAK_CLIENT_ID")
         self.keycloak_audience = os.environ.get("KEYCLOAK_AUDIENCE")
@@ -229,9 +231,10 @@ class KeycloakAuthVerifier(AuthVerifierBase):
                 active_tenant = None
             payload = self.keycloak_client.decode_token(token, validate=True)
         except Exception as e:
+            logger.error("Token decoding error: %s", str(e))
             if "Expired" in str(e):
                 raise HTTPException(status_code=401, detail="Expired Keycloak token")
-            raise HTTPException(status_code=401, detail="Invalid Keycloak token")
+            raise HTTPException(status_code=401, detail=f"Invalid Keycloak token: {str(e)}")
         tenant_id = payload.get("keep_tenant_id")
         email = payload.get("preferred_username")
         org_id = payload.get("active_organization", {}).get("id")
@@ -373,6 +376,10 @@ class KeycloakAuthVerifier(AuthVerifierBase):
         # but gets the superadmin role everywhere.
         if self._is_superadmin(email, entity_groups):
             role = "superadmin"
+
+        # Fallback to generic tenant ID if not present in token
+        if not tenant_id:
+            tenant_id = GENERIC_TENANT_UUID
 
         # finally, check if the role is in the allowed roles
         authenticated_entity = AuthenticatedEntity(
