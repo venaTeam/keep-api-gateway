@@ -50,8 +50,9 @@ class KeycloakIdentityManager(BaseIdentityManager):
             os.environ.get("KEYCLOAK_VERIFY_CERT", "true").lower() == "true"
         )
         try:
+            base_keycloak_url = os.environ["KEYCLOAK_URL"].rstrip("/")
             self.keycloak_admin = KeycloakAdmin(
-                server_url=os.environ["KEYCLOAK_URL"] + "/admin",
+                server_url=base_keycloak_url + "/admin",
                 username=os.environ.get("KEYCLOAK_ADMIN_USER"),
                 password=os.environ.get("KEYCLOAK_ADMIN_PASSWORD"),
                 realm_name=os.environ["KEYCLOAK_REALM"],
@@ -60,16 +61,17 @@ class KeycloakIdentityManager(BaseIdentityManager):
             self.client_id = self.keycloak_admin.get_client_id(
                 os.environ["KEYCLOAK_CLIENT_ID"]
             )
+            keycloak_url = base_keycloak_url + "/"
             self.keycloak_id_connection = KeycloakOpenIDConnection(
-                server_url=os.environ["KEYCLOAK_URL"],
+                server_url=keycloak_url,
                 client_id=os.environ["KEYCLOAK_CLIENT_ID"],
                 realm_name=os.environ["KEYCLOAK_REALM"],
                 client_secret_key=os.environ["KEYCLOAK_CLIENT_SECRET"],
                 verify=self.keycloak_verify_cert,
             )
 
-            self.admin_url = f"{os.environ['KEYCLOAK_URL']}/admin/realms/{os.environ['KEYCLOAK_REALM']}/clients/{self.client_id}"
-            self.admin_url_without_client = f"{os.environ['KEYCLOAK_URL']}/admin/realms/{os.environ['KEYCLOAK_REALM']}"
+            self.admin_url = f"{base_keycloak_url}/admin/realms/{os.environ['KEYCLOAK_REALM']}/clients/{self.client_id}"
+            self.admin_url_without_client = f"{base_keycloak_url}/admin/realms/{os.environ['KEYCLOAK_REALM']}"
             self.realm = os.environ["KEYCLOAK_REALM"]
             # if Keep controls the Keycloak server so it have event listener
             # for future use
