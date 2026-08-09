@@ -11,12 +11,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.routes import alerts
+from src.services.producers import factory
 from src.services.producers.base_event_handler import (
     DLQ_TASK_NAME,
     MAIN_TASK_NAME,
     ProduceResult,
     result_from_task_name,
 )
+from src.services.producers.kafka_producer import KafkaEventProducer
 
 
 def test_result_from_task_name_classifies_the_sink():
@@ -83,8 +85,6 @@ def test_publish_failure_answers_503_not_500():
 async def test_produce_raises_when_both_topics_are_unreachable():
     """Why the route needs its own 503: KAFKA_DLQ_BOOTSTRAP_SERVERS defaults to
     the *main* brokers, so an outage usually takes the fallback with it."""
-    from src.services.producers.kafka_producer import KafkaEventProducer
-
     with patch("src.services.producers.kafka_producer.AIOKafkaProducer"):
         producer = KafkaEventProducer()
 
@@ -151,8 +151,6 @@ async def test_kafka_producer_health_reflects_connection_state():
 async def test_stop_closes_both_producers():
     """Started eagerly and never closed, they are reclaimed by process exit and
     aiokafka logs "Unclosed AIOKafkaProducer" on every restart."""
-    from src.services.producers.kafka_producer import KafkaEventProducer
-
     with patch("src.services.producers.kafka_producer.AIOKafkaProducer"):
         producer = KafkaEventProducer()
 
@@ -170,8 +168,6 @@ async def test_stop_closes_both_producers():
 @pytest.mark.asyncio
 async def test_stop_survives_a_broker_that_has_gone_away():
     """Shutdown must not hang or raise because a close failed."""
-    from src.services.producers.kafka_producer import KafkaEventProducer
-
     with patch("src.services.producers.kafka_producer.AIOKafkaProducer"):
         producer = KafkaEventProducer()
 
@@ -186,8 +182,6 @@ async def test_stop_survives_a_broker_that_has_gone_away():
 
 @pytest.mark.asyncio
 async def test_stop_event_producer_is_a_noop_before_one_exists():
-    from src.services.producers import factory
-
     with patch.object(factory, "_kafka_producer_instance", None):
         await factory.stop_event_producer()
 
