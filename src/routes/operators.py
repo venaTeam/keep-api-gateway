@@ -71,22 +71,30 @@ def list_operators_endpoint(
     "/available-groups", description="Groups that have no operator yet"
 )
 def available_groups_endpoint(
+    search: Optional[str] = Query(default=None),
     authenticated_entity: AuthenticatedEntity = Depends(
         IdentityManagerFactory.get_auth_verifier(["read:tenants"])
     ),
 ) -> List[str]:
-    # A superadmin may create an operator for ANY group, so offer all Keycloak
-    # groups (fetched live). A regular member is limited to their own groups
-    # (from their token) -- matching the group-ownership check in POST /operators.
+    # A superadmin may create an operator for ANY group, so search Keycloak
+    # SERVER-SIDE (fetching every group with member counts times out at scale).
+    # A regular member is limited to their own token groups (a small list), so no
+    # search is needed there -- matching the POST /operators group-ownership check.
     if is_superadmin(authenticated_entity):
+        if not search:
+            return []  # the async picker always sends ?search=; require it here
         identity_manager = IdentityManagerFactory.get_identity_manager(
             authenticated_entity.tenant_id
         )
         candidate = [
-            (g.path or f"/{g.name}") for g in identity_manager.get_groups()
+            (g.path or f"/{g.name}")
+            for g in identity_manager.get_groups(search=search)
         ]
     else:
         candidate = get_groups(authenticated_entity)
+        if search:
+            s = search.lower()
+            candidate = [g for g in candidate if s in g.lower()]
 
     in_use = db.operator_groups_in_use()
     return sorted({g for g in candidate if g and g not in in_use})

@@ -70,7 +70,7 @@ class OneLoginIdentityManager(BaseIdentityManager):
         """Get the URL for the SSO wizard - redirect to OneLogin login"""
         return f"{self.onelogin_issuer}/auth"
 
-    def get_users(self) -> list[User]:
+    def get_users(self, search: str | None = None) -> list[User]:
         """Get all users from OneLogin - disabled"""
         self.logger.info("get_users called but management functions are disabled")
         return []
@@ -101,7 +101,7 @@ class OneLoginIdentityManager(BaseIdentityManager):
         """Get the auth verifier for OneLogin - this still works"""
         return OneLoginAuthVerifier(scopes)
 
-    def get_groups(self) -> list[Group]:
+    def get_groups(self, search: str | None = None) -> list[Group]:
         """Get all groups from OneLogin - disabled"""
         self.logger.info("get_groups called but management functions are disabled")
         return []

@@ -12,7 +12,7 @@ class Oauth2proxyIdentityManager(BaseIdentityManager):
         super().__init__(tenant_id, context_manager, **kwargs)
         self.logger.info("Oauth2 proxy Identity Manager initialized")
 
-    def get_users(self) -> list[User]:
+    def get_users(self, search: str | None = None) -> list[User]:
         users = get_users_from_db()
         users = [
             User(

@@ -78,7 +78,7 @@ class OktaIdentityManager(BaseIdentityManager):
         tenant_id = authenticated_entity.tenant_id
         return f"{self.okta_issuer}/sso/{tenant_id}"
 
-    def get_users(self) -> list[User]:
+    def get_users(self, search: str | None = None) -> list[User]:
         """Get all users from Okta - disabled"""
         self.logger.info("get_users called but management functions are disabled")
         return []
@@ -109,7 +109,7 @@ class OktaIdentityManager(BaseIdentityManager):
         """Get the auth verifier for Okta - this still works"""
         return OktaAuthVerifier(scopes)
 
-    def get_groups(self) -> list[Group]:
+    def get_groups(self, search: str | None = None) -> list[Group]:
         """Get all groups from Okta - disabled"""
         self.logger.info("get_groups called but management functions are disabled")
         return []
