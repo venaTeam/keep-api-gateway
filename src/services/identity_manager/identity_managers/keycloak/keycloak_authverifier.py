@@ -158,12 +158,19 @@ class KeycloakAuthVerifier(AuthVerifierBase):
         self.logger.info("Reloaded tenants", extra={"tenants": tenants})
 
     def get_org_name_by_tenant_id(self, tenant_id):
+        # Returns the Keycloak-group org name for a tenant, or None when the
+        # tenant is not group-backed (e.g. a tenant created in the Keep UI).
+        # Callers MUST tolerate None -- raising here 401s tenant switching into
+        # any Keep-created tenant (VENA-5596).
         for org_name, org_tenant_id in self.tenants.items():
             if org_tenant_id.get("tenant_id") == tenant_id:
                 return org_name
 
-        self.logger.error("Tenant id not found", extra={"tenant_id": tenant_id})
-        raise Exception("Org not found")
+        self.logger.debug(
+            "No Keycloak org for tenant (likely Keep-created)",
+            extra={"tenant_id": tenant_id},
+        )
+        return None
 
     def _check_if_group_represents_org(self, group_name: str):
         # if must start with the group prefix
@@ -223,6 +230,10 @@ class KeycloakAuthVerifier(AuthVerifierBase):
         # for the org_name (e.g. keep-org-a) iterate over the groups and find the role
         # e.g. /org-a-admin, /org-a-noc, /org-a-webhook
         # we want to iterate from the "strongest" to the "weakest" role
+        # No group-backed org (e.g. a Keep-created tenant) -> no role from groups;
+        # `None in group_lower` would otherwise raise a TypeError.
+        if not org_name:
+            return None
         for role, keep_role in self.keycloak_roles.items():
             for group in user_groups:
                 group_lower = group.lower()
