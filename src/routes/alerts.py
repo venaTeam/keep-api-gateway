@@ -489,9 +489,9 @@ async def assign_alert(
     unassign: bool = False,
     body: AssignAlertRequestBody = None,
     authenticated_entity: AuthenticatedEntity = Depends(
-        # @tb: this is read because NOC users can also assign alerts to themselves
-        # anyway, this function needs to be refactored
-        IdentityManagerFactory.get_auth_verifier(["read:alert"])
+        # Assigning an alert mutates it -> requires write:alert so a viewer
+        # (read-only) cannot assign. Editors/admins keep access. (VENA-5596)
+        IdentityManagerFactory.get_auth_verifier(["write:alert"])
     ),
     session: Session = Depends(get_session),
     event_producer: EventProducer = Depends(get_event_producer),
@@ -717,7 +717,8 @@ def get_alert(
 async def enrich_alert_note(
     enrich_data: EnrichAlertNoteRequestBody,
     authenticated_entity: AuthenticatedEntity = Depends(
-        IdentityManagerFactory.get_auth_verifier(["read:alert"])  # also NOC
+        # Adding a note mutates the alert -> write:alert (viewer is read-only).
+        IdentityManagerFactory.get_auth_verifier(["write:alert"])
     ),
     session: Session = Depends(get_session),
     event_producer: EventProducer = Depends(get_event_producer),
