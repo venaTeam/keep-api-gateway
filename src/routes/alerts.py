@@ -44,6 +44,7 @@ from src.services.sse import notify_sse
 from src.repositories.db import get_alert_audit as get_alert_audit_db
 from src.repositories.db import get_error_alerts as get_error_alerts_db
 from src.repositories.dependencies import (
+    GENERIC_TENANT_UUID,
     extract_generic_body,
 )
 from src.services.producers.factory import get_event_producer
@@ -94,20 +95,21 @@ def _extract_operator(event) -> str | None:
     return getattr(item, "operator", None)
 
 
-def _resolve_ingestion_tenant(event, default_tenant_id: str) -> str:
-    """Route an alert to the tenant that owns its `operator`. Falls back to
-    `default_tenant_id` (the API-key's tenant) when the alert carries no operator
-    or the operator matches no tenant (VENA-5596 Epic 5)."""
+def _resolve_ingestion_tenant(event) -> str:
+    """Route an alert to the tenant that owns its `operator`. An alert with no
+    operator, or an operator that maps to no tenant, goes to the GENERAL tenant --
+    NOT the ingesting key's tenant -- so a specific tenant only ever receives its
+    own operators' alerts (VENA-5596 Epic 5)."""
     operator_name = _extract_operator(event)
     if not operator_name:
-        return default_tenant_id
+        return GENERIC_TENANT_UUID
     operator = get_operator_by_name(operator_name)
     if operator is None:
         logger.info(
-            "Alert operator matched no tenant; using default",
-            extra={"operator": operator_name, "tenant_id": default_tenant_id},
+            "Alert operator matched no tenant; routing to general",
+            extra={"operator": operator_name, "tenant_id": GENERIC_TENANT_UUID},
         )
-        return default_tenant_id
+        return GENERIC_TENANT_UUID
     logger.info(
         "Routing alert by operator",
         extra={"operator": operator_name, "tenant_id": operator.tenant_id},
@@ -582,8 +584,9 @@ async def receive_generic_event(
         tenant_id (str, optional): Defaults to Depends(verify_api_key).
     """
     # Route by operator: an alert whose operator maps to a tenant goes there,
-    # else it stays in the API-key's tenant (VENA-5596 Epic 5).
-    tenant_id = _resolve_ingestion_tenant(event, authenticated_entity.tenant_id)
+    # else it goes to the GENERAL tenant (never the API-key's tenant), so a
+    # specific tenant only receives its own operators' alerts (VENA-5596 Epic 5).
+    tenant_id = _resolve_ingestion_tenant(event)
     # Use the abstract event producer (Redis or Kafka)
     try:
         task_name = await event_producer.produce(
@@ -661,8 +664,9 @@ async def receive_event(
     # We do NOT resolve the provider here anymore, we pass the provider_name to the worker
 
     # Route by operator: an alert whose operator maps to a tenant goes there,
-    # else it stays in the API-key's tenant (VENA-5596 Epic 5).
-    tenant_id = _resolve_ingestion_tenant(event, authenticated_entity.tenant_id)
+    # else it goes to the GENERAL tenant (never the API-key's tenant), so a
+    # specific tenant only receives its own operators' alerts (VENA-5596 Epic 5).
+    tenant_id = _resolve_ingestion_tenant(event)
     # Use the abstract event producer (Redis or Kafka)
     task_name = await event_producer.produce(
         event=event,
