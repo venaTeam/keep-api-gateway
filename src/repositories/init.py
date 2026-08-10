@@ -14,23 +14,56 @@ from src.providers.providers_service import ProvidersService
 logger = logging.getLogger(__name__)
 
 PROVISION_RESOURCES = os.environ.get("PROVISION_RESOURCES", "true") == "true"
+PROVISIONING_FATAL = os.environ.get("KEEP_PROVISIONING_FATAL", "false") == "true"
 
 
 def provision_resources(provision_dashboards_func=None):
-    if PROVISION_RESOURCES:
-        logger.info("Loading providers into cache")
-        # provision providers from env. relevant only on single tenant.
-        logger.info("Provisioning providers")
-        ProvidersService.provision_providers(SINGLE_TENANT_UUID)
-        logger.info("Providers loaded successfully")
-        if provision_dashboards_func:
-            provision_dashboards_func(SINGLE_TENANT_UUID)
-            logger.info("Dashboards provisioned successfully")
-        logger.info("Provisioning deduplication rules")
-        provision_deduplication_rules_from_env(SINGLE_TENANT_UUID)
-        logger.info("Deduplication rules provisioned successfully")
-    else:
+    """Write providers, dashboards and dedup rules into the DB before serving.
+
+    Each step is guarded independently, so one failure neither skips the others
+    nor stops startup. This runs in gunicorn's master **before the socket binds**,
+    so an exception here CrashLoopBackOffs the pod — and every step is idempotent,
+    which is what makes logging-and-continuing the right default.
+    `KEEP_PROVISIONING_FATAL=true` restores fail-fast for CI, where a bad provider
+    file *should* fail loudly.
+
+    `PROVISION_RESOURCES` stays on by default: the gateway owns provisioning, as
+    it owns the schema, unlike keep-event-handler.
+    """
+    if not PROVISION_RESOURCES:
         logger.info("Provisioning resources is disabled")
+        return
+
+    steps = [
+        (
+            "providers",
+            lambda: ProvidersService.provision_providers(SINGLE_TENANT_UUID),
+        ),
+    ]
+    if provision_dashboards_func:
+        steps.append(
+            ("dashboards", lambda: provision_dashboards_func(SINGLE_TENANT_UUID))
+        )
+    steps.append(
+        (
+            "deduplication rules",
+            lambda: provision_deduplication_rules_from_env(SINGLE_TENANT_UUID),
+        )
+    )
+
+    for name, step in steps:
+        logger.info("Provisioning %s", name)
+        try:
+            step()
+            logger.info("%s provisioned successfully", name)
+        except Exception:
+            if PROVISIONING_FATAL:
+                raise
+            logger.exception(
+                "Failed to provision %s — continuing startup (set "
+                "KEEP_PROVISIONING_FATAL=true to fail fast instead)",
+                name,
+            )
 
 
 def init_services(auth_type: str, provision_dashboards_func=None, skip_ngrok=False):

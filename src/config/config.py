@@ -1,4 +1,17 @@
-﻿import logging
+﻿"""
+Application settings, and the gunicorn config file.
+
+This module is passed to gunicorn as `-c src/config/config.py`, so module-level
+names matching gunicorn setting names (`on_starting`, `post_worker_init`,
+`child_exit`) *are* the server configuration.
+
+`KEEP_CONSUMER_*` bound the EventSubscriber lifecycle. Its consumer threads call
+back into this API, so the start is deferred until lifespan startup completes,
+and the shutdown bounds keep a wedged consumer from holding shutdown past the
+pod's `terminationGracePeriodSeconds`.
+"""
+
+import logging
 import os
 import src.utils.logging
 from src.config.core import starlette_config
@@ -18,6 +31,15 @@ HOST = starlette_config("KEEP_HOST", default="0.0.0.0")
 PORT = starlette_config("PORT", default=8080, cast=int)
 SCHEDULER = starlette_config("SCHEDULER", default="true", cast=bool)
 CONSUMER = starlette_config("CONSUMER", default="true", cast=bool)
+KEEP_CONSUMER_START_DELAY = starlette_config(
+    "KEEP_CONSUMER_START_DELAY", default=0, cast=float
+)
+KEEP_CONSUMER_JOIN_TIMEOUT = starlette_config(  # per consumer thread
+    "KEEP_CONSUMER_JOIN_TIMEOUT", default=10, cast=float
+)
+KEEP_CONSUMER_STOP_TIMEOUT = starlette_config(  # overall
+    "KEEP_CONSUMER_STOP_TIMEOUT", default=20, cast=float
+)
 TOPOLOGY = starlette_config("KEEP_TOPOLOGY_PROCESSOR", default="false", cast=bool)
 WATCHER = starlette_config("WATCHER", default="false", cast=bool)
 KEEP_DEBUG_TASKS = starlette_config("KEEP_DEBUG_TASKS", default="false", cast=bool)

@@ -66,3 +66,6 @@ dmypy.json
 
 # Jupyter Notebook
 .ipynb_checkpoints
+
+# Local SQLite databases (never ship in the image)
+*.db

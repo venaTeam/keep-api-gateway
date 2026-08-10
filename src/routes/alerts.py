@@ -46,7 +46,12 @@ from src.repositories.dependencies import (
     extract_generic_body,
 )
 from src.services.producers.factory import get_event_producer
-from src.services.producers.base_event_handler import EventProducer, EventType
+from src.services.producers.base_event_handler import (
+    EventProducer,
+    EventType,
+    ProduceResult,
+    result_from_task_name,
+)
 from src.repositories.elastic import ElasticClient
 from src.models.action_type import ActionType
 from src.services.search_engine import SearchEngine
@@ -79,6 +84,83 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 REDIS = os.environ.get("REDIS", "false") == "true"
+
+KEEP_ALERT_DLQ_ACCEPT = os.environ.get("KEEP_ALERT_DLQ_ACCEPT", "false") == "true"
+KEEP_ALERT_RETRY_AFTER = os.environ.get(
+    "KEEP_ALERT_RETRY_AFTER", os.environ.get("KEEP_ALERT_DLQ_RETRY_AFTER", "5")
+)
+
+
+def _retry_later(detail: str, **body) -> JSONResponse:
+    """The single "this alert was not ingested, send it again" answer.
+
+    Both rejection paths go through here so the retry contract cannot drift
+    between them — senders were asked to key off 503 plus `Retry-After`.
+
+    `KEEP_ALERT_RETRY_AFTER` sets that header. It is not DLQ-specific: it applies
+    to every rejected publish, diverted or not. The old `KEEP_ALERT_DLQ_RETRY_AFTER`
+    is still read as a fallback so a chart that sets it keeps working.
+
+    `KEEP_ALERT_DLQ_ACCEPT=true` restores the old "202 accepted" contract for
+    senders that must not see an error. The DLQ topic exists, but nothing
+    consumes it, so an alert that lands there is retained and never ingested —
+    which is why the default is to answer 503 and make the sender retry.
+    """
+    return JSONResponse(
+        content={**body, "detail": detail},
+        status_code=503,
+        headers={"Retry-After": KEEP_ALERT_RETRY_AFTER},
+    )
+
+
+def _ingestion_response(task_name, source: str) -> JSONResponse:
+    """Build the ingestion response, labelling the metric by where the event
+    actually landed rather than reporting success unconditionally."""
+    result = result_from_task_name(task_name)
+    body = {"task_name": task_name or "async-task", "sink": result.value}
+
+    if result is not ProduceResult.DLQ:
+        alert_ingestion_total.labels(source=source, status="success").inc()
+        return JSONResponse(content=body, status_code=202)
+
+    alert_ingestion_total.labels(source=source, status="dlq").inc()
+    logger.error(
+        "Alert diverted to the DLQ topic and will not be ingested", extra=body
+    )
+
+    if KEEP_ALERT_DLQ_ACCEPT:
+        return JSONResponse(content=body, status_code=202)
+
+    return _retry_later(
+        "Alert could not be published to the ingestion topic and was written to "
+        "the dead-letter topic; it will not be processed. Please retry.",
+        **body,
+    )
+
+
+def _publish_failed_response(
+    exc: Exception, source: str, trace_id: str
+) -> JSONResponse:
+    """Answer a publish that reached no topic at all.
+
+    Both the main send and the DLQ fallback failed — the ordinary shape of a
+    Kafka outage, since `KAFKA_DLQ_BOOTSTRAP_SERVERS` defaults to the main
+    brokers. Unhandled, this reaches the catch-all in `main.py` as a 500, which
+    carries no "retry me" semantics; senders were asked to retry on 503.
+    """
+    alert_ingestion_error_total.labels(
+        source=source, error_type=type(exc).__name__
+    ).inc()
+    logger.exception(
+        "Failed to publish alert to any topic; rejecting so the sender retries",
+        extra={"trace_id": trace_id, "source": source},
+    )
+    # trace_id travels in the body so a sender reporting a 503 gives us something
+    # to grep for.
+    return _retry_later(
+        "Alert could not be published to the ingestion topic. Please retry.",
+        trace_id=trace_id,
+    )
 
 
 class AlertHistoryResponse(BaseModel):
@@ -559,19 +641,12 @@ async def receive_generic_event(
             trace_id=request.state.trace_id,
             provider_name=None,
         )
-        alert_ingestion_total.labels(source="generic", status="success").inc()
     except Exception as e:
-        alert_ingestion_error_total.labels(
-            source="generic", error_type=type(e).__name__
-        ).inc()
-        raise
-    except Exception:
-        raise
+        return _publish_failed_response(
+            e, source="generic", trace_id=request.state.trace_id
+        )
 
-    if not task_name:
-        task_name = "async-task"
-
-    return JSONResponse(content={"task_name": task_name}, status_code=202)
+    return _ingestion_response(task_name, source="generic")
 
 
 # https://learn.netdata.cloud/docs/alerts-&-notifications/notifications/centralized-cloud-notifications/webhook#challenge-secret
@@ -624,23 +699,21 @@ async def receive_event(
     # We do NOT resolve the provider here anymore, we pass the provider_name to the worker
 
     # Use the abstract event producer (Redis or Kafka)
-    task_name = await event_producer.produce(
-        event=event,
-        tenant_id=authenticated_entity.tenant_id,
-        provider_type=provider_type,
-        provider_id=provider_id,
-        fingerprint=fingerprint,
-        api_key_name=authenticated_entity.api_key_name,
-        trace_id=trace_id,
-        provider_name=provider_name,
-    )
-    alert_ingestion_total.labels(source=provider_type, status="success").inc()
+    try:
+        task_name = await event_producer.produce(
+            event=event,
+            tenant_id=authenticated_entity.tenant_id,
+            provider_type=provider_type,
+            provider_id=provider_id,
+            fingerprint=fingerprint,
+            api_key_name=authenticated_entity.api_key_name,
+            trace_id=trace_id,
+            provider_name=provider_name,
+        )
+    except Exception as e:
+        return _publish_failed_response(e, source=provider_type, trace_id=trace_id)
 
-
-    if not task_name:
-        task_name = "async-task"
-
-    return JSONResponse(content={"task_name": task_name}, status_code=202)
+    return _ingestion_response(task_name, source=provider_type)
 
 
 @router.get(
