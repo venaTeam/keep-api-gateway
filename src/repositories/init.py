@@ -13,21 +13,27 @@ from src.providers.providers_service import ProvidersService
 
 logger = logging.getLogger(__name__)
 
-# The gateway owns provisioning (as it owns the schema), so unlike
-# keep-event-handler this stays on by default.
 PROVISION_RESOURCES = os.environ.get("PROVISION_RESOURCES", "true") == "true"
-# Provisioning runs in gunicorn's master before the socket binds, so an exception
-# CrashLoopBackOffs the pod. Every step is idempotent, so failures are logged and
-# startup continues unless this is set.
 PROVISIONING_FATAL = os.environ.get("KEEP_PROVISIONING_FATAL", "false") == "true"
 
 
 def provision_resources(provision_dashboards_func=None):
+    """Write providers, dashboards and dedup rules into the DB before serving.
+
+    Each step is guarded independently, so one failure neither skips the others
+    nor stops startup. This runs in gunicorn's master **before the socket binds**,
+    so an exception here CrashLoopBackOffs the pod — and every step is idempotent,
+    which is what makes logging-and-continuing the right default.
+    `KEEP_PROVISIONING_FATAL=true` restores fail-fast for CI, where a bad provider
+    file *should* fail loudly.
+
+    `PROVISION_RESOURCES` stays on by default: the gateway owns provisioning, as
+    it owns the schema, unlike keep-event-handler.
+    """
     if not PROVISION_RESOURCES:
         logger.info("Provisioning resources is disabled")
         return
 
-    # Guarded independently: one failure must not skip the remaining steps.
     steps = [
         (
             "providers",

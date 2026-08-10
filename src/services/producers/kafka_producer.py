@@ -44,10 +44,37 @@ def _create_ssl_context(security_protocol: str, cafile: Optional[str], certfile:
 
 
 class KafkaEventProducer(EventProducer):
+    """Publishes alerts to the ingestion topic, with every wait bounded.
+
+    **The produce path is bounded in three layers, and all three are needed.**
+    aiokafka defaults `request_timeout_ms` to 40 s, and a send that cannot
+    resolve topic metadata polls the brokers for that entire time — roughly 400
+    metadata requests aimed at a cluster that is by definition already unhealthy,
+    while holding an async slot. So: an explicit `request_timeout_ms`, a per-send
+    ceiling (`send_timeout`), and one deadline shared across all attempts
+    (`produce_timeout`). Without that last one the fix backfires — `max_retries`
+    x `send_timeout` would exceed the 40 s it replaced.
+
+    **Retries are backed off** (`retry_backoff` doubling to `retry_backoff_max`).
+    The failure this loop exists to survive is a partition-leader election, which
+    takes seconds; attempts fired back-to-back all hit the same broken state, so
+    the original three-in-a-millisecond loop was a retry in name only.
+
+    **Connections are established eagerly** via `start()`, so the first alert to
+    a fresh pod does not pay the bootstrap cost, and closed by `stop()`, each
+    bounded by `stop_timeout` so shutdown cannot hang on a broker that has
+    already gone away. `_start_lock` serializes concurrent first-sends and
+    probe-driven reconnects, so a burst on a cold producer costs one bootstrap
+    rather than N; it is rebound per event loop, because this class is a
+    module-level singleton and a Lock reused across loops raises.
+
+    **The DLQ fallback is retained but is not a delivery.** Nothing consumes that
+    topic, so `produce()` marks a diverted event via `DLQ_TASK_NAME` and the
+    route answers 503 rather than reporting success.
+    """
+
     def __init__(self):
         self._started = False
-        # Serializes concurrent first-sends and probe-driven reconnects, so a
-        # burst on a cold producer costs one bootstrap, not N. See _get_start_lock.
         self._start_lock: Optional[asyncio.Lock] = None
         self._start_lock_loop = None
         self._last_start_error: Optional[str] = None
@@ -58,29 +85,19 @@ class KafkaEventProducer(EventProducer):
         self.topic = config("KAFKA_TOPIC", default="keep-events")
         self.max_retries = int(config("KAFKA_MAX_RETRIES", default="5"))
 
-        # --- Bounding the produce path -------------------------------------
-        # aiokafka's default is 40 s. A send that can't proceed polls the brokers
-        # for that whole time, holding a worker slot and hammering a cluster
-        # that's already unhealthy.
         self.request_timeout_ms = int(
             config("KAFKA_REQUEST_TIMEOUT_MS", default="10000")
         )
-        # Per-send ceiling, plus one overall ceiling for all attempts — so
-        # max_retries × send_timeout can't add up to worse than the 40 s above.
         self.send_timeout = float(config("KAFKA_SEND_TIMEOUT_SECONDS", default="5"))
         self.produce_timeout = float(
             config("KAFKA_PRODUCE_TIMEOUT_SECONDS", default="15")
         )
-        # Without backoff every attempt lands in the same millisecond and hits
-        # the same broken state — a retry loop that can't survive a leader
-        # election, which is the thing it exists for.
         self.retry_backoff = float(
             config("KAFKA_PRODUCE_RETRY_BACKOFF_SECONDS", default="0.5")
         )
         self.retry_backoff_max = float(
             config("KAFKA_PRODUCE_RETRY_BACKOFF_MAX_SECONDS", default="4")
         )
-        # Per-producer close bound, so shutdown cannot hang on a dead broker.
         self.stop_timeout = float(config("KAFKA_STOP_TIMEOUT_SECONDS", default="5"))
 
         # DLQ config
@@ -219,19 +236,20 @@ class KafkaEventProducer(EventProducer):
         return self._last_result
 
     async def _send_to_dlq(self, value: bytes, trace_id: str) -> str:
+        """Divert to the dead-letter topic, and say so.
+
+        Bounded like the main send. Only the main topic is consumed, so an event
+        that lands here is NOT ingested — the returned task name carries the
+        marker that lets the route answer 503 instead of reporting success.
+        """
         try:
             await self.dlq_producer.start()
         except RuntimeError:
             pass
 
-        # Bounded for a sharper reason than the main send: the configured DLQ
-        # topic doesn't exist, so this can only spend the request timeout looking
-        # for it and then raise. Fail fast instead.
         await self._send_bounded(
             self.dlq_producer, self.dlq_topic, value, self.send_timeout
         )
-        # Only the main topic is consumed, so this event is NOT ingested — the
-        # returned task name carries the marker so the route can say so.
         logger.warning(
             "Produced event to the DLQ topic — it will NOT be ingested by "
             "keep-event-handler",

@@ -11,6 +11,26 @@ and the engine will be shared among all the processes, causing issues with the c
 
 The mitigation is to create different engines for each process, and the master process should only be responsible
 for creating the database and tables, while the worker processes should only be responsible for creating the sessions.
+
+Migrations and the schema check
+-------------------------------
+
+`migrate_db` runs in gunicorn's `on_starting`, i.e. **before the socket binds**,
+on every one of the 5 replicas. Two settings govern that:
+
+* `KEEP_MIGRATION_ADVISORY_LOCK_KEY` — arbitrary, but must be identical in every
+  process that migrates.
+* `KEEP_MIGRATION_LOCK_TIMEOUT_SECONDS` — must comfortably **exceed** the
+  startupProbe budget (`periodSeconds x failureThreshold`), so the probe decides
+  when to give up rather than this timer. Giving up means attempting DDL another
+  replica is part-way through — the "column already exists" crash the lock exists
+  to prevent — whereas being killed by the probe costs a restart from a pod that
+  never began migrating. An advisory lock is session-scoped, so a holder that
+  dies releases it automatically; the only reason to stop waiting is a holder
+  that is alive and slow, and there waiting is the safer answer.
+
+`schema_at_head` backs `/readyz`. `KEEP_READYZ_SCHEMA_STRICT` is its rollback
+lever: exact revision equality instead of "not behind".
 """
 
 import hashlib
@@ -169,28 +189,15 @@ def try_create_single_tenant(tenant_id: str, create_default_user=True) -> None:
             pass
 
 
-# Arbitrary, but must be identical in every process that migrates.
 _MIGRATION_LOCK_KEY = int(
     os.environ.get("KEEP_MIGRATION_ADVISORY_LOCK_KEY", "8274419300112233")
 )
-# How long to wait for the migrating replica before giving up on the lock.
-#
-# Must comfortably EXCEED the startupProbe budget (periodSeconds x
-# failureThreshold), so the probe decides when to give up rather than this timer.
-# Giving up means attempting DDL another replica is part-way through — the
-# "column already exists" crash the lock exists to prevent — whereas being killed
-# by the probe costs a restart from a pod that never began migrating. An advisory
-# lock is session-scoped, so a holder that dies releases it automatically; the
-# only reason to stop waiting is a holder that is alive and slow, and for that,
-# waiting is the safer answer.
 _MIGRATION_LOCK_TIMEOUT = int(
     os.environ.get("KEEP_MIGRATION_LOCK_TIMEOUT_SECONDS", "3600")
 )
 _MIGRATION_LOCK_POLL_SECONDS = float(
     os.environ.get("KEEP_MIGRATION_LOCK_POLL_SECONDS", "2")
 )
-
-# Rollback lever for `schema_at_head` — exact comparison instead of "not behind".
 SCHEMA_STRICT = os.environ.get("KEEP_READYZ_SCHEMA_STRICT", "false") == "true"
 
 
@@ -209,16 +216,18 @@ def get_alembic_config() -> "alembic.config.Config":
     return cfg
 
 
-# Memoised on success only. `lru_cache` would also cache a None from a transient
-# failure, and /readyz would then report "not at head" for the life of the
-# process with no recovery short of a restart.
 _script_directory_cache: "ScriptDirectory | None" = None
 _script_head_cache: str | None = None
 
 
 def _script_directory() -> "ScriptDirectory | None":
-    """This image's migration scripts. Cached: /readyz walks them on every probe
-    while the DB and the image disagree."""
+    """This image's migration scripts.
+
+    Memoised, because /readyz walks them on every probe for as long as the DB and
+    the image disagree — but on success only. `lru_cache` would also cache the
+    None from a transient failure, and /readyz would then report "not at head"
+    for the life of the process, with no recovery short of a restart.
+    """
     global _script_directory_cache
     if _script_directory_cache is not None:
         return _script_directory_cache

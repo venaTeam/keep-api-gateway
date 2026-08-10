@@ -15,7 +15,20 @@ mid-way. Deliberately not the readinessProbe yet — a schema comparison going
 false on every replica at once would empty the Service mid-rollout.
 
 Because it gates startup, a false negative kills the container, so both
-judgements are levered: `KEEP_READYZ_SCHEMA_STRICT`, `KEEP_READYZ_REQUIRE_PRODUCER`.
+judgements are levered:
+
+* `KEEP_READYZ_SCHEMA_STRICT` — exact revision equality instead of "not behind".
+* `KEEP_READYZ_REQUIRE_PRODUCER` — set false during a Kafka incident, or with
+  the brokers down no pod can finish starting, rather than starting and
+  answering the retryable 503 the ingestion route exists to give senders.
+* `KEEP_READYZ_CHECK_TIMEOUT` — per-check bound, so a sick dependency makes the
+  probe answer "not ready" rather than hang and tie up a worker slot. The checks
+  run in sequence, so the endpoint's worst case is twice this; keep it under the
+  probe's own `timeoutSeconds` or kubelet cuts the connection first.
+
+`db`, `db_on_start` and `factory` are imported as modules rather than names, so
+each check stays late-bound to whatever the module currently holds. The router is
+mounted without a prefix, so both paths are absolute.
 """
 
 import asyncio
@@ -25,24 +38,14 @@ import os
 from fastapi import APIRouter, Response
 from sqlalchemy import text
 
-# Imported as modules, not names: the checks below read `db.engine`,
-# `db_on_start.schema_at_head` and `factory.get_producer_instance` at call time,
-# so each one stays late-bound to whatever the module currently holds.
 from src.repositories import db, db_on_start
 from src.services.producers import factory
 
 logger = logging.getLogger(__name__)
 
-# Bounded so a sick dependency makes the probe answer "not ready" rather than
-# hang and tie up a worker slot. The checks run in sequence, so the endpoint's
-# worst case is 2x this — keep it under the probe's own `timeoutSeconds`.
 READYZ_CHECK_TIMEOUT = float(os.environ.get("KEEP_READYZ_CHECK_TIMEOUT", "2"))
-
-# Set false during a Kafka incident: with this on and the brokers down, no pod
-# can finish starting, instead of starting and answering the retryable 503.
 REQUIRE_PRODUCER = os.environ.get("KEEP_READYZ_REQUIRE_PRODUCER", "true") == "true"
 
-# Mounted without a prefix, so both paths are absolute.
 router = APIRouter()
 
 

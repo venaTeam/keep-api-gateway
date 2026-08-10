@@ -104,6 +104,15 @@ async def startup():
     """
     This runs for every worker on startup.
     Read more about lifespan here: https://fastapi.tiangolo.com/advanced/events/#lifespan
+
+    The producer is connected **eagerly**: a cold producer makes the first alert
+    on a fresh pod pay the bootstrap cost, and diverts it to the DLQ if the
+    brokers aren't up yet. It never raises — /readyz keeps the pod NotReady until
+    the producer connects.
+
+    The EventSubscriber start is deferred to a task, whose reference is kept
+    module-level because the loop only holds a weak one — and so `shutdown()` can
+    cancel a start that hasn't happened yet.
     """
     logger.info("Disope existing DB connections")
     # psycopg2.DatabaseError: error with status PGRES_TUPLES_OK and no message from the libpq
@@ -112,15 +121,9 @@ async def startup():
 
     logger.info("Starting the services")
 
-    # Connect eagerly: a cold producer makes the first alert on a fresh pod pay
-    # the bootstrap cost, and diverts it to the DLQ if the brokers aren't up yet.
-    # Never raises — /readyz keeps the pod NotReady until the producer connects.
     await start_event_producer()
 
     if CONSUMER:
-        # The task reference is kept module-level because the loop only holds a
-        # weak reference to it, and so shutdown() can cancel a start that hasn't
-        # happened yet.
         global _event_subscriber_task
         _event_subscriber_task = asyncio.create_task(
             _start_event_subscriber_when_ready()
@@ -149,16 +152,23 @@ async def _start_event_subscriber_when_ready():
 
 
 async def _stop_event_subscriber():
-    # Settle the deferred start first, otherwise a short-lived process can
-    # shut down before it fires and the consumer threads start *after*
-    # shutdown, never joined.
+    """Cancel a start that hasn't fired, then stop and join the consumer threads.
+
+    The deferred start is settled first, otherwise a short-lived process can shut
+    down before it fires and the consumer threads start *after* shutdown, never
+    joined. Awaiting the cancelled task catches both `CancelledError` and
+    `Exception` — the former derives from `BaseException`, so `except Exception`
+    alone would miss it.
+
+    `EventSubscriber.stop()` is synchronous (it joins threads), so it must not be
+    awaited; it is offloaded to an executor and bounded, so a wedged consumer
+    cannot hold shutdown past the grace period.
+    """
     global _event_subscriber_task
     task = _event_subscriber_task
     _event_subscriber_task = None
     if task is not None and not task.done():
         task.cancel()
-        # Both are needed: CancelledError derives from BaseException, so
-        # `except Exception` alone would not catch it.
         try:
             await task
         except (asyncio.CancelledError, Exception):
@@ -167,8 +177,6 @@ async def _stop_event_subscriber():
     logger.info("Stopping the consumer")
     event_subscriber = EventSubscriber.get_instance()
     try:
-        # stop() is synchronous (it joins threads), so it must not be
-        # awaited. Offload it, bounded, off the event loop.
         await asyncio.wait_for(
             asyncio.get_running_loop().run_in_executor(
                 None,
@@ -193,10 +201,17 @@ async def shutdown():
     """
     This runs for every worker on shutdown.
     Read more about lifespan here: https://fastapi.tiangolo.com/advanced/events/#lifespan
+
+    The producer and consumer stops run concurrently: they release unrelated
+    resources, and in series their bounds would add to 30 s rather than 20 s.
+    That matters because a UvicornWorker drains in-flight requests *before*
+    running this handler, so the drain and this shutdown add rather than overlap,
+    against gunicorn's 30 s graceful timeout. Overrun it and the worker is killed
+    part-way through: consumer threads are abandoned and in-flight requests die
+    as connection resets instead of the retryable 503 they would otherwise get.
+    `KEEP_CONSUMER_STOP_TIMEOUT` is the knob that keeps the total inside it.
     """
     logger.info("Shutting down Keep")
-    # Concurrently: they release unrelated resources, and in series their bounds
-    # would add up past gunicorn's graceful_timeout.
     stops = [stop_event_producer()]
     if CONSUMER:
         stops.append(_stop_event_subscriber())

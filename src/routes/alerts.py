@@ -85,12 +85,7 @@ logger = logging.getLogger(__name__)
 
 REDIS = os.environ.get("REDIS", "false") == "true"
 
-# The DLQ topic exists, but nothing consumes it — an alert that lands there is
-# retained and never ingested. Answering 503 makes the sender retry; set this to
-# restore the old "202 accepted" contract for senders that must not see an error.
 KEEP_ALERT_DLQ_ACCEPT = os.environ.get("KEEP_ALERT_DLQ_ACCEPT", "false") == "true"
-# Not DLQ-specific: it is the Retry-After on every rejected publish, diverted or
-# not. Old name still read so a chart that sets it keeps working.
 KEEP_ALERT_RETRY_AFTER = os.environ.get(
     "KEEP_ALERT_RETRY_AFTER", os.environ.get("KEEP_ALERT_DLQ_RETRY_AFTER", "5")
 )
@@ -101,6 +96,15 @@ def _retry_later(detail: str, **body) -> JSONResponse:
 
     Both rejection paths go through here so the retry contract cannot drift
     between them — senders were asked to key off 503 plus `Retry-After`.
+
+    `KEEP_ALERT_RETRY_AFTER` sets that header. It is not DLQ-specific: it applies
+    to every rejected publish, diverted or not. The old `KEEP_ALERT_DLQ_RETRY_AFTER`
+    is still read as a fallback so a chart that sets it keeps working.
+
+    `KEEP_ALERT_DLQ_ACCEPT=true` restores the old "202 accepted" contract for
+    senders that must not see an error. The DLQ topic exists, but nothing
+    consumes it, so an alert that lands there is retained and never ingested —
+    which is why the default is to answer 503 and make the sender retry.
     """
     return JSONResponse(
         content={**body, "detail": detail},

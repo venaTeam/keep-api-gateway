@@ -22,12 +22,18 @@ def _extract_identity(request: Request, attribute="email") -> str:
         return "anonymous"
 
 
-# Kubelet hits these every few seconds on every pod, at two log lines each. Only
-# the logging is skipped for them; the rest of the middleware still runs.
 PROBE_PATHS = frozenset({"/readyz", "/healthcheck"})
 
 
 class LoggingMiddleware(BaseHTTPMiddleware):
+    """Logs the start and end of every request, except the probes.
+
+    Kubelet hits `PROBE_PATHS` every few seconds on every pod, at two log lines
+    each, and they say nothing worth keeping. Only the logging is skipped for
+    them — the rest of the middleware still runs, because `request.state.tenant_id`
+    is set here and the catch-all exception handler in `main.py` reads it.
+    """
+
     async def dispatch(self, request: Request, call_next):
         identity = _extract_identity(request, attribute="keep_tenant_id")
         is_probe = request.url.path in PROBE_PATHS
