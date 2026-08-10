@@ -7,7 +7,12 @@ from keycloak.keycloak_uma import KeycloakUMA
 from keycloak.uma_permissions import UMAPermission
 
 from src.config.core import config
-from src.repositories.db import create_tenant, get_tenants
+from src.repositories.db import (
+    create_tenant,
+    get_tenants,
+    get_tenant_role_for_subjects,
+    get_tenants_for_subjects,
+)
 from src.repositories.dependencies import GENERIC_TENANT_UUID
 from src.services.identity_manager.authenticatedentity import AuthenticatedEntity
 from src.services.identity_manager.authverifierbase import AuthVerifierBase, oauth2_scheme
@@ -207,6 +212,13 @@ class KeycloakAuthVerifier(AuthVerifierBase):
                     return True
         return False
 
+    def _grant_subjects(self, email, user_email, user_groups) -> list[str]:
+        # Identifiers to match against tenant_role_grant.subject: the username
+        # (preferred_username), the email, and the group paths (VENA-5596).
+        subjects = [s for s in (email, user_email) if s]
+        subjects.extend(user_groups or [])
+        return subjects
+
     def _get_role_in_org(self, user_groups, org_name):
         # for the org_name (e.g. keep-org-a) iterate over the groups and find the role
         # e.g. /org-a-admin, /org-a-noc, /org-a-webhook
@@ -300,8 +312,16 @@ class KeycloakAuthVerifier(AuthVerifierBase):
                             detail="Invalid Keycloak token - could not find any group that represents the org and the role",
                         )
                 role = self._get_role_in_org(groups, org_name)
-                # A global superadmin may activate any tenant even without an org
-                # role there; the role is overridden to superadmin below.
+                # Fall back to the Keep grant store: roles assigned in the Edit
+                # Tenant UI live in tenant_role_grant, not Keycloak groups
+                # (VENA-5596).
+                if not role:
+                    role = get_tenant_role_for_subjects(
+                        active_tenant,
+                        self._grant_subjects(email, payload.get("email"), groups),
+                    )
+                # A global superadmin may activate any tenant even without a role
+                # there; the role is overridden to superadmin below.
                 if not role and not self._is_superadmin(email, groups):
                     raise HTTPException(
                         status_code=401,
@@ -347,16 +367,37 @@ class KeycloakAuthVerifier(AuthVerifierBase):
                 if not tenant_id:
                     tenant_id = GENERIC_TENANT_UUID
             else:
-                # No org group: fall back to the default generic tenant context
-                if not tenant_id:
-                    tenant_id = GENERIC_TENANT_UUID
-                roles = (
-                    payload.get("resource_access", {})
-                    .get(self.keycloak_client_id, {})
-                    .get("roles", [])
+                # No org group: prefer the Keep grant store (roles assigned in the
+                # Edit Tenant UI -- admin / editor / viewer). Land the user in their
+                # granted tenant with that role. Only users with NO grant fall back
+                # to the generic/GENERAL tenant context (VENA-5596).
+                subjects = self._grant_subjects(
+                    email, payload.get("email"), groups
                 )
-                roles = [r for r in roles if not r.startswith("uma_protection")]
-                role = roles[0] if roles else payload.get("keep_role") or "editor"
+                granted = get_tenants_for_subjects(subjects)
+                if granted:
+                    tenant_id = granted[0].id
+                    role = (
+                        get_tenant_role_for_subjects(tenant_id, subjects)
+                        or "viewer"
+                    )
+                    user_orgs = {
+                        t.name: {"tenant_id": t.id, "tenant_logo_url": None}
+                        for t in granted
+                    }
+                else:
+                    # not part of any tenant -> generic/GENERAL context
+                    if not tenant_id:
+                        tenant_id = GENERIC_TENANT_UUID
+                    roles = (
+                        payload.get("resource_access", {})
+                        .get(self.keycloak_client_id, {})
+                        .get("roles", [])
+                    )
+                    roles = [
+                        r for r in roles if not r.startswith("uma_protection")
+                    ]
+                    role = roles[0] if roles else payload.get("keep_role") or "editor"
         # Keycloak single tenant
         else:
             role = (
