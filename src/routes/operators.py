@@ -21,15 +21,18 @@ logger = logging.getLogger(__name__)
 # --- endpoints ------------------------------------------------------------
 
 
-@router.post("", status_code=201, description="Create an operator (tenant admin)")
+@router.post(
+    "", status_code=201, description="Create an operator (tenant editor or admin)"
+)
 def create_operator_endpoint(
     body: CreateOperatorRequest,
     authenticated_entity: AuthenticatedEntity = Depends(
         IdentityManagerFactory.get_auth_verifier(["write:tenants"])
     ),
 ) -> OperatorOut:
-    # Only an admin of the target tenant (or a superadmin) may add an operator.
-    assert_tenant_role(authenticated_entity, body.tenant_id, "admin")
+    # An editor or admin of the target tenant (or a superadmin) may add an
+    # operator; a viewer may not (they lack write:tenants and are below editor).
+    assert_tenant_role(authenticated_entity, body.tenant_id, "editor")
     # A non-superadmin may only claim one of their own Keycloak groups.
     if not is_superadmin(authenticated_entity) and body.group not in get_groups(
         authenticated_entity
