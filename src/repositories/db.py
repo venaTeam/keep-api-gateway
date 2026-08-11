@@ -4905,29 +4905,14 @@ def create_operator(group: str, tenant_id: str, name: str | None = None) -> Oper
     Both `name` and `group` are globally unique, so raise the SPECIFIC conflict:
     OperatorNameTaken vs OperatorGroupTaken (don't report a name clash as a group
     clash)."""
+    from src.services.operator_provisoioning import provision_operator
     op_name = name or group
-    with Session(engine) as session:
-        # Explicit checks give the right error message. The DB constraints below
-        # are still the source of truth (and catch races).
-        if session.exec(select(Operator).where(Operator.name == op_name)).first():
-            raise OperatorNameTaken(op_name)
-        if session.exec(select(Operator).where(Operator.group == group)).first():
-            raise OperatorGroupTaken(group)
+    return provision_operator(
+        operator_name=op_name,
+        mail_group=group,
+        tenant_id=tenant_id,
+    )
 
-        operator = Operator(name=op_name, group=group, tenant_id=tenant_id)
-        session.add(operator)
-        try:
-            session.commit()
-        except IntegrityError as exc:
-            session.rollback()
-            # Race: someone inserted the same name/group between check and commit.
-            if session.exec(
-                select(Operator).where(Operator.name == op_name)
-            ).first():
-                raise OperatorNameTaken(op_name) from exc
-            raise OperatorGroupTaken(group) from exc
-        session.refresh(operator)
-        return operator
 
 
 def get_operators(tenant_id: str | None = None) -> list[Operator]:
