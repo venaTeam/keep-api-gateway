@@ -52,6 +52,11 @@ def create_operator_endpoint(
         raise HTTPException(
             status_code=409, detail="group already has an operator"
         )
+    except ValueError as e:
+        raise HTTPException(status_code=503, detail=f"Invalid kong/grafana data: {e}")
+    except Exception as e:
+        logger.exception("Failed to provision operator")
+        raise HTTPException(status_code=503, detail=f"operator provisioning failed: {e}")
     return operator
 
 

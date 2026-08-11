@@ -16,7 +16,7 @@ class Operator(SQLModel, table=True):
     # An operator is always attached to a tenant -- it is created for an existing
     # tenant (POST /operators), never orphaned.
     tenant_id: str = Field(foreign_key="tenant.id")
-    apikey: str = Field(default_factory=lambda: uuid4().hex)
+    apikey: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
     __table_args__ = (
