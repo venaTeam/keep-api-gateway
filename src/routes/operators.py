@@ -120,3 +120,22 @@ def get_operator_endpoint(
         raise HTTPException(status_code=404, detail="Operator not found")
     assert_tenant_role(authenticated_entity, operator.tenant_id, "viewer")
     return operator
+
+
+@router.delete(
+    "/{operator_id}",
+    status_code=204,
+    description="Delete an operator (tenant admin or superadmin)",
+)
+def delete_operator_endpoint(
+    operator_id: str,
+    authenticated_entity: AuthenticatedEntity = Depends(
+        IdentityManagerFactory.get_auth_verifier(["write:tenants"])
+    ),
+) -> None:
+    operator = db.get_operator(operator_id)
+    if operator is None:
+        raise HTTPException(status_code=404, detail="Operator not found")
+    # An admin of the operator's tenant (or a superadmin) may delete it.
+    assert_tenant_role(authenticated_entity, operator.tenant_id, "admin")
+    db.delete_operator(operator_id)

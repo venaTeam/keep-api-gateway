@@ -4930,6 +4930,19 @@ def get_operator(operator_id: str) -> Operator | None:
         ).first()
 
 
+def delete_operator(operator_id: str) -> bool:
+    """Delete an operator by id. Returns False if it didn't exist."""
+    with Session(engine) as session:
+        operator = session.exec(
+            select(Operator).where(Operator.id == operator_id)
+        ).first()
+        if operator is None:
+            return False
+        session.delete(operator)
+        session.commit()
+        return True
+
+
 def operator_groups_in_use() -> set[str]:
     """Groups that already back an operator (any tenant)."""
     with Session(engine) as session:
