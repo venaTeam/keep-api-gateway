@@ -66,11 +66,13 @@ def _check_db() -> tuple[bool, dict]:
         with db.engine.connect() as conn:
             conn.execute(text("SELECT 1"))
     except Exception as exc:
+        logger.error("Database connectivity check failed: %s", exc)
         return False, {"reachable": False, "error": f"{type(exc).__name__}: {exc}"}
 
     try:
         at_head, db_revision, script_head = db_on_start.schema_at_head()
     except Exception as exc:
+        logger.error("Database schema check failed with exception: %s", exc, exc_info=True)
         return False, {
             "reachable": True,
             "at_head": False,
@@ -83,6 +85,18 @@ def _check_db() -> tuple[bool, dict]:
         "db_revision": db_revision,
         "script_head": script_head,
     }
+    if not at_head:
+        logger.error(
+            "Database schema is not at head: db_revision=%s, script_head=%s",
+            db_revision,
+            script_head,
+        )
+    else:
+        logger.debug(
+            "Database readiness check passed: db_revision=%s, script_head=%s",
+            db_revision,
+            script_head,
+        )
     return at_head, detail
 
 
@@ -92,14 +106,24 @@ async def _check_producer() -> tuple[bool, dict]:
     producer = factory.get_producer_instance()
     if producer is None:
         # startup() creates it, so this means startup hasn't got that far yet.
+        logger.error("Producer check failed: event producer instance not initialized yet")
         return False, {"created": False}
 
     try:
         healthy, detail = await producer.health(attempt_reconnect=True)
     except Exception as exc:
+        logger.error("Producer health check failed with exception: %s", exc, exc_info=True)
         return False, {"created": True, "error": f"{type(exc).__name__}: {exc}"}
 
     detail["created"] = True
+    if not healthy:
+        logger.error(
+            "Producer check failed: %s",
+            detail.get("last_error") or "not connected",
+            extra={"producer": detail},
+        )
+    else:
+        logger.debug("Producer readiness check passed", extra={"producer": detail})
     return healthy, detail
 
 
@@ -123,11 +147,18 @@ async def _bounded(awaitable, name: str) -> tuple[bool, dict]:
     if not done:
         task.cancel()
         task.add_done_callback(_discard)
+        logger.error("Readiness check '%s' timed out after %ss", name, READYZ_CHECK_TIMEOUT)
         return False, {"error": f"{name} check timed out after {READYZ_CHECK_TIMEOUT}s"}
 
     try:
         return task.result()
     except Exception as exc:
+        logger.error(
+            "Readiness check '%s' failed with unhandled exception: %s",
+            name,
+            exc,
+            exc_info=True,
+        )
         return False, {"error": f"{type(exc).__name__}: {exc}"}
 
 
@@ -159,7 +190,37 @@ async def readyz(response: Response) -> dict:
 
     if not ready:
         response.status_code = 503
-        logger.warning("Readiness check failed", extra={"checks": checks})
+        reasons = []
+        if not db_ok:
+            db_detail = checks["database"]
+            if db_detail.get("error"):
+                reasons.append(f"database ({db_detail['error']})")
+            elif not db_detail.get("reachable", True):
+                reasons.append("database unreachable")
+            elif not db_detail.get("at_head", True):
+                reasons.append(
+                    f"database schema behind (db={db_detail.get('db_revision')}, head={db_detail.get('script_head')})"
+                )
+            else:
+                reasons.append("database unhealthy")
+
+        if REQUIRE_PRODUCER and not producer_ok:
+            prod_detail = checks["producer"]
+            if not prod_detail.get("created", True):
+                reasons.append("producer not created")
+            elif prod_detail.get("error"):
+                reasons.append(f"producer ({prod_detail['error']})")
+            elif prod_detail.get("last_error"):
+                reasons.append(f"producer ({prod_detail['last_error']})")
+            elif not prod_detail.get("started", True):
+                reasons.append("producer not connected")
+            else:
+                reasons.append("producer unhealthy")
+
+        reason_str = f": {'; '.join(reasons)}" if reasons else ""
+        logger.error(f"Readiness check failed{reason_str}", extra={"checks": checks})
+    else:
+        logger.debug("Readiness check passed", extra={"checks": checks})
 
     return {"status": "ok" if ready else "unavailable", "checks": checks}
 

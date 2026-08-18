@@ -278,3 +278,88 @@ def test_check_db_compares_revision_to_script_head():
     assert ok is False
     assert detail["db_revision"] == "rev-old"
     assert detail["script_head"] == "rev-head"
+
+
+def test_readyz_logs_error_on_database_failure(probe_client, caplog):
+    import logging
+
+    with caplog.at_level(logging.ERROR):
+        with patch.object(
+            healthcheck, "_check_db", return_value=(False, {"reachable": False, "error": "db down"})
+        ):
+            with patch(
+                "src.services.producers.factory.get_producer_instance",
+                return_value=_producer(True),
+            ):
+                response = probe_client.get("/readyz")
+
+    assert response.status_code == 503
+    assert any("Readiness check failed: database (db down)" in r.message for r in caplog.records)
+
+
+def test_readyz_logs_error_on_producer_failure_with_topic(probe_client, caplog):
+    import logging
+
+    with caplog.at_level(logging.ERROR):
+        with patch.object(
+            healthcheck, "_check_db", return_value=(True, {"reachable": True, "at_head": True})
+        ):
+            with patch(
+                "src.services.producers.factory.get_producer_instance",
+                return_value=_producer(False, {
+                    "started": False,
+                    "last_error": "main topic 'keep-events': connection refused",
+                    "dlq_topic": "keep-events-dlq",
+                }),
+            ):
+                response = probe_client.get("/readyz")
+
+    assert response.status_code == 503
+    assert response.json()["checks"]["producer"]["dlq_topic"] == "keep-events-dlq"
+    assert any("Readiness check failed" in r.message and "main topic 'keep-events'" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_kafka_producer_ensure_started_logs_main_and_dlq_topic_errors(caplog):
+    import logging
+    from src.services.producers.kafka_producer import KafkaEventProducer
+
+    with patch("src.services.producers.kafka_producer.AIOKafkaProducer"):
+        producer = KafkaEventProducer()
+
+    producer.producer = MagicMock()
+    producer.producer.start = AsyncMock(side_effect=RuntimeError("main broke"))
+    producer.dlq_producer = MagicMock()
+    producer.dlq_producer.start = AsyncMock()
+
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(RuntimeError):
+            await producer._ensure_started()
+
+    assert "main topic" in producer._last_start_error
+    assert "keep-events" in producer._last_start_error
+    assert any("Failed to connect Kafka main producer" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_kafka_producer_ensure_started_logs_dlq_topic_error_when_main_succeeds(caplog):
+    import logging
+    from src.services.producers.kafka_producer import KafkaEventProducer
+
+    with patch("src.services.producers.kafka_producer.AIOKafkaProducer"):
+        producer = KafkaEventProducer()
+
+    producer.producer = MagicMock()
+    producer.producer.start = AsyncMock(return_value=None)
+    producer.dlq_producer = MagicMock()
+    producer.dlq_producer.start = AsyncMock(side_effect=RuntimeError("dlq broke"))
+
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(RuntimeError):
+            await producer._ensure_started()
+
+    assert "DLQ topic" in producer._last_start_error
+    assert "keep-events-dlq" in producer._last_start_error
+    assert any("Failed to connect Kafka DLQ producer" in r.message for r in caplog.records)
+
+

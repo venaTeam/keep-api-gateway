@@ -1,4 +1,4 @@
-﻿"""
+"""
 This module is responsible for creating the database and tables when the application starts.
 
 The reason to split this code from db.py is that the functions here are invoked from the master process
@@ -270,7 +270,10 @@ def get_db_revision() -> str | None:
     except Exception:
         logger.debug("Could not read alembic_version", exc_info=True)
         return None
-    return row[0] if row else None
+    if not row:
+        logger.error("alembic_version table is empty; no stamped database revision found")
+        return None
+    return row[0]
 
 
 def _db_is_at_or_ahead(db_revision: str, script_head: str) -> bool:
@@ -314,15 +317,39 @@ def schema_at_head() -> tuple[bool, str | None, str | None]:
 
     # Nothing stamped, or we cannot read our own scripts: no basis to claim ready.
     if not db_revision or not script_head:
+        logger.error(
+            "Cannot determine schema head status: db_revision=%s, script_head=%s",
+            db_revision,
+            script_head,
+        )
         return False, db_revision, script_head
 
     if db_revision == script_head:
+        logger.debug("Database revision matches script head: %s", db_revision)
         return True, db_revision, script_head
 
     if SCHEMA_STRICT:
+        logger.error(
+            "Strict schema check failed: db_revision '%s' != script_head '%s' (KEEP_READYZ_SCHEMA_STRICT=true)",
+            db_revision,
+            script_head,
+        )
         return False, db_revision, script_head
 
-    return _db_is_at_or_ahead(db_revision, script_head), db_revision, script_head
+    at_head = _db_is_at_or_ahead(db_revision, script_head)
+    if not at_head:
+        logger.error(
+            "Database schema is behind image head revision: db_revision '%s' < script_head '%s'",
+            db_revision,
+            script_head,
+        )
+    else:
+        logger.debug(
+            "Database schema is ahead of image head revision: db_revision=%s, script_head=%s",
+            db_revision,
+            script_head,
+        )
+    return at_head, db_revision, script_head
 
 
 @contextmanager

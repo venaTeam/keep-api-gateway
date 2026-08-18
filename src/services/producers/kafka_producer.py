@@ -161,10 +161,28 @@ class KafkaEventProducer(EventProducer):
                 return
             try:
                 await self.producer.start()
+            except Exception as exc:
+                self._last_start_error = f"main topic '{self.topic}': {type(exc).__name__}: {exc}"
+                logger.error(
+                    "Failed to connect Kafka main producer (topic: %s, servers: %s): %s",
+                    self.topic,
+                    self.bootstrap_servers,
+                    exc,
+                )
+                raise
+
+            try:
                 await self.dlq_producer.start()
             except Exception as exc:
-                self._last_start_error = f"{type(exc).__name__}: {exc}"
+                self._last_start_error = f"DLQ topic '{self.dlq_topic}': {type(exc).__name__}: {exc}"
+                logger.error(
+                    "Failed to connect Kafka DLQ producer (topic: %s, servers: %s): %s",
+                    self.dlq_topic,
+                    self.dlq_bootstrap_servers,
+                    exc,
+                )
                 raise
+
             self._started = True
             self._last_start_error = None
 
@@ -179,7 +197,12 @@ class KafkaEventProducer(EventProducer):
             await self._ensure_started()
             logger.info(
                 "Kafka producer connected at startup",
-                extra={"bootstrap_servers": self.bootstrap_servers},
+                extra={
+                    "topic": self.topic,
+                    "bootstrap_servers": self.bootstrap_servers,
+                    "dlq_topic": self.dlq_topic,
+                    "dlq_bootstrap_servers": self.dlq_bootstrap_servers,
+                },
             )
         except Exception:
             logger.exception(
@@ -215,8 +238,17 @@ class KafkaEventProducer(EventProducer):
         if not self._started and attempt_reconnect:
             try:
                 await self._ensure_started()
+                logger.info(
+                    "Kafka producer reconnected successfully during readiness probe",
+                    extra={
+                        "topic": self.topic,
+                        "bootstrap_servers": self.bootstrap_servers,
+                        "dlq_topic": self.dlq_topic,
+                        "dlq_bootstrap_servers": self.dlq_bootstrap_servers,
+                    },
+                )
             except Exception:
-                logger.warning(
+                logger.error(
                     "Kafka producer still not connected: %s", self._last_start_error
                 )
 
@@ -225,6 +257,8 @@ class KafkaEventProducer(EventProducer):
             "started": self._started,
             "topic": self.topic,
             "bootstrap_servers": self.bootstrap_servers,
+            "dlq_topic": self.dlq_topic,
+            "dlq_bootstrap_servers": self.dlq_bootstrap_servers,
         }
         if self._last_start_error:
             detail["last_error"] = self._last_start_error
