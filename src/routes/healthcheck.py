@@ -105,6 +105,7 @@ async def _check_producer() -> tuple[bool, dict]:
     pod that can't reach the brokers stays NotReady instead of DLQ-ing alerts."""
     producer = factory.get_producer_instance()
     if producer is None:
+        # startup() creates it, so this means startup hasn't got that far yet.
         logger.warning("Producer check failed: event producer instance not initialized yet")
         return False, {"created": False}
 
@@ -222,7 +223,7 @@ async def readyz(response: Response) -> dict:
         logger.debug("Readiness check passed", extra={"checks": checks})
 
     logger.debug("Readiness check passed", extra={"checks": checks})
-    
+
     return {"status": "ok" if ready else "unavailable", "checks": checks}
 
 
