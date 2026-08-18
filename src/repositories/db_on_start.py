@@ -329,7 +329,7 @@ def schema_at_head() -> tuple[bool, str | None, str | None]:
         return True, db_revision, script_head
 
     if SCHEMA_STRICT:
-        logger.error(
+        logger.warning(
             "Strict schema check failed: db_revision '%s' != script_head '%s' (KEEP_READYZ_SCHEMA_STRICT=true)",
             db_revision,
             script_head,
@@ -338,7 +338,7 @@ def schema_at_head() -> tuple[bool, str | None, str | None]:
 
     at_head = _db_is_at_or_ahead(db_revision, script_head)
     if not at_head:
-        logger.error(
+        logger.warning(
             "Database schema is behind image head revision: db_revision '%s' < script_head '%s'",
             db_revision,
             script_head,

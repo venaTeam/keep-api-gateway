@@ -86,7 +86,7 @@ def _check_db() -> tuple[bool, dict]:
         "script_head": script_head,
     }
     if not at_head:
-        logger.error(
+        logger.warning(
             "Database schema is not at head: db_revision=%s, script_head=%s",
             db_revision,
             script_head,
@@ -105,8 +105,7 @@ async def _check_producer() -> tuple[bool, dict]:
     pod that can't reach the brokers stays NotReady instead of DLQ-ing alerts."""
     producer = factory.get_producer_instance()
     if producer is None:
-        # startup() creates it, so this means startup hasn't got that far yet.
-        logger.error("Producer check failed: event producer instance not initialized yet")
+        logger.warning("Producer check failed: event producer instance not initialized yet")
         return False, {"created": False}
 
     try:

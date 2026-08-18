@@ -239,7 +239,7 @@ class KafkaEventProducer(EventProducer):
             try:
                 await self._ensure_started()
                 logger.info(
-                    "Kafka producer reconnected successfully during readiness probe",
+                    "Kafka producer reconnected successfully",
                     extra={
                         "topic": self.topic,
                         "bootstrap_servers": self.bootstrap_servers,
@@ -248,7 +248,7 @@ class KafkaEventProducer(EventProducer):
                     },
                 )
             except Exception:
-                logger.error(
+                logger.warning(
                     "Kafka producer still not connected: %s", self._last_start_error
                 )
 
