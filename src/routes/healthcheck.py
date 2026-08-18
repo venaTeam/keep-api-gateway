@@ -92,7 +92,7 @@ def _check_db() -> tuple[bool, dict]:
             script_head,
         )
     else:
-        logger.debug(
+        logger.info(
             "Database readiness check passed: db_revision=%s, script_head=%s",
             db_revision,
             script_head,
@@ -123,7 +123,7 @@ async def _check_producer() -> tuple[bool, dict]:
             extra={"producer": detail},
         )
     else:
-        logger.debug("Producer readiness check passed", extra={"producer": detail})
+        logger.info("Producer readiness check passed", extra={"producer": detail})
     return healthy, detail
 
 

@@ -325,7 +325,7 @@ def schema_at_head() -> tuple[bool, str | None, str | None]:
         return False, db_revision, script_head
 
     if db_revision == script_head:
-        logger.debug("Database revision matches script head: %s", db_revision)
+        logger.info("Database revision matches script head: %s", db_revision)
         return True, db_revision, script_head
 
     if SCHEMA_STRICT:
@@ -344,7 +344,7 @@ def schema_at_head() -> tuple[bool, str | None, str | None]:
             script_head,
         )
     else:
-        logger.debug(
+        logger.info(
             "Database schema is ahead of image head revision: db_revision=%s, script_head=%s",
             db_revision,
             script_head,
