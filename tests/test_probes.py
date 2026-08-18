@@ -278,4 +278,3 @@ def test_check_db_compares_revision_to_script_head():
     assert ok is False
     assert detail["db_revision"] == "rev-old"
     assert detail["script_head"] == "rev-head"
-
