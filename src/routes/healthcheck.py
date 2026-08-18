@@ -217,10 +217,12 @@ async def readyz(response: Response) -> dict:
                 reasons.append("producer unhealthy")
 
         reason_str = f": {'; '.join(reasons)}" if reasons else ""
-        logger.error(f"Readiness check failed{reason_str}", extra={"checks": checks})
+        logger.error(f"Readiness check failed {reason_str}", extra={"checks": checks})
     else:
         logger.debug("Readiness check passed", extra={"checks": checks})
 
+    logger.debug("Readiness check passed", extra={"checks": checks})
+    
     return {"status": "ok" if ready else "unavailable", "checks": checks}
 
 
