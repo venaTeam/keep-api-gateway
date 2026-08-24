@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from src.repositories.alerts import query_last_alerts
 from src.repositories.db import get_last_alerts
-from src.repositories.dependencies import SINGLE_TENANT_UUID
+from src.repositories.dependencies import GENERIC_TENANT_UUID
 from src.repositories.elastic import ElasticClient
 from src.repositories.tenant_configuration import TenantConfiguration
 from src.models.alert import AlertDto, AlertStatus
@@ -32,7 +32,7 @@ class SearchEngine:
         self.elastic_client = ElasticClient(tenant_id)
         self.tenant_configuration = TenantConfiguration()
         # this is backward compatibility for single/noauth tenants
-        if tenant_id == SINGLE_TENANT_UUID:
+        if tenant_id == GENERIC_TENANT_UUID:
             self.search_mode = (
                 SearchMode.ELASTIC
                 if self.elastic_client.enabled

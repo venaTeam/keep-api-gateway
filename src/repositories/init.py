@@ -1,11 +1,11 @@
-﻿import logging
+import logging
 import os
 
 from src.services.alert_deduplicator.deduplication_rules_provisioning import (
     provision_deduplication_rules_from_env,
 )
 from src.repositories.db_on_start import migrate_db, try_create_single_tenant
-from src.repositories.dependencies import SINGLE_TENANT_UUID
+from src.repositories.dependencies import GENERIC_TENANT_UUID
 from src.repositories.tenant_configuration import TenantConfiguration
 from src.services.identity_manager.identitymanagerfactory import IdentityManagerTypes
 from src.providers.providers_factory import ProvidersFactory
@@ -18,19 +18,19 @@ PROVISIONING_FATAL = os.environ.get("KEEP_PROVISIONING_FATAL", "false") == "true
 
 
 def provision_resources(provision_dashboards_func=None):
-    """Write providers, dashboards and dedup rules into the DB before serving.
-
-    Each step is guarded independently, so one failure neither skips the others
-    nor stops startup. This runs in gunicorn's master **before the socket binds**,
-    so an exception here CrashLoopBackOffs the pod — and every step is idempotent,
-    which is what makes logging-and-continuing the right default.
-    `KEEP_PROVISIONING_FATAL=true` restores fail-fast for CI, where a bad provider
-    file *should* fail loudly.
-
-    `PROVISION_RESOURCES` stays on by default: the gateway owns provisioning, as
-    it owns the schema, unlike keep-event-handler.
-    """
-    if not PROVISION_RESOURCES:
+    if PROVISION_RESOURCES:
+        logger.info("Loading providers into cache")
+        # provision providers from env. relevant only on single tenant.
+        logger.info("Provisioning providers")
+        ProvidersService.provision_providers(GENERIC_TENANT_UUID)
+        logger.info("Providers loaded successfully")
+        if provision_dashboards_func:
+            provision_dashboards_func(GENERIC_TENANT_UUID)
+            logger.info("Dashboards provisioned successfully")
+        logger.info("Provisioning deduplication rules")
+        provision_deduplication_rules_from_env(GENERIC_TENANT_UUID)
+        logger.info("Deduplication rules provisioned successfully")
+    else:
         logger.info("Provisioning resources is disabled")
         return
 
@@ -94,7 +94,7 @@ def init_services(auth_type: str, provision_dashboards_func=None, skip_ngrok=Fal
         ]
         # for oauth2proxy, we don't want to create the default user
         try_create_single_tenant(
-            SINGLE_TENANT_UUID,
+            GENERIC_TENANT_UUID,
             create_default_user=(
                 False if auth_type in excluded_from_default_user else True
             ),
