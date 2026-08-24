@@ -14,6 +14,7 @@ from src.providers.providers_service import ProvidersService
 logger = logging.getLogger(__name__)
 
 PROVISION_RESOURCES = os.environ.get("PROVISION_RESOURCES", "true") == "true"
+PROVISIONING_FATAL = os.environ.get("KEEP_PROVISIONING_FATAL", "false") == "true"
 
 
 def provision_resources(provision_dashboards_func=None):
@@ -31,6 +32,38 @@ def provision_resources(provision_dashboards_func=None):
         logger.info("Deduplication rules provisioned successfully")
     else:
         logger.info("Provisioning resources is disabled")
+        return
+
+    steps = [
+        (
+            "providers",
+            lambda: ProvidersService.provision_providers(SINGLE_TENANT_UUID),
+        ),
+    ]
+    if provision_dashboards_func:
+        steps.append(
+            ("dashboards", lambda: provision_dashboards_func(SINGLE_TENANT_UUID))
+        )
+    steps.append(
+        (
+            "deduplication rules",
+            lambda: provision_deduplication_rules_from_env(SINGLE_TENANT_UUID),
+        )
+    )
+
+    for name, step in steps:
+        logger.info("Provisioning %s", name)
+        try:
+            step()
+            logger.info("%s provisioned successfully", name)
+        except Exception:
+            if PROVISIONING_FATAL:
+                raise
+            logger.exception(
+                "Failed to provision %s — continuing startup (set "
+                "KEEP_PROVISIONING_FATAL=true to fail fast instead)",
+                name,
+            )
 
 
 def init_services(auth_type: str, provision_dashboards_func=None, skip_ngrok=False):

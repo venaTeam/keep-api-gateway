@@ -22,13 +22,26 @@ def _extract_identity(request: Request, attribute="email") -> str:
         return "anonymous"
 
 
+PROBE_PATHS = frozenset({"/readyz", "/healthcheck"})
+
+
 class LoggingMiddleware(BaseHTTPMiddleware):
+    """Logs the start and end of every request, except the probes.
+
+    Kubelet hits `PROBE_PATHS` every few seconds on every pod, at two log lines
+    each, and they say nothing worth keeping. Only the logging is skipped for
+    them — the rest of the middleware still runs, because `request.state.tenant_id`
+    is set here and the catch-all exception handler in `main.py` reads it.
+    """
+
     async def dispatch(self, request: Request, call_next):
         identity = _extract_identity(request, attribute="keep_tenant_id")
-        logger.info(
-            f"Request started: {request.method} {request.url.path}",
-            extra={"tenant_id": identity},
-        )
+        is_probe = request.url.path in PROBE_PATHS
+        if not is_probe:
+            logger.info(
+                f"Request started: {request.method} {request.url.path}",
+                extra={"tenant_id": identity},
+            )
 
         # for debugging purposes, log the payload
         if os.environ.get("LOG_AUTH_PAYLOAD", "false") == "true":
@@ -51,11 +64,12 @@ class LoggingMiddleware(BaseHTTPMiddleware):
 
         end_time = time.time()
         identity = getattr(request.state, "tenant_id", identity)
-        logger.info(
-            f"Request finished: {request.method} {request.url.path} {response.status_code} in {end_time - start_time:.2f}s",
-            extra={
-                "tenant_id": identity,
-                "status_code": response.status_code,
-            },
-        )
+        if not is_probe:
+            logger.info(
+                f"Request finished: {request.method} {request.url.path} {response.status_code} in {end_time - start_time:.2f}s",
+                extra={
+                    "tenant_id": identity,
+                    "status_code": response.status_code,
+                },
+            )
         return response

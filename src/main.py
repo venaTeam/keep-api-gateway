@@ -1,4 +1,5 @@
 import asyncio
+import functools
 import logging
 import os
 
@@ -33,6 +34,7 @@ from src.utils.logging import CONFIG as logging_config, setup_logging
 from src.middlewares import LoggingMiddleware
 from src.routes.router_setup import setup_routers
 from src.services.producers.event_subscriber import EventSubscriber
+from src.services.producers.factory import start_event_producer, stop_event_producer
 from src.services.identity_manager.identitymanagerfactory import (
     IdentityManagerFactory,
     IdentityManagerTypes,
@@ -44,6 +46,9 @@ from src.config.config import (
     AUTH_TYPE,
     CONSUMER,
     HOST,
+    KEEP_CONSUMER_JOIN_TIMEOUT,
+    KEEP_CONSUMER_START_DELAY,
+    KEEP_CONSUMER_STOP_TIMEOUT,
     KEEP_ACTIVE_USERS_JOB,
     KEEP_ACTIVE_USERS_REFRESH_INTERVAL,
     KEEP_API_URL,
@@ -92,10 +97,22 @@ async def check_pending_tasks(background_tasks: set):
         await asyncio.sleep(1)
 
 
+_event_subscriber_task = None
+
+
 async def startup():
     """
     This runs for every worker on startup.
     Read more about lifespan here: https://fastapi.tiangolo.com/advanced/events/#lifespan
+
+    The producer is connected **eagerly**: a cold producer makes the first alert
+    on a fresh pod pay the bootstrap cost, and diverts it to the DLQ if the
+    brokers aren't up yet. It never raises — /readyz keeps the pod NotReady until
+    the producer connects.
+
+    The EventSubscriber start is deferred to a task, whose reference is kept
+    module-level because the loop only holds a weak one — and so `shutdown()` can
+    cancel a start that hasn't happened yet.
     """
     logger.info("Disope existing DB connections")
     # psycopg2.DatabaseError: error with status PGRES_TUPLES_OK and no message from the libpq
@@ -104,37 +121,101 @@ async def startup():
 
     logger.info("Starting the services")
 
-    # Start the consumer
+    await start_event_producer()
+
     if CONSUMER:
-        try:
-            logger.info("Starting the consumer")
-            event_subscriber = EventSubscriber.get_instance()
-            # TODO: there is some "race condition" since if the consumer starts before the server,
-            #       and start getting events, it will fail since the server is not ready yet
-            #       we should add a "wait" here to make sure the server is ready
-            await event_subscriber.start()
-            logger.info("Consumer started successfully")
-        except Exception:
-            logger.exception("Failed to start the consumer")
+        global _event_subscriber_task
+        _event_subscriber_task = asyncio.create_task(
+            _start_event_subscriber_when_ready()
+        )
 
     logger.info("Services started successfully")
+
+
+async def _start_event_subscriber_when_ready():
+    """Start the EventSubscriber once the app is serving requests.
+
+    Yields control so lifespan startup completes before the consumer threads
+    begin calling back into this process.
+    """
+    try:
+        await asyncio.sleep(KEEP_CONSUMER_START_DELAY)
+        logger.info("Starting the consumer")
+        event_subscriber = EventSubscriber.get_instance()
+        await event_subscriber.start()
+        logger.info("Consumer started successfully")
+    except asyncio.CancelledError:
+        logger.info("Consumer start cancelled (shutting down)")
+        raise
+    except Exception:
+        logger.exception("Failed to start the consumer")
+
+
+async def _stop_event_subscriber():
+    """Cancel a start that hasn't fired, then stop and join the consumer threads.
+
+    The deferred start is settled first, otherwise a short-lived process can shut
+    down before it fires and the consumer threads start *after* shutdown, never
+    joined. Awaiting the cancelled task catches both `CancelledError` and
+    `Exception` — the former derives from `BaseException`, so `except Exception`
+    alone would miss it.
+
+    `EventSubscriber.stop()` is synchronous (it joins threads), so it must not be
+    awaited; it is offloaded to an executor and bounded, so a wedged consumer
+    cannot hold shutdown past the grace period.
+    """
+    global _event_subscriber_task
+    task = _event_subscriber_task
+    _event_subscriber_task = None
+    if task is not None and not task.done():
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
+
+    logger.info("Stopping the consumer")
+    event_subscriber = EventSubscriber.get_instance()
+    try:
+        await asyncio.wait_for(
+            asyncio.get_running_loop().run_in_executor(
+                None,
+                functools.partial(
+                    event_subscriber.stop,
+                    join_timeout=KEEP_CONSUMER_JOIN_TIMEOUT,
+                ),
+            ),
+            timeout=KEEP_CONSUMER_STOP_TIMEOUT,
+        )
+        logger.info("Consumer stopped successfully")
+    except asyncio.TimeoutError:
+        logger.warning(
+            "Consumer did not stop within %ss; continuing shutdown",
+            KEEP_CONSUMER_STOP_TIMEOUT,
+        )
+    except Exception:
+        logger.exception("Failed to stop the consumer")
 
 
 async def shutdown():
     """
     This runs for every worker on shutdown.
     Read more about lifespan here: https://fastapi.tiangolo.com/advanced/events/#lifespan
+
+    The producer and consumer stops run concurrently: they release unrelated
+    resources, and in series their bounds would add to 30 s rather than 20 s.
+    That matters because a UvicornWorker drains in-flight requests *before*
+    running this handler, so the drain and this shutdown add rather than overlap,
+    against gunicorn's 30 s graceful timeout. Overrun it and the worker is killed
+    part-way through: consumer threads are abandoned and in-flight requests die
+    as connection resets instead of the retryable 503 they would otherwise get.
+    `KEEP_CONSUMER_STOP_TIMEOUT` is the knob that keeps the total inside it.
     """
     logger.info("Shutting down Keep")
+    stops = [stop_event_producer()]
     if CONSUMER:
-        logger.info("Stopping the consumer")
-        event_subscriber = EventSubscriber.get_instance()
-        try:
-            await event_subscriber.stop()
-        # in pytest, there could be race condition
-        except TypeError:
-            pass
-        logger.info("Consumer stopped successfully")
+        stops.append(_stop_event_subscriber())
+    await asyncio.gather(*stops, return_exceptions=True)
 
     logger.info("Keep shutdown complete")
 
