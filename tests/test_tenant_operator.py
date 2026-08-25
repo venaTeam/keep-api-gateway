@@ -133,7 +133,43 @@ def test_get_tenants_for_subjects(db_session):
 # --- operators ------------------------------------------------------------
 
 
-def test_create_operator_unique_group_per_tenant(db_session):
+@pytest.fixture
+def local_provisioning(monkeypatch, db_session):
+    """Run operator provisioning against the test database with no external calls.
+
+    `provision_operator` reaches Kong and Grafana before it writes the operator
+    row, and binds `engine` at import time so `db_session` does not reach it.
+    These cases exercise the database uniqueness rules, so both integrations are
+    stubbed and the engine is repointed at the test database.
+    """
+    from src.services import operator_provisoioning as prov
+
+    class _Kong:
+        def ensure_consumer(self, operator, mail_group):
+            return SimpleNamespace(consumer_id=f"consumer-{operator}", api_key_id=None)
+
+        def create_or_update_api_key(self, consumer_id, operator, api_key=None):
+            return f"key-{operator}"
+
+        def delete_api_key(self, *args, **kwargs):
+            return None
+
+        def delete_consumer(self, *args, **kwargs):
+            return None
+
+    class _Grafana:
+        def ensure_grafana_connections(self, operator, api_key):
+            return None
+
+        def delete_grafana_connections(self, operator):
+            return None
+
+    monkeypatch.setattr(prov, "_kong_integration", _Kong())
+    monkeypatch.setattr(prov, "_grafana_integration", _Grafana())
+    monkeypatch.setattr(prov, "engine", db_session.get_bind())
+
+
+def test_create_operator_unique_group_per_tenant(db_session, local_provisioning):
     op = db.create_operator(group="grp-solo", tenant_id=GENERIC_TENANT_UUID)
     assert op.group == "grp-solo"
     with pytest.raises((db.OperatorGroupTaken, db.OperatorNameTaken)):

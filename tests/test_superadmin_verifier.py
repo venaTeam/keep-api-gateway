@@ -13,6 +13,9 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
+from src.services.identity_manager.identity_managers.keycloak import (
+    keycloak_authverifier as kav,
+)
 from src.services.identity_manager.identity_managers.keycloak.keycloak_authverifier import (
     KeycloakAuthVerifier,
 )
@@ -38,6 +41,7 @@ def _make_verifier(superadmin_users=(), superadmin_groups=(), payload=None):
     }
     v.superadmin_users = {u.lower() for u in superadmin_users}
     v.superadmin_groups = {g.lower() for g in superadmin_groups}
+    v.keycloak_client_id = "keep"
     v.keycloak_client = SimpleNamespace(
         decode_token=lambda token, validate=True: payload
     )
@@ -98,10 +102,18 @@ def test_verify_token_superadmin_by_group_no_org_group():
     assert entity.groups == ["/superadmins"]
 
 
-def test_verify_token_non_superadmin_no_org_group_401():
-    # not on any allowlist and in no org group -> misconfigured token, 401
+def test_verify_token_non_superadmin_no_org_group_falls_back_to_general(monkeypatch):
+    """A caller on no allowlist, in no org group and holding no grant lands in
+    the GENERAL tenant with a role derived from the token's own claims.
+
+    This path used to 401. `2c451d6` replaced that with the Keep grant store
+    plus a generic-tenant fallback, so the grant lookups are stubbed here rather
+    than reached over a real database.
+    """
+    monkeypatch.setattr(kav, "get_tenants_for_subjects", lambda *a, **k: [])
+    monkeypatch.setattr(kav, "get_tenant_role_for_subjects", lambda *a, **k: None)
     payload = _payload("bob@keep.dev", [])
     v = _make_verifier(payload=payload)
-    with pytest.raises(HTTPException) as exc:
-        v._verify_bearer_token("sometoken")
-    assert exc.value.status_code == 401
+    entity = v._verify_bearer_token("sometoken")
+    assert entity.tenant_id == GENERIC_TENANT_UUID
+    assert entity.role == "editor"
