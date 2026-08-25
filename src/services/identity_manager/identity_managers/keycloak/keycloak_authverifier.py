@@ -241,6 +241,18 @@ class KeycloakAuthVerifier(AuthVerifierBase):
                     return keep_role.value
         return None
 
+    def _role_from_token_claims(self, payload):
+        """The caller's role as carried on the token itself, used where no org
+        group and no Keep grant applies: the first non-uma client role, else the
+        `keep_role` claim, else `editor`."""
+        roles = (
+            payload.get("resource_access", {})
+            .get(self.keycloak_client_id, {})
+            .get("roles", [])
+        )
+        roles = [r for r in roles if not r.startswith("uma_protection")]
+        return roles[0] if roles else payload.get("keep_role") or "editor"
+
     def _verify_bearer_token(
         self, token: str = Depends(oauth2_scheme)
     ) -> AuthenticatedEntity:
@@ -331,6 +343,11 @@ class KeycloakAuthVerifier(AuthVerifierBase):
                         active_tenant,
                         self._grant_subjects(email, payload.get("email"), groups),
                     )
+                # The GENERAL tenant is the shared default context, not a
+                # group-backed org: activating it explicitly must resolve the
+                # same way a caller lands in it implicitly (VENA-5596).
+                if not role and active_tenant == GENERIC_TENANT_UUID:
+                    role = self._role_from_token_claims(payload)
                 # A global superadmin may activate any tenant even without a role
                 # there; the role is overridden to superadmin below.
                 if not role and not self._is_superadmin(email, groups):
@@ -400,15 +417,7 @@ class KeycloakAuthVerifier(AuthVerifierBase):
                     # not part of any tenant -> generic/GENERAL context
                     if not tenant_id:
                         tenant_id = GENERIC_TENANT_UUID
-                    roles = (
-                        payload.get("resource_access", {})
-                        .get(self.keycloak_client_id, {})
-                        .get("roles", [])
-                    )
-                    roles = [
-                        r for r in roles if not r.startswith("uma_protection")
-                    ]
-                    role = roles[0] if roles else payload.get("keep_role") or "editor"
+                    role = self._role_from_token_claims(payload)
         # Keycloak single tenant
         else:
             role = (
