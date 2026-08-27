@@ -90,6 +90,7 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
 keep = "src.utils.cli.cli:cli"
+keep-migrate = "src.utils.cli.migrations:main"
 
 [tool.ruff.lint]
 ignore = ["F405", "F811", "E712", "E711", "F403"]
