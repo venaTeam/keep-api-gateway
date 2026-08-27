@@ -69,3 +69,19 @@ dmypy.json
 
 # Local SQLite databases (never ship in the image)
 *.db
+
+# Secrets written by FileSecretManager (src/services/secret_manager/filesecretmanager.py).
+#
+# SECRET_MANAGER_DIRECTORY defaults to "./", so any local run that calls
+# GET /settings/webhook or installs a provider drops PLAINTEXT credentials in the
+# repo root, with no extension. The generated names are:
+#   {tenant_id}-{api_key_id}              API keys        e.g. keep-webhook
+#   {tenant_id}_{provider_type}_{id}      provider config e.g. keep_grafana_1
+#   {tenant_id}_smtp                      SMTP settings
+# In single-tenant dev tenant_id is "keep"; with real multi-tenancy it is a UUID,
+# which these patterns will NOT catch -- set SECRET_MANAGER_DIRECTORY=./secrets
+# rather than relying on them.
+/keep-*
+/keep_*
+/*_smtp
+/secrets/
