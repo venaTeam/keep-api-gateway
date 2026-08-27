@@ -753,12 +753,15 @@ async def receive_event(
         trace_id=trace_id,
         provider_name=provider_name,
     )
-    alert_ingestion_total.labels(source=provider_type, status="success").inc()
-
 
     if not task_name:
         task_name = "async-task"
 
+    # `_ingestion_response` is the ONLY writer of `alert_ingestion_total`, as it
+    # already is on the generic route. This route used to increment it here as
+    # well, which counted every per-provider alert twice and labelled one
+    # diverted to the DLQ as both `success` and `dlq` — the increment here was
+    # unconditional and ran before the sink was known.
     return _ingestion_response(task_name, source=provider_type)
 
 
