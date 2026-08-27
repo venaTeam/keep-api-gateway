@@ -194,3 +194,84 @@ async def test_eager_start_never_raises():
 
     assert result is producer
     producer.start.assert_awaited_once()
+
+
+# --------------------------------------------------------------------------- #
+# Route-level guards for POST /alerts/event/{provider_type}
+#
+# The tests above exercise the helpers directly, which is why two defects in
+# this route went unnoticed: the helpers were always correct, the route just
+# didn't reach them. These call the route function itself.
+# --------------------------------------------------------------------------- #
+def _provider_route_args(producer):
+    request = MagicMock()
+    request.state.trace_id = "t-provider"
+    entity = MagicMock()
+    entity.api_key_name = "webhook"
+    return {
+        "provider_type": "grafana",
+        "request": request,
+        "event": {"raw": "provider payload"},
+        "authenticated_entity": entity,
+        "event_producer": producer,
+    }
+
+
+@pytest.mark.asyncio
+async def test_provider_route_answers_503_when_the_publish_fails():
+    """A publish that reached no topic must be retryable.
+
+    Unguarded, the exception escaped to the catch-all in `main.py` as a 500.
+    Senders were asked to key off 503 plus `Retry-After`, so a Kafka outage lost
+    per-provider alerts that the generic route would have kept — and recorded
+    nothing, because `alert_ingestion_error_total` lives in the helper that was
+    never reached.
+    """
+    producer = AsyncMock()
+    producer.produce.side_effect = RuntimeError("no brokers")
+
+    with patch.object(alerts, "_resolve_ingestion_tenant", return_value="keep"):
+        with patch.object(alerts, "alert_ingestion_error_total") as err_metric:
+            response = await alerts.receive_event(**_provider_route_args(producer))
+
+    assert response.status_code == 503
+    assert response.headers["Retry-After"]
+    err_metric.labels.assert_called_once_with(
+        source="grafana", error_type="RuntimeError"
+    )
+    err_metric.labels.return_value.inc.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_provider_route_counts_each_alert_exactly_once():
+    """`_ingestion_response` is the only writer of `alert_ingestion_total`.
+
+    The route used to increment it as well, so every per-provider alert counted
+    twice — and the increment was unconditional, so one diverted to the DLQ
+    counted as both `success` and `dlq`. That counter is what an ingestion
+    cutover reconciles against the consumer, so an inflated producer side makes
+    the comparison meaningless.
+    """
+    producer = AsyncMock()
+    producer.produce.return_value = MAIN_TASK_NAME
+
+    with patch.object(alerts, "_resolve_ingestion_tenant", return_value="keep"):
+        with patch.object(alerts, "alert_ingestion_total") as metric:
+            response = await alerts.receive_event(**_provider_route_args(producer))
+
+    assert response.status_code == 202
+    metric.labels.assert_called_once_with(source="grafana", status="success")
+
+
+@pytest.mark.asyncio
+async def test_provider_route_dlq_is_not_also_counted_as_success():
+    producer = AsyncMock()
+    producer.produce.return_value = DLQ_TASK_NAME
+
+    with patch.object(alerts, "_resolve_ingestion_tenant", return_value="keep"):
+        with patch.object(alerts, "alert_ingestion_total") as metric:
+            response = await alerts.receive_event(**_provider_route_args(producer))
+
+    assert response.status_code == 503
+    statuses = [c.kwargs["status"] for c in metric.labels.call_args_list]
+    assert statuses == ["dlq"]

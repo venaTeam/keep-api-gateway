@@ -743,16 +743,27 @@ async def receive_event(
     # specific tenant only receives its own operators' alerts (VENA-5596 Epic 5).
     tenant_id = _resolve_ingestion_tenant(event)
     # Use the abstract event producer (Redis or Kafka)
-    task_name = await event_producer.produce(
-        event=event,
-        tenant_id=tenant_id,
-        provider_type=provider_type,
-        provider_id=provider_id,
-        fingerprint=fingerprint,
-        api_key_name=authenticated_entity.api_key_name,
-        trace_id=trace_id,
-        provider_name=provider_name,
-    )
+    #
+    # Guarded exactly as the generic route is. Unguarded, a publish that reached
+    # no topic escaped to the catch-all in `main.py` as a 500, which carries no
+    # "retry me" semantics — senders were asked to key off 503 plus
+    # `Retry-After`, so a Kafka outage silently lost per-provider alerts that the
+    # generic route would have kept. It also recorded nothing:
+    # `alert_ingestion_error_total` is incremented by `_publish_failed_response`,
+    # which was never reached, so the failure was invisible in metrics too.
+    try:
+        task_name = await event_producer.produce(
+            event=event,
+            tenant_id=tenant_id,
+            provider_type=provider_type,
+            provider_id=provider_id,
+            fingerprint=fingerprint,
+            api_key_name=authenticated_entity.api_key_name,
+            trace_id=trace_id,
+            provider_name=provider_name,
+        )
+    except Exception as e:
+        return _publish_failed_response(e, source=provider_type, trace_id=trace_id)
 
     if not task_name:
         task_name = "async-task"
