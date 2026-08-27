@@ -29,6 +29,11 @@ on every one of the 5 replicas. Two settings govern that:
   dies releases it automatically; the only reason to stop waiting is a holder
   that is alive and slow, and there waiting is the safer answer.
 
+`migrate_db` skips the upgrade when the database is already at or ahead of this
+image's head -- the same `_db_is_at_or_ahead` judgement `/readyz` makes. Without
+it an image rollback cannot resolve the newer stamped revision and raises here,
+before the socket binds.
+
 `schema_at_head` backs `/readyz`. `KEEP_READYZ_SCHEMA_STRICT` is its rollback
 lever: exact revision equality instead of "not behind".
 """
@@ -444,6 +449,19 @@ def migrate_db():
     logger.info("Running migrations...")
     config = get_alembic_config()
     with _migration_lock():
+        # Inside the lock: whoever held it before us may have just migrated, and
+        # on a rollback `upgrade` cannot resolve the stamped revision at all --
+        # that raises in `on_starting`, killing the master before /readyz is asked.
+        db_revision = get_db_revision()
+        script_head = get_script_head()
+        if db_revision and script_head and _db_is_at_or_ahead(db_revision, script_head):
+            logger.info(
+                "Database is at or ahead of this image's head; skipping migrations "
+                "(db_revision=%s, script_head=%s)",
+                db_revision,
+                script_head,
+            )
+            return None
         alembic.command.upgrade(config, "head")
     logger.info("Finished migrations")
 

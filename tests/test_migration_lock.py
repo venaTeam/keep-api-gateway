@@ -6,6 +6,8 @@ old revision and attempt the same DDL; the losers fail with "already exists",
 which propagates out of gunicorn's `on_starting` and CrashLoopBackOffs the pod.
 """
 
+import os
+from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 from src.repositories import db_on_start
@@ -39,6 +41,22 @@ def _executed_sql(conn):
     return [str(call.args[0]) for call in conn.execute.call_args_list]
 
 
+@contextmanager
+def _migration_pending():
+    """Put the database behind this image, so `migrate_db`'s at-or-ahead guard
+    lets the run through. These tests are about the lock, not the guard -- and
+    with a mocked engine the guard would otherwise read a MagicMock revision,
+    fail to resolve it, and treat it as a rollback."""
+    with patch.object(
+        db_on_start, "get_db_revision", return_value="rev1"
+    ), patch.object(
+        db_on_start, "get_script_head", return_value="rev2"
+    ), patch.object(
+        db_on_start, "_db_is_at_or_ahead", return_value=False
+    ):
+        yield
+
+
 def test_migration_runs_under_the_advisory_lock(monkeypatch):
     conn = _conn_returning(True)
     engine = _engine()
@@ -46,7 +64,7 @@ def test_migration_runs_under_the_advisory_lock(monkeypatch):
     monkeypatch.setattr(db_on_start, "engine", engine)
     monkeypatch.delenv("SKIP_DB_CREATION", raising=False)
 
-    with patch("alembic.command.upgrade") as upgrade:
+    with _migration_pending(), patch("alembic.command.upgrade") as upgrade:
         db_on_start.migrate_db()
 
     upgrade.assert_called_once()
@@ -63,7 +81,9 @@ def test_lock_is_released_even_if_the_migration_fails(monkeypatch):
     monkeypatch.setattr(db_on_start, "engine", engine)
     monkeypatch.delenv("SKIP_DB_CREATION", raising=False)
 
-    with patch("alembic.command.upgrade", side_effect=RuntimeError("bad migration")):
+    with _migration_pending(), patch(
+        "alembic.command.upgrade", side_effect=RuntimeError("bad migration")
+    ):
         try:
             db_on_start.migrate_db()
         except RuntimeError:
@@ -83,7 +103,7 @@ def test_second_replica_waits_for_the_lock(monkeypatch):
     monkeypatch.setattr(db_on_start, "_MIGRATION_LOCK_POLL_SECONDS", 0)
     monkeypatch.delenv("SKIP_DB_CREATION", raising=False)
 
-    with patch("alembic.command.upgrade") as upgrade:
+    with _migration_pending(), patch("alembic.command.upgrade") as upgrade:
         db_on_start.migrate_db()
 
     attempts = [s for s in _executed_sql(conn) if "pg_try_advisory_lock" in s]
@@ -102,7 +122,7 @@ def test_lock_wait_is_bounded(monkeypatch):
     monkeypatch.setattr(db_on_start, "_MIGRATION_LOCK_TIMEOUT", 0)
     monkeypatch.delenv("SKIP_DB_CREATION", raising=False)
 
-    with patch("alembic.command.upgrade") as upgrade:
+    with _migration_pending(), patch("alembic.command.upgrade") as upgrade:
         db_on_start.migrate_db()
 
     upgrade.assert_called_once()
@@ -114,7 +134,7 @@ def test_non_postgres_dialect_skips_the_lock(monkeypatch):
     monkeypatch.setattr(db_on_start, "engine", engine)
     monkeypatch.delenv("SKIP_DB_CREATION", raising=False)
 
-    with patch("alembic.command.upgrade") as upgrade:
+    with _migration_pending(), patch("alembic.command.upgrade") as upgrade:
         db_on_start.migrate_db()
 
     upgrade.assert_called_once()
@@ -193,3 +213,51 @@ def test_script_head_is_readable_from_the_shipped_migrations():
     """Guards the absolute script_location: a broken path would make /readyz
     permanently report "not at head"."""
     assert db_on_start.get_script_head()
+
+
+def _migrate_with(db_revision, script_head, ancestry=None, dialect="postgresql"):
+    """Run `migrate_db` against a mocked lock, with the guard's inputs fixed.
+    Returns the patched `alembic.command.upgrade`."""
+    conn = _conn_returning(True)
+    engine = _engine(dialect=dialect)
+    engine.connect.return_value = conn
+    with patch.object(db_on_start, "engine", engine), patch.dict(
+        os.environ, {}, clear=False
+    ), patch.object(
+        db_on_start, "get_db_revision", return_value=db_revision
+    ), patch.object(
+        db_on_start, "get_script_head", return_value=script_head
+    ), patch.object(
+        db_on_start, "_script_directory", return_value=_fake_script_directory(ancestry or {})
+    ), patch(
+        "alembic.command.upgrade"
+    ) as upgrade:
+        os.environ.pop("SKIP_DB_CREATION", None)
+        db_on_start.migrate_db()
+    return upgrade, conn
+
+
+def test_migrate_db_skips_when_db_revision_is_unknown_to_this_image():
+    """Image rollback. `upgrade head` cannot resolve the newer stamped revision
+    and raises in `on_starting`, killing the master before /readyz is asked."""
+    upgrade, conn = _migrate_with("rev9", "rev2", ancestry={"rev2": ["rev2", "rev1"]})
+    upgrade.assert_not_called()
+    assert any("pg_advisory_unlock" in s for s in _executed_sql(conn))
+
+
+def test_migrate_db_skips_when_another_replica_already_migrated():
+    """The thirteen pods that lost the lock race have nothing left to apply."""
+    upgrade, _ = _migrate_with("rev3", "rev2", ancestry={"rev3": ["rev3", "rev2", "rev1"]})
+    upgrade.assert_not_called()
+
+
+def test_migrate_db_runs_when_db_is_behind():
+    """The one case that must still migrate."""
+    upgrade, _ = _migrate_with("rev1", "rev3", ancestry={"rev1": ["rev1"]})
+    upgrade.assert_called_once()
+
+
+def test_migrate_db_runs_against_a_fresh_database():
+    """No `alembic_version` table yet: nothing to compare, so migrate."""
+    upgrade, _ = _migrate_with(None, "rev3")
+    upgrade.assert_called_once()
