@@ -7,17 +7,24 @@ Two endpoints, one per probe:
   answer for liveness on an HTTP server: if it replies at all, the process can
   serve. Checking dependencies here would restart every replica at once on a
   Postgres blip. There is no separate `/livez` because this already is it.
-* `/readyz` — DB reachable, schema not behind this image, producer connected.
+* `/readyz` — DB reachable, schema satisfies this image's models, producer
+  connected.
 
-`/readyz` is wired to the **startupProbe**, sized to the worst-case migration:
-migrations run before the socket binds, so liveness would otherwise kill the pod
-mid-way. Deliberately not the readinessProbe yet — a schema comparison going
-false on every replica at once would empty the Service mid-rollout.
+The schema check asks whether the live database contains every table and column
+this image declares. Extra tables and columns are ignored, which is what makes an
+image rollback work: an older image declares fewer columns, finds them all, and
+is happy. It reads no migration script — there are none in this image, since
+`keep-migrations` applies the schema as an Argo PreSync Job before any pod of the
+new ReplicaSet exists.
 
-Because it gates startup, a false negative kills the container, so both
-judgements are levered:
+`/readyz` is wired to the **startupProbe**. With migrations ordered ahead of the
+pods it is a safety net rather than the gate it used to be. Deliberately not the
+readinessProbe — a schema comparison going false on every replica at once would
+empty the Service mid-rollout.
 
-* `KEEP_READYZ_SCHEMA_STRICT` — exact revision equality instead of "not behind".
+Because it gates startup, a false negative kills the container, so the producer
+judgement is levered:
+
 * `KEEP_READYZ_REQUIRE_PRODUCER` — set false during a Kafka incident, or with
   the brokers down no pod can finish starting, rather than starting and
   answering the retryable 503 the ingestion route exists to give senders.
@@ -61,7 +68,7 @@ def healthcheck() -> dict:
 
 
 def _check_db() -> tuple[bool, dict]:
-    """DB reachable, and the stamped revision matches this image's alembic head."""
+    """DB reachable, and its schema satisfies the models this image declares."""
     try:
         with db.engine.connect() as conn:
             conn.execute(text("SELECT 1"))
@@ -70,34 +77,21 @@ def _check_db() -> tuple[bool, dict]:
         return False, {"reachable": False, "error": f"{type(exc).__name__}: {exc}"}
 
     try:
-        at_head, db_revision, script_head = db_on_start.schema_at_head()
+        satisfied, missing = db_on_start.schema_drift()
     except Exception as exc:
         logger.error("Database schema check failed with exception: %s", exc, exc_info=True)
         return False, {
             "reachable": True,
-            "at_head": False,
+            "satisfied": False,
             "error": f"{type(exc).__name__}: {exc}",
         }
 
-    detail = {
-        "reachable": True,
-        "at_head": at_head,
-        "db_revision": db_revision,
-        "script_head": script_head,
-    }
-    if not at_head:
-        logger.warning(
-            "Database schema is not at head: db_revision=%s, script_head=%s",
-            db_revision,
-            script_head,
-        )
+    detail = {"reachable": True, "satisfied": satisfied, "missing": missing}
+    if not satisfied:
+        logger.warning("Database schema does not satisfy this image: %s", missing)
     else:
-        logger.info(
-            "Database readiness check passed: db_revision=%s, script_head=%s",
-            db_revision,
-            script_head,
-        )
-    return at_head, detail
+        logger.info("Database readiness check passed: schema satisfies this image")
+    return satisfied, detail
 
 
 async def _check_producer() -> tuple[bool, dict]:
@@ -197,9 +191,12 @@ async def readyz(response: Response) -> dict:
                 reasons.append(f"database ({db_detail['error']})")
             elif not db_detail.get("reachable", True):
                 reasons.append("database unreachable")
-            elif not db_detail.get("at_head", True):
+            elif not db_detail.get("satisfied", True):
+                missing = db_detail.get("missing") or {}
                 reasons.append(
-                    f"database schema behind (db={db_detail.get('db_revision')}, head={db_detail.get('script_head')})"
+                    "database schema does not satisfy this image "
+                    f"(missing tables={missing.get('missing_tables')}, "
+                    f"columns={missing.get('missing_columns')})"
                 )
             else:
                 reasons.append("database unhealthy")
