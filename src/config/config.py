@@ -52,6 +52,9 @@ KEEP_METRICS = starlette_config("KEEP_METRICS", default="true", cast=bool)
 KEEP_OTEL_ENABLED = starlette_config("KEEP_OTEL_ENABLED", default="true", cast=bool)
 KEEP_WORKERS = starlette_config("KEEP_WORKERS", default=None, cast=int)
 KEEP_LIMIT_CONCURRENCY = starlette_config("KEEP_LIMIT_CONCURRENCY", default=None, cast=int)
+SSE_KEEPALIVE_INTERVAL_SECONDS = starlette_config(
+    "SSE_KEEPALIVE_INTERVAL_SECONDS", default=15, cast=float
+)
 # Used for limiter default limits (defaults to 100/minute if env is not set)
 # Note: This shares the env var name with Uvicorn concurrency but expects string format for SlowAPI
 KEEP_LIMITER_DEFAULT_LIMIT = starlette_config("KEEP_LIMIT_CONCURRENCY", default="100/minute", cast=str)
