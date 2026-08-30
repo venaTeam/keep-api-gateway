@@ -9,6 +9,7 @@ from sqlmodel import SQLModel
 
 import src.utils.logging
 from src.repositories.db_utils import create_db_engine
+from src.models.db.migrations.autogenerate_filters import include_object
 from src.models.db.action import *
 from src.models.db.ai_suggestion import *
 from src.models.db.alert import *
@@ -17,12 +18,14 @@ from src.models.db.extraction import *
 from src.models.db.facet import *
 from src.models.db.maintenance_window import *
 from src.models.db.mapping import *
+from src.models.db.operator import *
 from src.models.db.preset import *
 from src.models.db.provider import *
 from src.models.db.rule import *
 from src.models.db.secret import *
 from src.models.db.statistics import *
 from src.models.db.tenant import *
+from src.models.db.tenant_role_grant import *
 from src.models.db.topology import *
 from src.models.db.user import *
 
@@ -60,6 +63,7 @@ async def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         render_as_batch=True,
+        include_object=include_object,
     )
 
     with context.begin_transaction():
@@ -73,7 +77,10 @@ def do_run_migrations(connection: Connection) -> None:
     :param connection: connection to the database.
     """
     context.configure(
-        connection=connection, target_metadata=target_metadata, render_as_batch=True
+        connection=connection,
+        target_metadata=target_metadata,
+        render_as_batch=True,
+        include_object=include_object,
     )
 
     with context.begin_transaction():

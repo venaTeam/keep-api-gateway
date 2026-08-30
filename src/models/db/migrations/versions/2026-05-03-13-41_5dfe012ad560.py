@@ -105,7 +105,7 @@ def upgrade() -> None:
             WITH batch AS (
                 SELECT id FROM alert
                 WHERE event IS NOT NULL
-                  AND "{payload_cols[0]}" IS NULL
+                  AND extra_data IS NULL
                 LIMIT {BATCH_SIZE}
                 FOR UPDATE SKIP LOCKED
             )

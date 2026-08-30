@@ -1,4 +1,4 @@
-﻿import logging
+import logging
 
 import jwt
 from fastapi import Depends, HTTPException
@@ -10,7 +10,7 @@ from src.repositories.db import (
     update_user_role,
     user_exists,
 )
-from src.repositories.dependencies import SINGLE_TENANT_UUID
+from src.repositories.dependencies import GENERIC_TENANT_UUID
 from src.services.identity_manager.authenticatedentity import AuthenticatedEntity
 from src.services.identity_manager.authverifierbase import AuthVerifierBase, oauth2_scheme
 from src.services.identity_manager.rbac import get_role_by_role_name
@@ -21,8 +21,8 @@ logger = logging.getLogger(__name__)
 class OneLoginAuthVerifier(AuthVerifierBase):
     """Handles SSO authentication for OneLogin"""
 
-    def __init__(self, scopes: list[str] = []) -> None:
-        super().__init__(scopes)
+    def __init__(self, scopes: list[str] = [], tenant_id: str = None) -> None:
+        super().__init__(scopes, tenant_id=tenant_id)
         self.logger.info(f"Initializing OneLogin AuthVerifier with scopes: {scopes}")
         self.onelogin_issuer = config("ONELOGIN_ISSUER")
         self.onelogin_client_id = config("ONELOGIN_CLIENT_ID")
@@ -119,24 +119,31 @@ class OneLoginAuthVerifier(AuthVerifierBase):
                     detail=f"No valid role found among {onelogin_groups}",
                 )
 
+            tenant_id = (
+                self.tenant_id
+                or payload.get("tenant_id")
+                or payload.get("tenantId")
+                or GENERIC_TENANT_UUID
+            )
+
             # auto provision user
             if self.auto_create_user and not user_exists(
-                tenant_id=SINGLE_TENANT_UUID, username=user_name
+                tenant_id=tenant_id, username=user_name
             ):
                 self.logger.info(f"Auto provisioning user: {user_name}")
                 create_user(
-                    tenant_id=SINGLE_TENANT_UUID,
+                    tenant_id=tenant_id,
                     username=user_name,
                     role=mapped_role.get_name(),
                     password="",
                 )
                 self.logger.info(f"User {user_name} created")
-            elif user_exists(tenant_id=SINGLE_TENANT_UUID, username=user_name):
+            elif user_exists(tenant_id=tenant_id, username=user_name):
                 # update last login
                 self.logger.debug(f"Updating last login for user: {user_name}")
                 try:
                     update_user_last_sign_in(
-                        tenant_id=SINGLE_TENANT_UUID, username=user_name
+                        tenant_id=tenant_id, username=user_name
                     )
                     self.logger.debug(f"Last login updated for user: {user_name}")
                 except Exception:
@@ -148,7 +155,7 @@ class OneLoginAuthVerifier(AuthVerifierBase):
                 self.logger.debug(f"Updating role for user: {user_name}")
                 try:
                     update_user_role(
-                        tenant_id=SINGLE_TENANT_UUID,
+                        tenant_id=tenant_id,
                         username=user_name,
                         role=mapped_role.get_name(),
                     )
@@ -161,7 +168,7 @@ class OneLoginAuthVerifier(AuthVerifierBase):
                 f"User {user_name} authenticated with role {mapped_role.get_name()}"
             )
             return AuthenticatedEntity(
-                tenant_id=SINGLE_TENANT_UUID,
+                tenant_id=tenant_id,
                 email=user_name,
                 role=mapped_role.get_name(),
                 token=token,

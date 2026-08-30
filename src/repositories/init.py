@@ -1,11 +1,11 @@
-﻿import logging
+import logging
 import os
 
 from src.services.alert_deduplicator.deduplication_rules_provisioning import (
     provision_deduplication_rules_from_env,
 )
 from src.repositories.db_on_start import migrate_db, try_create_single_tenant
-from src.repositories.dependencies import SINGLE_TENANT_UUID
+from src.repositories.dependencies import GENERIC_TENANT_UUID
 from src.repositories.tenant_configuration import TenantConfiguration
 from src.services.identity_manager.identitymanagerfactory import IdentityManagerTypes
 from src.providers.providers_factory import ProvidersFactory
@@ -14,6 +14,7 @@ from src.providers.providers_service import ProvidersService
 logger = logging.getLogger(__name__)
 
 PROVISION_RESOURCES = os.environ.get("PROVISION_RESOURCES", "true") == "true"
+PROVISIONING_FATAL = os.environ.get("KEEP_PROVISIONING_FATAL", "false") == "true"
 
 
 def provision_resources(provision_dashboards_func=None):
@@ -21,16 +22,48 @@ def provision_resources(provision_dashboards_func=None):
         logger.info("Loading providers into cache")
         # provision providers from env. relevant only on single tenant.
         logger.info("Provisioning providers")
-        ProvidersService.provision_providers(SINGLE_TENANT_UUID)
+        ProvidersService.provision_providers(GENERIC_TENANT_UUID)
         logger.info("Providers loaded successfully")
         if provision_dashboards_func:
-            provision_dashboards_func(SINGLE_TENANT_UUID)
+            provision_dashboards_func(GENERIC_TENANT_UUID)
             logger.info("Dashboards provisioned successfully")
         logger.info("Provisioning deduplication rules")
-        provision_deduplication_rules_from_env(SINGLE_TENANT_UUID)
+        provision_deduplication_rules_from_env(GENERIC_TENANT_UUID)
         logger.info("Deduplication rules provisioned successfully")
     else:
         logger.info("Provisioning resources is disabled")
+        return
+
+    steps = [
+        (
+            "providers",
+            lambda: ProvidersService.provision_providers(SINGLE_TENANT_UUID),
+        ),
+    ]
+    if provision_dashboards_func:
+        steps.append(
+            ("dashboards", lambda: provision_dashboards_func(SINGLE_TENANT_UUID))
+        )
+    steps.append(
+        (
+            "deduplication rules",
+            lambda: provision_deduplication_rules_from_env(SINGLE_TENANT_UUID),
+        )
+    )
+
+    for name, step in steps:
+        logger.info("Provisioning %s", name)
+        try:
+            step()
+            logger.info("%s provisioned successfully", name)
+        except Exception:
+            if PROVISIONING_FATAL:
+                raise
+            logger.exception(
+                "Failed to provision %s — continuing startup (set "
+                "KEEP_PROVISIONING_FATAL=true to fail fast instead)",
+                name,
+            )
 
 
 def init_services(auth_type: str, provision_dashboards_func=None, skip_ngrok=False):
@@ -61,7 +94,7 @@ def init_services(auth_type: str, provision_dashboards_func=None, skip_ngrok=Fal
         ]
         # for oauth2proxy, we don't want to create the default user
         try_create_single_tenant(
-            SINGLE_TENANT_UUID,
+            GENERIC_TENANT_UUID,
             create_default_user=(
                 False if auth_type in excluded_from_default_user else True
             ),

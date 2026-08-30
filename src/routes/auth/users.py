@@ -1,7 +1,7 @@
 ﻿import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, validator
 
 from src.models.user import User
@@ -41,8 +41,12 @@ class UpdateUserRequest(BaseModel):
         return v
 
 
-@router.get("", description="Get all users")
+@router.get("", description="Get all users (or search a subset with ?search=)")
 def get_users(
+    search: Optional[str] = Query(
+        default=None,
+        description="Server-side filter -- returns only matching users (fast for large directories)",
+    ),
     authenticated_entity: AuthenticatedEntity = Depends(
         IdentityManagerFactory.get_auth_verifier(["read:settings"])
     ),
@@ -50,7 +54,7 @@ def get_users(
     identity_manager = IdentityManagerFactory.get_identity_manager(
         authenticated_entity.tenant_id
     )
-    return identity_manager.get_users()
+    return identity_manager.get_users(search=search)
 
 
 @router.delete("/{user_email}", description="Delete a user")

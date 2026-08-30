@@ -2,15 +2,14 @@ from datetime import datetime
 
 from sqlmodel import Field, SQLModel
 
-# THIS IS ONLY FOR SINGLE TENANT (self-hosted) USAGES
-from src.repositories.dependencies import SINGLE_TENANT_UUID
+from src.repositories.dependencies import GENERIC_TENANT_UUID
 
 
 class User(SQLModel, table=True):
     # Unique ID for each user
     id: int = Field(primary_key=True)
 
-    tenant_id: str = Field(default=SINGLE_TENANT_UUID)
+    tenant_id: str = Field(default=GENERIC_TENANT_UUID)
 
     # Username for the user (should be unique)
     username: str = Field(index=True, unique=True)

@@ -17,20 +17,20 @@ scope of SC-05 step 1 is therefore:
 `create_index` works on every supported dialect, so no dialect guard is needed.
 
 Revision ID: alertraw_partition_dlq
-Revises: alert_audit_covering_index
+Revises: preset_filter_indexes
 Create Date: 2026-06-30
 """
 
 from alembic import op
 
 revision = "alertraw_partition_dlq"
-down_revision = "alert_audit_covering_index"
+down_revision = "preset_filter_indexes"
 branch_labels = None
 depends_on = None
 
 
 def upgrade() -> None:
-    op.create_index("ix_alertraw_timestamp", "alertraw", ["timestamp"])
+    op.create_index("ix_alertraw_timestamp", "alertraw", ["timestamp"], if_not_exists=True)
 
 
 def downgrade() -> None:
