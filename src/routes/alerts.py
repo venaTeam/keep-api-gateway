@@ -26,6 +26,7 @@ from src.repositories.metrics import (
     alert_ingestion_total,
 )
 from src.repositories.cel_to_sql.sql_providers.base import CelToSqlException
+from src.repositories.db import delete_alert as delete_alert_db
 from src.repositories.db import dismiss_error_alerts as dismiss_error_alerts_db
 from src.repositories.db import (
     enrich_alerts_with_incidents,
@@ -536,22 +537,41 @@ async def delete_alert(
         },
     )
 
-    # Soft-delete is a typed boolean on LastAlert (per fingerprint).
-    # restore=True clears it; restore=False sets it. The legacy `deletedAt`
-    # timestamp-list / `assignees` timestamp-dict patterns are dropped — also
-    # auto-assign the acting user (assignee is never cleared automatically).
-    deleted = not bool(delete_alert.restore)
-    enrichments = {"deleted": deleted, "assignee": user_email}
+    if not delete_alert.soft_delete:
+        # Hard delete: remove the rows here rather than asking the consumer to.
+        #
+        # This used to write `{"deleted": true}` and publish an `EventType.DELETE`
+        # event, leaving the actual row removal to keep-event-handler. Two reasons
+        # it moved in-process:
+        #
+        # 1. Once the gateway stops producing to Kafka, nothing consumes that
+        #    event and every hard delete silently becomes a soft delete.
+        # 2. The consumer's `delete_alert` takes a fingerprint with no tenant
+        #    predicate, so it removes every tenant's rows sharing it. Publishing
+        #    the event is what makes that defect reachable; deleting here, scoped
+        #    to the acting tenant, is what closes it.
+        #
+        # No enrichment write and no audit row: both are addressed to rows this
+        # call is about to delete -- `delete_alert_db` clears the fingerprint's
+        # AlertAudit history along with the alert.
+        delete_alert_db(tenant_id=tenant_id, fingerprint=delete_alert.fingerprint)
+    else:
+        # Soft-delete is a typed boolean on LastAlert (per fingerprint).
+        # restore=True clears it; restore=False sets it. The legacy `deletedAt`
+        # timestamp-list / `assignees` timestamp-dict patterns are dropped — also
+        # auto-assign the acting user (assignee is never cleared automatically).
+        deleted = not bool(delete_alert.restore)
+        enrichments = {"deleted": deleted, "assignee": user_email}
 
-    enrichment_bl = EnrichmentsBl(tenant_id, event_producer=event_producer)
-    await enrichment_bl.enrich_entity(
-        fingerprint=delete_alert.fingerprint,
-        enrichments=enrichments,
-        action_type=ActionType.DELETE_ALERT,
-        action_description=f"Alert deleted by {user_email}",
-        action_callee=user_email,
-        event_type = EventType.ENRICH if delete_alert.soft_delete else EventType.DELETE
-    )
+        enrichment_bl = EnrichmentsBl(tenant_id, event_producer=event_producer)
+        await enrichment_bl.enrich_entity(
+            fingerprint=delete_alert.fingerprint,
+            enrichments=enrichments,
+            action_type=ActionType.DELETE_ALERT,
+            action_description=f"Alert deleted by {user_email}",
+            action_callee=user_email,
+            event_type=EventType.ENRICH,
+        )
 
     logger.info(
         "Deleted alert successfully",

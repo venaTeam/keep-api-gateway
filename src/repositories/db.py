@@ -29,6 +29,7 @@ from sqlalchemy import (
     and_,
     case,
     cast,
+    delete,
     desc,
     func,
     literal,
@@ -4447,6 +4448,69 @@ def apply_dismiss_lifecycle(last_alert: LastAlert, alert_status: str) -> bool:
     last_alert.dismiss_mode = None
     last_alert.dismissed_until = None
     return True
+
+
+def delete_alert(
+    tenant_id: str,
+    fingerprint: UUID | str,
+    session: Optional[Session] = None,
+) -> None:
+    """Hard-delete an alert and every row hanging off its fingerprint.
+
+    Ported from `keep-event-handler/src/core/db/db.py`, which is where row removal
+    has lived until now: `DELETE /alerts` with `soft_delete=false` only writes
+    `{"deleted": true}` in this service and relies on the consumer's `delete`
+    handler to remove the rows. Once the gateway stops producing to Kafka that
+    handler is unreachable, and without this function a hard delete silently
+    degrades into a soft delete -- the rows stay in the database while the caller
+    is told they are gone.
+
+    **Every DELETE is scoped to `tenant_id`, which the source function does not
+    do.** It takes a fingerprint only, so one tenant's hard delete removes every
+    tenant's rows sharing that fingerprint. Fingerprints derive from alert
+    content, so a collision across tenants is plausible rather than theoretical.
+    That predicate is why this is a rewrite rather than a copy, and it closes a
+    defect that is live today through the consumer path.
+
+    Order matters: `CommentMention` goes before `AlertAudit`, because it is
+    selected through the audit rows it references.
+    """
+    with existed_or_new_session(session) as session:
+        session.execute(
+            delete(LastAlertToIncident)
+            .where(LastAlertToIncident.tenant_id == tenant_id)
+            .where(LastAlertToIncident.fingerprint == fingerprint)
+        )
+        session.execute(
+            delete(LastAlert)
+            .where(LastAlert.tenant_id == tenant_id)
+            .where(LastAlert.fingerprint == fingerprint)
+        )
+        # Scoped on BOTH sides -- the outer delete and the audit subquery it
+        # selects from. An unscoped subquery would match another tenant's audit
+        # ids and take their mention rows along with them.
+        session.execute(
+            delete(CommentMention).where(
+                CommentMention.tenant_id == tenant_id,
+                CommentMention.comment_id.in_(
+                    select(AlertAudit.id)
+                    .where(AlertAudit.tenant_id == tenant_id)
+                    .where(AlertAudit.fingerprint == fingerprint)
+                ),
+            ),
+            execution_options={"synchronize_session": False},
+        )
+        session.execute(
+            delete(AlertAudit)
+            .where(AlertAudit.tenant_id == tenant_id)
+            .where(AlertAudit.fingerprint == fingerprint)
+        )
+        session.execute(
+            delete(Alert)
+            .where(Alert.tenant_id == tenant_id)
+            .where(Alert.fingerprint == fingerprint)
+        )
+        session.commit()
 
 
 def set_last_alert(
