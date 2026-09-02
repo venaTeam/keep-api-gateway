@@ -4,8 +4,8 @@ Tests for the gateway probe endpoints.
 `/healthcheck` returns `{}` unconditionally. That is correct for **liveness** —
 if an HTTP server replies at all it can serve, and checking dependencies there
 would restart every replica at once on a Postgres blip — but useless as
-readiness: it stays green with the DB unreachable, the schema behind this image's
-migrations, or the producer cold. `/readyz` is the probe target that means
+readiness: it stays green with the DB unreachable, the schema missing a table
+this image's models declare, or the producer cold. `/readyz` is the probe target that means
 something.
 """
 
@@ -41,9 +41,9 @@ def test_healthcheck_is_liveness_and_dependency_free(probe_client):
     assert response.json() == {}  # unchanged contract; existing probes keep working
 
 
-def test_readyz_ok_when_db_at_head_and_producer_connected(probe_client):
+def test_readyz_ok_when_schema_satisfied_and_producer_connected(probe_client):
     with patch.object(
-        healthcheck, "_check_db", return_value=(True, {"reachable": True, "at_head": True})
+        healthcheck, "_check_db", return_value=(True, {"reachable": True, "satisfied": True})
     ):
         with patch(
             "src.services.producers.factory.get_producer_instance",
@@ -55,14 +55,14 @@ def test_readyz_ok_when_db_at_head_and_producer_connected(probe_client):
     assert response.json()["status"] == "ok"
 
 
-def test_readyz_503_when_schema_is_behind(probe_client):
-    """A pod whose DB is behind its own migrations must not be advertised ready —
-    that is what makes readiness trustworthy as a sync-wave gate for
-    keep-event-handler."""
+def test_readyz_503_when_schema_does_not_satisfy_this_image(probe_client):
+    """A pod whose database is missing a table or column its own models declare
+    must not be advertised ready — that is what makes readiness trustworthy as a
+    sync-wave gate for keep-event-handler."""
     with patch.object(
         healthcheck,
         "_check_db",
-        return_value=(False, {"reachable": True, "at_head": False}),
+        return_value=(False, {"reachable": True, "satisfied": False}),
     ):
         with patch(
             "src.services.producers.factory.get_producer_instance",
@@ -71,7 +71,7 @@ def test_readyz_503_when_schema_is_behind(probe_client):
             response = probe_client.get("/readyz")
 
     assert response.status_code == 503
-    assert response.json()["checks"]["database"]["at_head"] is False
+    assert response.json()["checks"]["database"]["satisfied"] is False
 
 
 def test_readyz_ignores_a_cold_producer_when_not_required(probe_client, monkeypatch):
@@ -80,7 +80,7 @@ def test_readyz_ignores_a_cold_producer_when_not_required(probe_client, monkeypa
     monkeypatch.setattr(healthcheck, "REQUIRE_PRODUCER", False)
 
     with patch.object(
-        healthcheck, "_check_db", return_value=(True, {"reachable": True, "at_head": True})
+        healthcheck, "_check_db", return_value=(True, {"reachable": True, "satisfied": True})
     ):
         with patch(
             "src.services.producers.factory.get_producer_instance",
@@ -117,7 +117,7 @@ def test_readyz_503_when_producer_is_cold(probe_client):
     """A cold producer means the next alert goes to the DLQ topic and is never
     ingested, so the pod is not ready to receive traffic."""
     with patch.object(
-        healthcheck, "_check_db", return_value=(True, {"reachable": True, "at_head": True})
+        healthcheck, "_check_db", return_value=(True, {"reachable": True, "satisfied": True})
     ):
         with patch(
             "src.services.producers.factory.get_producer_instance",
@@ -131,7 +131,7 @@ def test_readyz_503_when_producer_is_cold(probe_client):
 
 def test_readyz_503_before_the_producer_exists(probe_client):
     with patch.object(
-        healthcheck, "_check_db", return_value=(True, {"reachable": True, "at_head": True})
+        healthcheck, "_check_db", return_value=(True, {"reachable": True, "satisfied": True})
     ):
         with patch(
             "src.services.producers.factory.get_producer_instance", return_value=None
@@ -147,7 +147,7 @@ def test_readyz_asks_the_producer_to_reconnect(probe_client):
     keeps retrying instead of quietly DLQ-ing whatever arrives."""
     producer = _producer(True)
     with patch.object(
-        healthcheck, "_check_db", return_value=(True, {"reachable": True, "at_head": True})
+        healthcheck, "_check_db", return_value=(True, {"reachable": True, "satisfied": True})
     ):
         with patch(
             "src.services.producers.factory.get_producer_instance",
@@ -162,7 +162,7 @@ def test_readyz_survives_a_raising_producer(probe_client):
     producer = MagicMock()
     producer.health = AsyncMock(side_effect=RuntimeError("boom"))
     with patch.object(
-        healthcheck, "_check_db", return_value=(True, {"reachable": True, "at_head": True})
+        healthcheck, "_check_db", return_value=(True, {"reachable": True, "satisfied": True})
     ):
         with patch(
             "src.services.producers.factory.get_producer_instance",
@@ -184,7 +184,7 @@ def test_readyz_does_not_block_the_event_loop_on_a_slow_db(probe_client):
 
     def slow_check():
         loop_thread_ids.append(threading.get_ident())
-        return True, {"reachable": True, "at_head": True}
+        return True, {"reachable": True, "satisfied": True}
 
     with patch.object(healthcheck, "_check_db", side_effect=slow_check):
         with patch(
@@ -243,7 +243,7 @@ def test_readyz_bounds_a_hanging_producer_reconnect(probe_client, monkeypatch):
     producer.health = never_returns
 
     with patch.object(
-        healthcheck, "_check_db", return_value=(True, {"reachable": True, "at_head": True})
+        healthcheck, "_check_db", return_value=(True, {"reachable": True, "satisfied": True})
     ):
         with patch(
             "src.services.producers.factory.get_producer_instance",
@@ -266,15 +266,26 @@ def test_check_db_reports_unreachable_database():
     assert "OSError" in detail["error"]
 
 
-def test_check_db_compares_revision_to_script_head():
+def test_check_db_reports_what_the_schema_is_missing():
     engine = MagicMock()
+    missing = {"missing_tables": ["operator"], "missing_columns": {"alert": ["team"]}}
     with patch("src.repositories.db.engine", engine):
         with patch(
-            "src.repositories.db_on_start.schema_at_head",
-            return_value=(False, "rev-old", "rev-head"),
+            "src.repositories.db_on_start.schema_drift",
+            return_value=(False, missing),
         ):
             ok, detail = healthcheck._check_db()
 
     assert ok is False
-    assert detail["db_revision"] == "rev-old"
-    assert detail["script_head"] == "rev-head"
+    assert detail["satisfied"] is False
+    assert detail["missing"] == missing
+
+
+def test_check_db_passes_when_the_schema_satisfies_the_models():
+    engine = MagicMock()
+    with patch("src.repositories.db.engine", engine):
+        with patch("src.repositories.db_on_start.schema_drift", return_value=(True, {})):
+            ok, detail = healthcheck._check_db()
+
+    assert ok is True
+    assert detail == {"reachable": True, "satisfied": True, "missing": {}}
