@@ -214,27 +214,27 @@ _STRICT_SCHEMA_FIELD_CONFIGS = [
     ),
     # relocated system-tracking fields
     FieldMappingConfiguration(
-        map_from_pattern="last_received",
+        map_from_pattern="lastReceived",
         map_to=["lastalert.last_received"],
         data_type=DataType.DATETIME,
     ),
     FieldMappingConfiguration(
-        map_from_pattern="firing_counter",
+        map_from_pattern="firingCounter",
         map_to=["lastalert.firing_counter"],
         data_type=DataType.INTEGER,
     ),
     FieldMappingConfiguration(
-        map_from_pattern="unresolved_counter",
+        map_from_pattern="unresolvedCounter",
         map_to=["lastalert.unresolved_counter"],
         data_type=DataType.INTEGER,
     ),
     FieldMappingConfiguration(
-        map_from_pattern="firing_start_time",
+        map_from_pattern="firingStartTime",
         map_to=["lastalert.firing_start_time"],
         data_type=DataType.STRING,
     ),
     FieldMappingConfiguration(
-        map_from_pattern="firing_start_time_since_last_resolved",
+        map_from_pattern="firingStartTimeSinceLastResolved",
         map_to=["lastalert.firing_start_time_since_last_resolved"],
         data_type=DataType.STRING,
     ),
