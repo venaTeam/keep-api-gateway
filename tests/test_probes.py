@@ -4,8 +4,8 @@ Tests for the gateway probe endpoints.
 `/healthcheck` returns `{}` unconditionally. That is correct for **liveness** —
 if an HTTP server replies at all it can serve, and checking dependencies there
 would restart every replica at once on a Postgres blip — but useless as
-readiness: it stays green with the DB unreachable, the schema behind this image's
-migrations, or the producer cold. `/readyz` is the probe target that means
+readiness: it stays green with the DB unreachable, the schema missing a table
+this image's models declare, or the producer cold. `/readyz` is the probe target that means
 something.
 """
 

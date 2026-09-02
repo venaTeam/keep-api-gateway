@@ -187,7 +187,7 @@ def try_create_single_tenant(tenant_id: str, create_default_user=True) -> None:
 _schema_drift_ok_cache: bool = False
 
 
-def live_tables() -> dict[str, set[str]]:
+def live_tables(conn=None) -> dict[str, set[str]]:
     """{table name -> column names} for the database this process is pointed at.
 
     One query rather than `inspect()`'s table-then-columns walk: on a 51-table
@@ -197,6 +197,11 @@ def live_tables() -> dict[str, set[str]]:
 
     sqlite has no `information_schema`, so it takes the reflection path. Only
     tests and single-process dev run on sqlite, where the round trips are free.
+
+    `conn` lets a caller that already holds a connection reuse it rather than
+    check out a second one. `/readyz` does: the pool is 5 + 10 overflow per
+    worker and `pool_timeout` (10s) exceeds the probe's own budget (2s), so a
+    checkout the endpoint cannot cancel is worth not making twice.
     """
     if engine.dialect.name == "sqlite":
         inspector = sa_inspect(engine)
@@ -205,20 +210,22 @@ def live_tables() -> dict[str, set[str]]:
             for table in inspector.get_table_names()
         }
 
-    with engine.connect() as conn:
-        rows = conn.execute(
-            text(
-                "SELECT table_name, column_name FROM information_schema.columns "
-                "WHERE table_schema = current_schema()"
-            )
-        ).fetchall()
+    query = text(
+        "SELECT table_name, column_name FROM information_schema.columns "
+        "WHERE table_schema = current_schema()"
+    )
+    if conn is not None:
+        rows = conn.execute(query).fetchall()
+    else:
+        with engine.connect() as owned:
+            rows = owned.execute(query).fetchall()
     live: dict[str, set[str]] = {}
     for table, column in rows:
         live.setdefault(table, set()).add(column)
     return live
 
 
-def schema_drift() -> tuple[bool, dict]:
+def schema_drift(conn=None) -> tuple[bool, dict]:
     """(satisfied, missing) -- does the live schema contain everything this
     image's models declare?
 
@@ -241,7 +248,7 @@ def schema_drift() -> tuple[bool, dict]:
         return True, {}
 
     declared = declared_tables()
-    live = live_tables()
+    live = live_tables(conn)
 
     missing_tables = sorted(name for name in declared if name not in live)
     missing_columns = {

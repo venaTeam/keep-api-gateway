@@ -68,20 +68,23 @@ def healthcheck() -> dict:
 
 
 def _check_db() -> tuple[bool, dict]:
-    """DB reachable, and its schema satisfies the models this image declares."""
+    """DB reachable, and its schema satisfies the models this image declares.
+
+    One connection for both questions. `SELECT 1` stays rather than letting the
+    schema query stand in for it: `schema_drift` is memoised on success, so on
+    every probe after the first it answers from cache without touching the
+    database — and would report a dead database as reachable. Reusing this
+    connection for the schema scan is what removes the second checkout, which
+    matters because `pool_timeout` (10s) exceeds this endpoint's own budget.
+    """
     try:
         with db.engine.connect() as conn:
             conn.execute(text("SELECT 1"))
+            satisfied, missing = db_on_start.schema_drift(conn)
     except Exception as exc:
-        logger.error("Database connectivity check failed: %s", exc)
-        return False, {"reachable": False, "error": f"{type(exc).__name__}: {exc}"}
-
-    try:
-        satisfied, missing = db_on_start.schema_drift()
-    except Exception as exc:
-        logger.error("Database schema check failed with exception: %s", exc, exc_info=True)
+        logger.error("Database check failed: %s", exc, exc_info=True)
         return False, {
-            "reachable": True,
+            "reachable": False,
             "satisfied": False,
             "error": f"{type(exc).__name__}: {exc}",
         }
@@ -158,7 +161,10 @@ async def _bounded(awaitable, name: str) -> tuple[bool, dict]:
 
 @router.get(
     "/readyz",
-    description="Readiness: DB reachable and at head, Kafka producer connected",
+    description=(
+        "Readiness: DB reachable, its schema satisfies this image's models, "
+        "Kafka producer connected"
+    ),
 )
 async def readyz(response: Response) -> dict:
     checks = {}
@@ -218,8 +224,6 @@ async def readyz(response: Response) -> dict:
         logger.error(f"Readiness check failed {reason_str}", extra={"checks": checks})
     else:
         logger.debug("Readiness check passed", extra={"checks": checks})
-
-    logger.debug("Readiness check passed", extra={"checks": checks})
 
     return {"status": "ok" if ready else "unavailable", "checks": checks}
 
