@@ -114,9 +114,10 @@ async def startup():
     module-level because the loop only holds a weak one — and so `shutdown()` can
     cancel a start that hasn't happened yet.
     """
-    from src.services.sse import install_shutdown_handlers
+    from src.services.sse import install_shutdown_handlers, start_fanout
 
     install_shutdown_handlers(asyncio.get_running_loop())
+    await start_fanout()
 
     logger.info("Disope existing DB connections")
     # psycopg2.DatabaseError: error with status PGRES_TUPLES_OK and no message from the libpq
@@ -215,8 +216,10 @@ async def shutdown():
     as connection resets instead of the retryable 503 they would otherwise get.
     `KEEP_CONSUMER_STOP_TIMEOUT` is the knob that keeps the total inside it.
     """
+    from src.services.sse import stop_fanout
+
     logger.info("Shutting down Keep")
-    stops = [stop_event_producer()]
+    stops = [stop_event_producer(), stop_fanout()]
     if CONSUMER:
         stops.append(_stop_event_subscriber())
     await asyncio.gather(*stops, return_exceptions=True)
