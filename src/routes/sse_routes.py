@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from sqlmodel import Session
 
 from src.repositories.db import engine
-from src.services.sse import sse_broadcaster
+from src.services.sse import broadcast, sse_broadcaster
 from src.services.identity_manager.authenticatedentity import AuthenticatedEntity
 from src.services.identity_manager.identitymanagerfactory import IdentityManagerFactory
 
@@ -186,9 +186,5 @@ async def sse_notify(
     )
     # Convert pydantic model instances to dicts for JSON serialization
     data = notification.data.dict() if isinstance(notification.data, BaseModel) else notification.data
-    await sse_broadcaster.notify(
-        notification.tenant_id,
-        notification.event,
-        data
-    )
+    await broadcast(notification.tenant_id, notification.event, data)
     

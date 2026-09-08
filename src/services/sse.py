@@ -16,6 +16,11 @@ A stream never ends on its own, so on SIGTERM the broadcaster closes every
 subscriber queue: the responses end at once, the server's drain completes and
 the lifespan shutdown runs instead of the worker being force-killed after
 gunicorn's graceful timeout while browsers sit on a zombie stream.
+
+The broadcaster only knows this process's streams. With `SSE_FANOUT=redis`,
+`broadcast()` also publishes every notification through
+`src.services.sse_fanout` so the replicas holding the other streams deliver it
+too; without it, `broadcast()` is local delivery, exactly as before.
 """
 
 import asyncio
@@ -23,14 +28,29 @@ import json
 import logging
 import signal
 import threading
-from typing import Any, AsyncGenerator, Callable, Dict, List
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
 
-from src.config.config import SSE_KEEPALIVE_INTERVAL_SECONDS
+from src.config.config import (
+    REDIS_DB,
+    REDIS_HOST,
+    REDIS_KEY_PREFIX,
+    REDIS_PASSWORD,
+    REDIS_PORT,
+    REDIS_SENTINEL_ENABLED,
+    REDIS_SENTINEL_HOSTS,
+    REDIS_SENTINEL_SERVICE_NAME,
+    REDIS_SSL,
+    REDIS_USERNAME,
+    SSE_FANOUT,
+    SSE_FANOUT_CHANNEL,
+    SSE_KEEPALIVE_INTERVAL_SECONDS,
+)
 from src.repositories.metrics import (
     connected_users_gauge,
     sse_notifications_total,
     sse_streams_closed_total,
 )
+from src.services.sse_fanout import RedisFanout, redis_client_factory
 
 logger = logging.getLogger(__name__)
 
@@ -225,6 +245,59 @@ class SSEBroadcaster:
 
 sse_broadcaster = SSEBroadcaster()
 
+_fanout: Optional[RedisFanout] = None
+
+async def start_fanout() -> None:
+    """
+    Connect this process to the cross-process fan-out when `SSE_FANOUT=redis`.
+
+    Runs from the lifespan startup. Never raises: an unreachable Redis is
+    logged and retried by the fan-out's subscriber, and publishing degrades to
+    local delivery until it is back.
+
+    On a Redis shared with other applications the clients select `REDIS_DB`
+    and the channel carries `REDIS_KEY_PREFIX`; the prefix is what isolates
+    the channel, since pub/sub channels are instance-wide whatever the
+    database index.
+    """
+    global _fanout
+    if SSE_FANOUT != "redis":
+        return
+    client_factory = redis_client_factory(
+        host=REDIS_HOST,
+        port=REDIS_PORT,
+        db=REDIS_DB,
+        ssl=REDIS_SSL,
+        username=REDIS_USERNAME,
+        password=REDIS_PASSWORD,
+        sentinel_hosts=REDIS_SENTINEL_HOSTS if REDIS_SENTINEL_ENABLED else None,
+        sentinel_service=REDIS_SENTINEL_SERVICE_NAME,
+    )
+    channel = f"{REDIS_KEY_PREFIX}{SSE_FANOUT_CHANNEL}"
+    _fanout = RedisFanout(sse_broadcaster, client_factory, channel=channel)
+    await _fanout.start()
+    logger.info("SSE fan-out enabled", extra={"channel": channel})
+
+async def stop_fanout() -> None:
+    """Disconnect from the fan-out; later broadcasts deliver locally only."""
+    global _fanout
+    fanout, _fanout = _fanout, None
+    if fanout is not None:
+        await fanout.stop()
+
+async def broadcast(tenant_id: str, event: str, data: Any) -> None:
+    """
+    Notify a tenant's subscribers in every gateway process.
+
+    Delivers to this process's streams and, when the fan-out is enabled, to the
+    streams held by the other replicas. This is the entry point every notifier
+    must use; `SSEBroadcaster.notify()` alone only reaches the local process.
+    """
+    if _fanout is None:
+        await sse_broadcaster.notify(tenant_id, event, data)
+    else:
+        await _fanout.broadcast(tenant_id, event, data)
+
 def notify_sse(tenant_id: str, event: str, data: Any) -> None:
     """
     Synchronous wrapper to send SSE notifications.
@@ -239,13 +312,10 @@ def notify_sse(tenant_id: str, event: str, data: Any) -> None:
     """
     try:
         loop = asyncio.get_running_loop()
-        asyncio.run_coroutine_threadsafe(
-            sse_broadcaster.notify(tenant_id, event, data),
-            loop
-        )
+        asyncio.run_coroutine_threadsafe(broadcast(tenant_id, event, data), loop)
     except RuntimeError:
         try:
-            asyncio.run(sse_broadcaster.notify(tenant_id, event, data))
+            asyncio.run(broadcast(tenant_id, event, data))
         except Exception as e:
             logger.warning(
                 "Failed to send SSE notification (no event loop)",
