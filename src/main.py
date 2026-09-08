@@ -114,6 +114,10 @@ async def startup():
     module-level because the loop only holds a weak one — and so `shutdown()` can
     cancel a start that hasn't happened yet.
     """
+    from src.services.sse import install_shutdown_handlers
+
+    install_shutdown_handlers(asyncio.get_running_loop())
+
     logger.info("Disope existing DB connections")
     # psycopg2.DatabaseError: error with status PGRES_TUPLES_OK and no message from the libpq
     # https://stackoverflow.com/questions/43944787/sqlalchemy-celery-with-scoped-session-error/54751019#54751019

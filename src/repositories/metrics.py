@@ -133,6 +133,18 @@ login_failures_total = Counter(
 # Live/concurrent users: incremented on SSE subscribe, decremented on disconnect.
 # Connections are partitioned across workers/replicas, so `livesum` aggregates
 # the per-process counts into the true total.
+# SSE delivery per process: "no_subscriber" is a notification this process dropped.
+sse_notifications_total = Counter(
+    f"{METRIC_PREFIX}sse_notifications_total",
+    "SSE notifications handled by this process, by whether a local subscriber existed",
+    labelnames=["event", "outcome"],
+)
+sse_streams_closed_total = Counter(
+    f"{METRIC_PREFIX}sse_streams_closed_total",
+    "SSE streams closed, by reason",
+    labelnames=["reason"],
+)
+
 connected_users_gauge = Gauge(
     f"{METRIC_PREFIX}connected_users",
     "Currently connected live users (authenticated SSE subscriptions)",
