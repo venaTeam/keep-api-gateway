@@ -36,6 +36,19 @@ logger = logging.getLogger(__name__)
 
 _CLOSE = object()
 
+SSE_EVENTS = frozenset(
+    {
+        "connected",
+        "poll-alerts",
+        "incident-change",
+        "incident-comment",
+        "poll-presets",
+        "topology-update",
+        "ai-logs-change",
+        "alert-update",
+    }
+)
+
 class SSEBroadcaster:
     """
     In-memory SSE broadcaster that manages connections per tenant.
@@ -141,19 +154,26 @@ class SSEBroadcaster:
             tenant_id: The tenant ID to notify
             event: The event name/type
             data: The event data (will be JSON serialized)
+
+        The event label on the metric is limited to the stream protocol's
+        event names; any other name is counted as "other", since the name
+        arrives straight from the notify request and must not add series.
         """
+        metric_event = event if event in SSE_EVENTS else "other"
         async with self._lock:
             connections = self._connections.get(tenant_id, [])
             if not connections:
                 sse_notifications_total.labels(
-                    event=event, outcome="no_subscriber"
+                    event=metric_event, outcome="no_subscriber"
                 ).inc()
                 logger.debug(
                     "No SSE connections for tenant, skipping notification",
                     extra={"tenant_id": tenant_id, "event": event}
                 )
                 return
-            sse_notifications_total.labels(event=event, outcome="delivered").inc()
+            sse_notifications_total.labels(
+                event=metric_event, outcome="delivered"
+            ).inc()
 
             sse_message = self._format_sse(event, data)
 
@@ -251,10 +271,14 @@ def close_streams_on_signal(
     """
 
     def handler(signum: int, frame: Any) -> None:
-        loop.call_soon_threadsafe(broadcaster.close_all)
+        try:
+            loop.call_soon_threadsafe(broadcaster.close_all)
+        except RuntimeError:
+            logger.debug("SSE streams not closed on signal: the server loop is gone")
         if callable(previous):
             previous(signum, frame)
 
+    handler._keep_sse_previous = previous
     return handler
 
 
@@ -263,10 +287,15 @@ def install_shutdown_handlers(loop: asyncio.AbstractEventLoop) -> None:
     Wrap the process's SIGTERM and SIGINT handlers so streams close before the
     server drains. Must run on the main thread, which is where uvicorn has
     already installed its own handlers by the time the lifespan starts.
+
+    Installing again replaces an earlier Keep handler instead of stacking on
+    it, so a lifespan that starts after another has ended never chains
+    through a loop that is already closed.
     """
     if threading.current_thread() is not threading.main_thread():
         logger.warning("Not on the main thread; SSE streams will not close on shutdown")
         return
     for sig in (signal.SIGTERM, signal.SIGINT):
         previous = signal.getsignal(sig)
+        previous = getattr(previous, "_keep_sse_previous", previous)
         signal.signal(sig, close_streams_on_signal(previous, loop, sse_broadcaster))
