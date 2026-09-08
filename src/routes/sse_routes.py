@@ -8,14 +8,16 @@ no-auth modes.
 
 import logging
 import os
+import secrets
 from typing import List, Optional, Union
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlmodel import Session
 
 from src.repositories.db import engine
+from src.config.config import SSE_NOTIFY_TOKEN
 from src.services.sse import broadcast, sse_broadcaster
 from src.services.identity_manager.authenticatedentity import AuthenticatedEntity
 from src.services.identity_manager.identitymanagerfactory import IdentityManagerFactory
@@ -169,7 +171,25 @@ class SSENotification(BaseModel):
     data: Union[PresetNotifyData, IncidentNotifyData, AlertNotifyData, dict] = {}
 
 
-@router.post("/notify", status_code=204)
+def require_notify_token(
+    token: Optional[str] = Header(None, alias="X-Keep-Notify-Token"),
+) -> None:
+    """
+    Guard the notify route with the shared token when `SSE_NOTIFY_TOKEN` is
+    set. The route is how the event handler and workflows reach the browsers,
+    and with the fan-out enabled a request to it reaches every gateway
+    process, so on a network that exposes it the token is what keeps it
+    internal. Unset leaves the route open, as before the setting existed.
+    """
+    if SSE_NOTIFY_TOKEN and not secrets.compare_digest(
+        (token or "").encode(), SSE_NOTIFY_TOKEN.encode()
+    ):
+        raise HTTPException(status_code=401, detail="Invalid notify token")
+
+
+@router.post(
+    "/notify", status_code=204, dependencies=[Depends(require_notify_token)]
+)
 async def sse_notify(
     notification: SSENotification,
     # authenticated_entity: AuthenticatedEntity = Depends(get_sse_authenticated_entity),

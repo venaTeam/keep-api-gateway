@@ -468,6 +468,201 @@ def test_start_fanout_passes_the_redis_settings_to_the_client_factory(monkeypatc
 # instance-wide whatever the database, the channel must carry the prefix.
 
 
+def test_an_empty_key_prefix_is_flagged_when_the_fan_out_starts(monkeypatch, caplog):
+    """On a Redis shared between deployments the prefix is the only thing
+    separating their channels; starting without one must be visible."""
+
+    async def run():
+        server = FakePubSubServer()
+        _configure(monkeypatch, server, "redis")
+        monkeypatch.setattr(sse_module, "REDIS_KEY_PREFIX", "")
+        with caplog.at_level("WARNING", logger="src.services.sse"):
+            await sse_module.start_fanout()
+        await sse_module.stop_fanout()
+
+    asyncio.run(run())
+    assert any("REDIS_KEY_PREFIX" in r.getMessage() for r in caplog.records), [
+        r.getMessage() for r in caplog.records
+    ]
+
+
+def _notify_app():
+    from fastapi import FastAPI
+
+    from src.routes import sse_routes
+
+    app = FastAPI()
+    app.include_router(sse_routes.router, prefix="/sse")
+    return app
+
+
+def test_the_notify_route_rejects_requests_without_the_configured_token(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from src.routes import sse_routes
+
+    _configure(monkeypatch, None, "none")
+    monkeypatch.setattr(sse_routes, "SSE_NOTIFY_TOKEN", "s3cret")
+    body = {"tenant_id": "t1", "event": "poll-alerts", "data": {}}
+    with TestClient(_notify_app()) as client:
+        assert client.post("/sse/notify", json=body).status_code == 401
+        wrong = client.post(
+            "/sse/notify", json=body, headers={"X-Keep-Notify-Token": "nope"}
+        )
+        assert wrong.status_code == 401
+        right = client.post(
+            "/sse/notify", json=body, headers={"X-Keep-Notify-Token": "s3cret"}
+        )
+        assert right.status_code == 204
+
+
+def test_the_notify_route_stays_open_when_no_token_is_configured(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from src.routes import sse_routes
+
+    _configure(monkeypatch, None, "none")
+    monkeypatch.setattr(sse_routes, "SSE_NOTIFY_TOKEN", None)
+    body = {"tenant_id": "t1", "event": "poll-alerts", "data": {}}
+    with TestClient(_notify_app()) as client:
+        assert client.post("/sse/notify", json=body).status_code == 204
+
+
+def test_a_malformed_message_does_not_drop_the_subscription(monkeypatch):
+    """One bad message on the shared channel must be skipped, not treated as
+    Redis being lost: tearing the subscription down loses every message
+    published while it reconnects."""
+
+    async def run():
+        server = FakePubSubServer()
+        _configure(monkeypatch, server, "redis")
+        await sse_module.start_fanout()
+        await asyncio.sleep(0.1)
+        local_stream = sse_module.sse_broadcaster.subscribe("t1")
+        await local_stream.__anext__()
+        subscribe_errors = _counter(
+            metrics.sse_fanout_errors_total, operation="subscribe"
+        )
+        schema_errors = _counter(metrics.sse_fanout_errors_total, operation="schema")
+        rogue = server.client()
+        await rogue.publish("keep:sse", json.dumps({"origin": "elsewhere"}))
+        await rogue.publish(
+            "keep:sse",
+            json.dumps(
+                {
+                    "origin": "elsewhere",
+                    "tenant_id": "t1",
+                    "event": "poll-alerts",
+                    "data": {},
+                }
+            ),
+        )
+        local = await _next_or_none(local_stream, 0.5)
+        await local_stream.aclose()
+        await sse_module.stop_fanout()
+        return (
+            local,
+            _counter(metrics.sse_fanout_errors_total, operation="subscribe")
+            - subscribe_errors,
+            _counter(metrics.sse_fanout_errors_total, operation="schema")
+            - schema_errors,
+        )
+
+    local, subscribe_delta, schema_delta = asyncio.run(run())
+    assert local is not None and local.startswith("event: poll-alerts\n")
+    assert (subscribe_delta, schema_delta) == (0, 1)
+
+
+def test_a_delivery_failure_does_not_drop_the_subscription(monkeypatch):
+    """Whatever goes wrong while handing one message to the local broadcaster
+    must not be mistaken for Redis being lost."""
+
+    async def run():
+        server = FakePubSubServer()
+        _configure(monkeypatch, server, "redis")
+        await sse_module.start_fanout()
+        await asyncio.sleep(0.1)
+        broadcaster = sse_module.sse_broadcaster
+        real_notify = broadcaster.notify
+        seen = []
+
+        async def flaky_notify(tenant_id, event, data):
+            seen.append(event)
+            if len(seen) == 1:
+                raise RuntimeError("boom")
+            await real_notify(tenant_id, event, data)
+
+        monkeypatch.setattr(broadcaster, "notify", flaky_notify)
+        local_stream = broadcaster.subscribe("t1")
+        await local_stream.__anext__()
+        subscribe_errors = _counter(
+            metrics.sse_fanout_errors_total, operation="subscribe"
+        )
+        deliver_errors = _counter(metrics.sse_fanout_errors_total, operation="deliver")
+        rogue = server.client()
+        for event in ("poll-alerts", "incident-change"):
+            await rogue.publish(
+                "keep:sse",
+                json.dumps(
+                    {
+                        "origin": "elsewhere",
+                        "tenant_id": "t1",
+                        "event": event,
+                        "data": {},
+                    }
+                ),
+            )
+        local = await _next_or_none(local_stream, 0.5)
+        await local_stream.aclose()
+        await sse_module.stop_fanout()
+        return (
+            local,
+            _counter(metrics.sse_fanout_errors_total, operation="subscribe")
+            - subscribe_errors,
+            _counter(metrics.sse_fanout_errors_total, operation="deliver")
+            - deliver_errors,
+        )
+
+    local, subscribe_delta, deliver_delta = asyncio.run(run())
+    assert local is not None and local.startswith("event: incident-change\n")
+    assert (subscribe_delta, deliver_delta) == (0, 1)
+
+
+def test_an_open_notify_route_is_flagged_when_the_fan_out_starts(monkeypatch, caplog):
+    """With the fan-out on, an unguarded notify route reaches every gateway
+    process; starting that way must be visible."""
+
+    async def run():
+        server = FakePubSubServer()
+        _configure(monkeypatch, server, "redis")
+        monkeypatch.setattr(sse_module, "SSE_NOTIFY_TOKEN", None, raising=False)
+        with caplog.at_level("WARNING", logger="src.services.sse"):
+            await sse_module.start_fanout()
+        await sse_module.stop_fanout()
+
+    asyncio.run(run())
+    assert any("SSE_NOTIFY_TOKEN" in r.getMessage() for r in caplog.records), [
+        r.getMessage() for r in caplog.records
+    ]
+
+
+def test_the_notify_route_rejects_a_wrong_token_when_the_configured_one_is_not_ascii(
+    monkeypatch,
+):
+    from fastapi.testclient import TestClient
+
+    from src.routes import sse_routes
+
+    _configure(monkeypatch, None, "none")
+    monkeypatch.setattr(sse_routes, "SSE_NOTIFY_TOKEN", "s\u00e9cret")
+    body = {"tenant_id": "t1", "event": "poll-alerts", "data": {}}
+    with TestClient(_notify_app()) as client:
+        wrong = client.post(
+            "/sse/notify", json=body, headers={"X-Keep-Notify-Token": "nope"}
+        )
+        assert wrong.status_code == 401
+
+
 def test_the_direct_client_selects_the_database_and_tls():
     from redis.asyncio.connection import SSLConnection
 
@@ -486,6 +681,7 @@ def test_the_direct_client_selects_the_database_and_tls():
     kwargs = client.connection_pool.connection_kwargs
     assert (kwargs["host"], kwargs["port"], kwargs["db"]) == ("redis.example", 6380, 3)
     assert client.connection_pool.connection_class is SSLConnection
+    assert kwargs["health_check_interval"] == 30
 
 
 def test_the_sentinel_client_selects_the_database():
@@ -504,6 +700,7 @@ def test_the_sentinel_client_selects_the_database():
     pool = client.connection_pool
     assert pool.service_name == "mymaster"
     assert pool.connection_kwargs["db"] == 3
+    assert pool.connection_kwargs["health_check_interval"] == 30
     assert [
         (
             s.connection_pool.connection_kwargs["host"],
@@ -562,7 +759,7 @@ def test_notify_sse_from_a_worker_thread_over_a_real_redis(monkeypatch, caplog):
     failures = [
         (record.getMessage(), record.__dict__.get("error"), record.exc_text)
         for record in caplog.records
-        if "fan-out" in record.getMessage()
+        if record.name == "src.services.sse_fanout"
     ]
     assert event is not None and event.startswith("event: poll-alerts\n")
     assert errors == 0 and not failures, failures

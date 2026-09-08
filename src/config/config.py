@@ -57,6 +57,7 @@ SSE_KEEPALIVE_INTERVAL_SECONDS = starlette_config(
 )
 SSE_FANOUT = starlette_config("SSE_FANOUT", default="none")
 SSE_FANOUT_CHANNEL = starlette_config("SSE_FANOUT_CHANNEL", default="keep:sse")
+SSE_NOTIFY_TOKEN = starlette_config("SSE_NOTIFY_TOKEN", default=None)
 REDIS_HOST = starlette_config("REDIS_HOST", default="localhost")
 REDIS_PORT = starlette_config("REDIS_PORT", default=6379, cast=int)
 REDIS_DB = starlette_config("REDIS_DB", default=0, cast=int)

@@ -43,6 +43,7 @@ from src.config.config import (
     REDIS_USERNAME,
     SSE_FANOUT,
     SSE_FANOUT_CHANNEL,
+    SSE_NOTIFY_TOKEN,
     SSE_KEEPALIVE_INTERVAL_SECONDS,
 )
 from src.repositories.metrics import (
@@ -265,6 +266,16 @@ async def start_fanout() -> None:
     _server_loop = asyncio.get_running_loop()
     if SSE_FANOUT != "redis":
         return
+    if not REDIS_KEY_PREFIX:
+        logger.warning(
+            "REDIS_KEY_PREFIX is empty; on a Redis shared between deployments "
+            "their SSE channels would be the same and notifications would cross"
+        )
+    if not SSE_NOTIFY_TOKEN:
+        logger.warning(
+            "SSE_NOTIFY_TOKEN is unset; with the fan-out enabled an unauthenticated "
+            "notify request reaches every gateway process"
+        )
     client_factory = redis_client_factory(
         host=REDIS_HOST,
         port=REDIS_PORT,

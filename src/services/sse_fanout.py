@@ -27,6 +27,8 @@ from src.repositories.metrics import (
 
 logger = logging.getLogger(__name__)
 
+REDIS_HEALTH_CHECK_SECONDS = 30
+
 
 class RedisFanout:
     """
@@ -121,7 +123,13 @@ class RedisFanout:
                         ignore_subscribe_messages=True, timeout=1.0
                     )
                     if message is not None:
-                        await self._deliver(message)
+                        try:
+                            await self._deliver(message)
+                        except Exception:
+                            sse_fanout_errors_total.labels(operation="deliver").inc()
+                            logger.warning(
+                                "SSE fan-out failed to deliver a message", exc_info=True
+                            )
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -151,6 +159,14 @@ class RedisFanout:
             sse_fanout_errors_total.labels(operation="decode").inc()
             logger.warning("SSE fan-out received an undecodable message")
             return
+        if (
+            not isinstance(payload, dict)
+            or not isinstance(payload.get("tenant_id"), str)
+            or not isinstance(payload.get("event"), str)
+        ):
+            sse_fanout_errors_total.labels(operation="schema").inc()
+            logger.warning("SSE fan-out received a malformed message")
+            return
         if payload.get("origin") == self._origin:
             return
         sse_fanout_received_total.inc()
@@ -174,7 +190,9 @@ def redis_client_factory(
     its arq pool: direct `REDIS_HOST`/`REDIS_PORT`, or Sentinel when
     `REDIS_SENTINEL_HOSTS` is set. `db` selects the logical database and
     `ssl` enables TLS on the data connections (with Sentinel, on the master
-    connections it hands out).
+    connections it hands out). Every connection pings after
+    `REDIS_HEALTH_CHECK_SECONDS` of silence, so a half-open pub/sub socket is
+    noticed and re-subscribed instead of waiting for the TCP keepalive.
     """
     import redis.asyncio as aioredis
 
@@ -192,7 +210,12 @@ def redis_client_factory(
                 nodes, username=username, password=password, socket_timeout=5
             )
             return sentinel.master_for(
-                sentinel_service, username=username, password=password, db=db, ssl=ssl
+                sentinel_service,
+                username=username,
+                password=password,
+                db=db,
+                ssl=ssl,
+                health_check_interval=REDIS_HEALTH_CHECK_SECONDS,
             )
 
         return from_sentinel
@@ -207,6 +230,7 @@ def redis_client_factory(
             password=password,
             socket_connect_timeout=5,
             socket_keepalive=True,
+            health_check_interval=REDIS_HEALTH_CHECK_SECONDS,
         )
 
     return direct
