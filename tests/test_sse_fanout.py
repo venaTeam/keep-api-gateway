@@ -19,12 +19,19 @@ from src.services.sse_fanout import RedisFanout
 
 
 class FakePubSubServer:
-    """In-memory stand-in for one Redis server shared by every client."""
+    """In-memory stand-in for one Redis server shared by every client. Like a
+    real asyncio Redis client, it belongs to the event loop it was created on
+    and refuses to be driven from another one."""
 
     def __init__(self):
         self.subscribers = []
         self.published = []
         self.down = False
+        self.loop = asyncio.get_running_loop()
+
+    def check_loop(self):
+        if asyncio.get_running_loop() is not self.loop:
+            raise RuntimeError("got Future attached to a different loop")
 
     def client(self):
         return FakeRedisClient(self)
@@ -35,6 +42,7 @@ class FakeRedisClient:
         self.server = server
 
     async def publish(self, channel, message):
+        self.server.check_loop()
         if self.server.down:
             raise ConnectionError("redis down")
         self.server.published.append((channel, message))
@@ -56,6 +64,7 @@ class FakePubSub:
         self.queue = asyncio.Queue()
 
     async def subscribe(self, channel):
+        self.server.check_loop()
         if self.server.down:
             raise ConnectionError("redis down")
         self.server.subscribers.append(self.queue)
@@ -325,6 +334,68 @@ def test_notify_sse_from_synchronous_code_reaches_other_processes(monkeypatch):
     assert remote.startswith("event: incident-change\n")
 
 
+def test_notify_sse_from_a_worker_thread_reaches_other_processes(monkeypatch):
+    """Synchronous routes run in worker threads with no event loop of their own;
+    their notifications must still be published from the server's loop, where
+    the fan-out's Redis client lives, instead of a throwaway loop."""
+
+    async def run():
+        server = FakePubSubServer()
+        _configure(monkeypatch, server, "redis")
+        await sse_module.start_fanout()
+        await asyncio.sleep(0.1)
+        peer_fanout, peer_stream = await _peer_process(server)
+        await asyncio.get_running_loop().run_in_executor(
+            None, sse_module.notify_sse, "t1", "incident-change", {"incident_id": "i1"}
+        )
+        remote = await _next_or_none(peer_stream, 2)
+        await peer_stream.aclose()
+        await peer_fanout.stop()
+        await sse_module.stop_fanout()
+        return remote
+
+    remote = asyncio.run(run())
+    assert remote is not None and remote.startswith("event: incident-change\n")
+
+
+def test_notify_sse_delivers_locally_when_the_server_loop_has_stopped(monkeypatch):
+    """A server loop that is open but no longer running (the lifespan has
+    ended) accepts a scheduled notification and never executes it. The
+    notification must reach the local broadcaster through a private loop
+    instead of vanishing."""
+    _configure(monkeypatch, None, "none")
+    monkeypatch.setattr(sse_module, "_server_loop", None)
+    stopped = asyncio.new_event_loop()
+    try:
+        stopped.run_until_complete(sse_module.start_fanout())
+        before = _counter(
+            metrics.sse_notifications_total,
+            event="incident-change",
+            outcome="no_subscriber",
+        )
+        sse_module.notify_sse("t1", "incident-change", {"incident_id": "i1"})
+        after = _counter(
+            metrics.sse_notifications_total,
+            event="incident-change",
+            outcome="no_subscriber",
+        )
+    finally:
+        stopped.close()
+    assert after == before + 1
+
+
+def test_falling_back_to_a_private_loop_is_logged(monkeypatch, caplog):
+    """The original bug hid because the private loop still served local
+    subscribers; taking that path must leave a trace."""
+    _configure(monkeypatch, None, "none")
+    monkeypatch.setattr(sse_module, "_server_loop", None)
+    with caplog.at_level("WARNING", logger="src.services.sse"):
+        sse_module.notify_sse("t1", "incident-change", {"incident_id": "i1"})
+    assert any("locally only" in record.getMessage() for record in caplog.records), [
+        record.getMessage() for record in caplog.records
+    ]
+
+
 def test_the_notify_route_reaches_other_processes(monkeypatch):
     from src.routes import sse_routes
 
@@ -440,3 +511,58 @@ def test_the_sentinel_client_selects_the_database():
         )
         for s in pool.sentinel_manager.sentinels
     ] == [("s1", 26379), ("s2", 26379)]
+
+
+@pytest.mark.skipif(
+    not os.environ.get("SSE_FANOUT_TEST_REDIS_URL"), reason="needs a real Redis"
+)
+def test_notify_sse_from_a_worker_thread_over_a_real_redis(monkeypatch, caplog):
+    import redis.asyncio as aioredis
+
+    url = os.environ["SSE_FANOUT_TEST_REDIS_URL"]
+
+    async def run():
+        monkeypatch.setattr(sse_module, "SSE_FANOUT", "redis")
+        monkeypatch.setattr(sse_module, "SSE_FANOUT_CHANNEL", "keep:sse-test-thread")
+        monkeypatch.setattr(sse_module, "sse_broadcaster", sse_module.SSEBroadcaster())
+        monkeypatch.setattr(
+            sse_module,
+            "redis_client_factory",
+            lambda **s: (lambda: aioredis.from_url(url)),
+        )
+        await sse_module.start_fanout()
+        await asyncio.sleep(0.3)
+        broker_b = sse_module.SSEBroadcaster()
+        fanout_b = RedisFanout(
+            broker_b,
+            lambda: aioredis.from_url(url),
+            channel="keep:sse-test-thread",
+            origin="b",
+        )
+        await fanout_b.start()
+        await asyncio.sleep(0.3)
+        stream_b = broker_b.subscribe("t1")
+        await stream_b.__anext__()
+        errors_before = _counter(metrics.sse_fanout_errors_total, operation="publish")
+        await asyncio.get_running_loop().run_in_executor(
+            None, sse_module.notify_sse, "t1", "poll-alerts", {"thread": True}
+        )
+        event = await _next_or_none(stream_b, 3)
+        await stream_b.aclose()
+        await fanout_b.stop()
+        await sse_module.stop_fanout()
+        return (
+            event,
+            _counter(metrics.sse_fanout_errors_total, operation="publish")
+            - errors_before,
+        )
+
+    with caplog.at_level("WARNING", logger="src.services.sse_fanout"):
+        event, errors = asyncio.run(run())
+    failures = [
+        (record.getMessage(), record.__dict__.get("error"), record.exc_text)
+        for record in caplog.records
+        if "fan-out" in record.getMessage()
+    ]
+    assert event is not None and event.startswith("event: poll-alerts\n")
+    assert errors == 0 and not failures, failures

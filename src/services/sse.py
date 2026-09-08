@@ -246,6 +246,7 @@ class SSEBroadcaster:
 sse_broadcaster = SSEBroadcaster()
 
 _fanout: Optional[RedisFanout] = None
+_server_loop: Optional[asyncio.AbstractEventLoop] = None
 
 async def start_fanout() -> None:
     """
@@ -260,7 +261,8 @@ async def start_fanout() -> None:
     the channel, since pub/sub channels are instance-wide whatever the
     database index.
     """
-    global _fanout
+    global _fanout, _server_loop
+    _server_loop = asyncio.get_running_loop()
     if SSE_FANOUT != "redis":
         return
     client_factory = redis_client_factory(
@@ -280,8 +282,9 @@ async def start_fanout() -> None:
 
 async def stop_fanout() -> None:
     """Disconnect from the fan-out; later broadcasts deliver locally only."""
-    global _fanout
+    global _fanout, _server_loop
     fanout, _fanout = _fanout, None
+    _server_loop = None
     if fanout is not None:
         await fanout.stop()
 
@@ -301,26 +304,43 @@ async def broadcast(tenant_id: str, event: str, data: Any) -> None:
 def notify_sse(tenant_id: str, event: str, data: Any) -> None:
     """
     Synchronous wrapper to send SSE notifications.
-    
-    This function can be called from synchronous code and will
-    schedule the notification in the event loop.
-    
+
+    Callable from synchronous code, including route handlers that FastAPI runs
+    in worker threads. The notification is scheduled on the server's event
+    loop, where the broadcaster and the fan-out's Redis client live; running
+    it on a throwaway loop would leave the local subscribers served but make
+    every publish fail with "attached to a different loop". The scheduled
+    future is not awaited: delivery and publish failures are handled inside
+    `broadcast()`, so the warning below only covers a failure to schedule.
+
+    When no server loop is running (scripts, tests, a lifespan that has
+    already ended) the notification goes to the local broadcaster on a private
+    loop. That path never touches the fan-out, so it cannot repeat the
+    different-loop failure, and it is logged because it silently masked that
+    failure once.
+
     Args:
         tenant_id: The tenant ID to notify
         event: The event name/type
         data: The event data
     """
     try:
-        loop = asyncio.get_running_loop()
-        asyncio.run_coroutine_threadsafe(broadcast(tenant_id, event, data), loop)
-    except RuntimeError:
         try:
-            asyncio.run(broadcast(tenant_id, event, data))
-        except Exception as e:
-            logger.warning(
-                "Failed to send SSE notification (no event loop)",
-                extra={"tenant_id": tenant_id, "event": event, "error": str(e)}
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = (
+                _server_loop
+                if _server_loop is not None and _server_loop.is_running()
+                else None
             )
+        if loop is not None:
+            asyncio.run_coroutine_threadsafe(broadcast(tenant_id, event, data), loop)
+        else:
+            logger.warning(
+                "No running server loop; SSE notification delivered locally only",
+                extra={"tenant_id": tenant_id, "event": event},
+            )
+            asyncio.run(sse_broadcaster.notify(tenant_id, event, data))
     except Exception as e:
         logger.warning(
             "Failed to send SSE notification",
@@ -362,6 +382,8 @@ def install_shutdown_handlers(loop: asyncio.AbstractEventLoop) -> None:
     it, so a lifespan that starts after another has ended never chains
     through a loop that is already closed.
     """
+    global _server_loop
+    _server_loop = loop
     if threading.current_thread() is not threading.main_thread():
         logger.warning("Not on the main thread; SSE streams will not close on shutdown")
         return
