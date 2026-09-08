@@ -112,7 +112,6 @@ async def sse_subscribe(
     - connected: Initial connection confirmation
     - poll-alerts: Alerts have been updated
     - incident-change: Incidents have been updated
-    - poll-presets: Presets have been updated
     - topology-update: Topology has been updated
     - ai-logs-change: AI logs have been updated
     - incident-comment: New comment on incident
@@ -155,10 +154,6 @@ class AlertNotifyData(BaseModel):
     alerts: list
 
 
-class PresetNotifyData(BaseModel):
-    """Data payload for poll-presets events."""
-    preset_names: List[str]
-
 
 class IncidentNotifyData(BaseModel):
     """Data payload for incident-change events."""
@@ -168,7 +163,7 @@ class IncidentNotifyData(BaseModel):
 class SSENotification(BaseModel):
     tenant_id: str
     event: str
-    data: Union[PresetNotifyData, IncidentNotifyData, AlertNotifyData, dict] = {}
+    data: Union[IncidentNotifyData, AlertNotifyData, dict] = {}
 
 
 def require_notify_token(
