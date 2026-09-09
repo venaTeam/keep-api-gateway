@@ -55,6 +55,23 @@ KEEP_LIMIT_CONCURRENCY = starlette_config("KEEP_LIMIT_CONCURRENCY", default=None
 SSE_KEEPALIVE_INTERVAL_SECONDS = starlette_config(
     "SSE_KEEPALIVE_INTERVAL_SECONDS", default=15, cast=float
 )
+SSE_FANOUT = starlette_config("SSE_FANOUT", default="none")
+SSE_FANOUT_CHANNEL = starlette_config("SSE_FANOUT_CHANNEL", default="keep:sse")
+SSE_NOTIFY_TOKEN = starlette_config("SSE_NOTIFY_TOKEN", default=None)
+REDIS_HOST = starlette_config("REDIS_HOST", default="localhost")
+REDIS_PORT = starlette_config("REDIS_PORT", default=6379, cast=int)
+REDIS_DB = starlette_config("REDIS_DB", default=0, cast=int)
+REDIS_SSL = starlette_config("REDIS_SSL", default="false", cast=bool)
+REDIS_KEY_PREFIX = starlette_config("REDIS_KEY_PREFIX", default="")
+REDIS_USERNAME = starlette_config("REDIS_USERNAME", default=None)
+REDIS_PASSWORD = starlette_config("REDIS_PASSWORD", default=None)
+REDIS_SENTINEL_ENABLED = starlette_config(
+    "REDIS_SENTINEL_ENABLED", default="false", cast=bool
+)
+REDIS_SENTINEL_HOSTS = starlette_config("REDIS_SENTINEL_HOSTS", default="localhost:26379")
+REDIS_SENTINEL_SERVICE_NAME = starlette_config(
+    "REDIS_SENTINEL_SERVICE_NAME", default="mymaster"
+)
 # Used for limiter default limits (defaults to 100/minute if env is not set)
 # Note: This shares the env var name with Uvicorn concurrency but expects string format for SlowAPI
 KEEP_LIMITER_DEFAULT_LIMIT = starlette_config("KEEP_LIMIT_CONCURRENCY", default="100/minute", cast=str)

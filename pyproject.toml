@@ -60,6 +60,7 @@ PyJWT = "^2.8.0"
 setuptools = "^75.0.0"
 pytz = "^2024.1"
 arq = "^0.27.0"
+redis = {version = ">=4.2.0,<6", extras = ["hiredis"]}
 prettytable = "^3.17.0"
 [tool.poetry.group.dev.dependencies]
 pre-commit = "^3.0.4"
