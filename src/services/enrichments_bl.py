@@ -790,6 +790,40 @@ class EnrichmentsBl:
             )
         return result
 
+    async def publish_enrichment_event(
+        self,
+        fingerprint: str | UUID,
+        enrichments: dict,
+        action_type: ActionType,
+        action_callee: str,
+        action_description: str,
+        force: bool = False,
+        event_type: EventType = EventType.ENRICH,
+    ):
+        """Announce an enrichment on the event bus.
+
+        Called inline by `enrich_entity`, or by hand after the fact when that
+        ran with `commit=False` — a deferred commit means the event must wait
+        until the data is actually durable.
+        """
+        safe_event = enrichments.copy()
+        safe_event.update({
+            "action_type": action_type.value,
+            "action_callee": action_callee,
+            "action_description": action_description,
+            "audit_enabled": False,  # Audit already created locally by API Gateway
+            "force": force,
+        })
+
+        await self.event_producer.produce(
+            event=safe_event,
+            event_type=event_type,
+            tenant_id=self.tenant_id,
+            provider_type="keep",
+            provider_id="keep",
+            fingerprint=fingerprint,
+        )
+
     async def _enrich_entity_impl(
         self,
         fingerprint: str | UUID,
@@ -804,7 +838,8 @@ class EnrichmentsBl:
         produce_event=True,
         strict=True,
         entity_type: str = "alert",
-        event_type: EventType = EventType.ENRICH
+        event_type: EventType = EventType.ENRICH,
+        commit=True,
     ):
         """
         should_exist = False only in mapping where the alert is not yet in elastic
@@ -814,6 +849,12 @@ class EnrichmentsBl:
             (IncidentEnrichment JSONB, keyed on incident_id)
 
         Enrich the entity with extraction and mapping rules
+
+        commit = False leaves the transaction open so the caller can commit this
+        write together with others (see IncidentBl.enrich_and_change_status).
+        The Kafka event and the Elasticsearch update are then the CALLER's job
+        via `publish_enrichment_event` — broadcasting a change that is still
+        uncommitted, and might yet roll back, is worse than broadcasting it late.
         """
         # enrich db
         if isinstance(fingerprint, UUID):
@@ -862,28 +903,29 @@ class EnrichmentsBl:
             audit_enabled=audit_enabled,
             strict=strict,
             entity_type=entity_type,
+            commit=commit,
         )
+
+        if not commit:
+            # Nothing below this point may run yet: the write is staged, not
+            # committed. The caller commits, then fans out.
+            self.logger.debug(
+                "entity enrichment staged, deferring event and elastic to caller",
+                extra={"fingerprint": fingerprint, "entity_type": entity_type},
+            )
+            return
 
         # Publish to kafka
         if produce_event:
-            safe_event = enrichments.copy()
-            safe_event.update({
-                "action_type": action_type.value,
-                "action_callee": action_callee,
-                "action_description": action_description,
-                "audit_enabled": False,  # Audit already created locally by API Gateway
-                "force": force,
-            })
-            
-            await self.event_producer.produce(
-                event=safe_event,
-                event_type=event_type,
-                tenant_id=self.tenant_id,
-                provider_type="keep",
-                provider_id="keep",
+            await self.publish_enrichment_event(
                 fingerprint=fingerprint,
+                enrichments=enrichments,
+                action_type=action_type,
+                action_callee=action_callee,
+                action_description=action_description,
+                force=force,
+                event_type=event_type,
             )
-
 
         self.logger.debug(
             "alert enriched in db, enriching elastic",

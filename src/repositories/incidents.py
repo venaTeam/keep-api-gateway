@@ -30,11 +30,27 @@ from src.models.db.alert import (
     LastAlertToIncident,
 )
 from src.models.db.facet import FacetType
+from src.models.db.incident import IncidentDismissMode
 from src.models.facet import FacetDto, FacetOptionDto, FacetOptionsQueryDto
 from src.models.incident import IncidentSorting
 from src.models.query import SortOptionsDto
 
 logger = logging.getLogger(__name__)
+
+# SQL twin of `Incident.is_dismiss_active` — yields 'suppressed' while a
+# dismissal is in force and NULL otherwise, so it can sit at the head of a
+# COALESCE chain and fall through when it isn't.
+#
+# CURRENT_TIMESTAMP rather than NOW() because this string is emitted verbatim
+# into whichever dialect is configured, and SQLite has no NOW().
+_SUPPRESSED_IF_DISMISS_ACTIVE_SQL = (
+    "CASE"
+    f" WHEN incident.dismiss_mode = '{IncidentDismissMode.PERMANENT.value}'"
+    " THEN 'suppressed'"
+    f" WHEN incident.dismiss_mode = '{IncidentDismissMode.DISMISS_UNTIL.value}'"
+    " AND incident.dismissed_until > CURRENT_TIMESTAMP THEN 'suppressed'"
+    " ELSE NULL END"
+)
 
 incident_field_configurations = [
     FieldMappingConfiguration(
@@ -62,7 +78,21 @@ incident_field_configurations = [
     ),
     FieldMappingConfiguration(
         map_from_pattern="status",
-        map_to=["JSON(incidentenrichment.enrichments).*", "incident.status"],
+        # Resolved in order, first non-NULL wins:
+        #   1. a live dismissal -> 'suppressed'. Derived, never stored, so a
+        #      time-boxed dismissal stops matching the moment it expires without
+        #      anything having to rewrite the row.
+        #   2. the stored column.
+        # The enrichment JSONB deliberately does NOT appear here. It used to,
+        # outranking the real column, which let any `status` key written through
+        # /incidents/{id}/enrich silently shadow the incident's actual status.
+        # Status and dismiss state are owned by /incidents/{id}/status alone —
+        # see INCIDENT_STATUS_OWNED_KEYS.
+        # Mirrors `Incident.is_dismiss_active` — keep the two in step.
+        map_to=[
+            _SUPPRESSED_IF_DISMISS_ACTIVE_SQL,
+            "incident.status",
+        ],
         data_type=DataType.STRING,
     ),
     FieldMappingConfiguration(

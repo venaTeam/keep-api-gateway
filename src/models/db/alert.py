@@ -318,7 +318,16 @@ class IncidentEnrichment(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     tenant_id: str = Field(foreign_key="tenant.id")
     timestamp: datetime = Field(default_factory=datetime.utcnow)
-    incident_id: UUID = Field(foreign_key="incident.id", unique=True)
+    # CASCADE so deleting an incident takes its enrichment row with it —
+    # incident delete is a real DELETE, and NO ACTION here made it fail with a
+    # FK violation on any incident a user had actually enriched.
+    incident_id: UUID = Field(
+        sa_column=Column(
+            UUIDType(binary=False),
+            ForeignKey("incident.id", ondelete="CASCADE"),
+            unique=True,
+        )
+    )
     enrichments: dict = Field(
         sa_column=Column(JSON().with_variant(PG_JSONB, "postgresql"))
     )

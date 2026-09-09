@@ -67,6 +67,7 @@ from src.models.incident import (
     IncidentSeverityChangeDto,
     IncidentSorting,
     IncidentStatusChangeDto,
+    split_incident_status_keys,
     MergeIncidentsRequestDto,
     MergeIncidentsResponseDto,
     SplitIncidentRequestDto,
@@ -818,7 +819,12 @@ def change_incident_status(
     incident_bl = IncidentBl(tenant_id, session)
 
     new_incident_dto = incident_bl.change_status(
-        incident_id, change.status, authenticated_entity, change.dispose_on_new_alert
+        incident_id,
+        change.status,
+        authenticated_entity,
+        change.dispose_on_new_alert,
+        dismiss_mode=change.dismiss_mode,
+        dismissed_until=change.dismissed_until,
     )
     record_user_action(
         tenant_id=tenant_id, feature="incidents", action="change_status"
@@ -1016,8 +1022,8 @@ def confirm_incident(
 
 @router.post(
     "/{incident_id}/enrich",
-    description="Enrich incident with additional data",
-    status_code=202,
+    description="Enrich incident with additional data, and optionally change its status",
+    response_model=IncidentDto,
 )
 async def enrich_incident(
     incident_id: UUID,
@@ -1027,9 +1033,16 @@ async def enrich_incident(
     ),
     db_session: Session = Depends(get_session),
     event_producer: EventProducer = Depends(get_event_producer),
+) -> IncidentDto:
+    """Enrich an incident, and change its status in the same request.
 
-) -> Response:
-    """Enrich incident with additional data."""
+    `status`, `dismiss_mode` and `dismissed_until` in the body are applied to the
+    incident's typed columns rather than stored as enrichments; everything else
+    goes to the enrichment JSONB. Both land in one transaction, so dismissing an
+    incident and attaching a note cannot half-succeed.
+
+    Returns the updated incident, so a caller does not need a follow-up read.
+    """
     tenant_id = authenticated_entity.tenant_id
 
     # Get incident to verify it exists
@@ -1037,29 +1050,22 @@ async def enrich_incident(
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
 
-    # Use the existing enrichment infrastructure
-    enrichment_bl = EnrichmentsBl(tenant_id, db_session, event_producer=event_producer)
-
-    await enrichment_bl.enrich_entity(
-        fingerprint=incident_id,
-        enrichments=enrichment.enrichments,
-        action_type=ActionType.INCIDENT_ENRICH,
-        action_callee=authenticated_entity.email,
-        action_description=f"Incident enriched by {authenticated_entity.email}",
-        force=enrichment.force,
-        entity_type="incident",
-    )
-
-    # Notify clients about incident change
     try:
-        notify_sse(tenant_id, "incident-change", {"incident_id": str(incident_id)})
-    except Exception as e:
-        logger.exception(
-            "Failed to notify clients about incident change",
-            extra={"error": str(e)},
-        )
+        status_change, enrichments = split_incident_status_keys(enrichment.enrichments)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
 
-    return Response(status_code=202)
+    enrichment_bl = EnrichmentsBl(tenant_id, db_session, event_producer=event_producer)
+    incident_bl = IncidentBl(tenant_id, db_session, user=authenticated_entity.email)
+
+    return await incident_bl.enrich_and_change_status(
+        incident_id=incident_id,
+        change=status_change,
+        enrichments=enrichments,
+        change_by=authenticated_entity,
+        enrichment_bl=enrichment_bl,
+        force=enrichment.force,
+    )
 
 
 @router.post(

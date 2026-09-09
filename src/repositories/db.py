@@ -29,6 +29,7 @@ from sqlalchemy import (
     and_,
     case,
     cast,
+    delete,
     desc,
     func,
     literal,
@@ -450,6 +451,7 @@ def _enrich_incident(
     action_description: str,
     force=False,
     audit_enabled=True,
+    commit=True,
 ):
     """Upsert an IncidentEnrichment JSONB row for the INCIDENT enrichment path.
 
@@ -460,6 +462,12 @@ def _enrich_incident(
     Incidents keep arbitrary JSONB keys — the dismissed<->dismiss_mode
     translation, the D1 no-op and the strict unknown-key rejection that apply to
     the alert path are intentionally NOT applied here.
+
+    `commit=False` flushes instead, leaving the transaction open so a caller can
+    land this write and a status change together. The caller owns the commit —
+    and the rollback, which is why the duplicate-row path below re-raises rather
+    than swallowing the error: swallowing it would discard the caller's other
+    staged work and report success.
     """
     incident_id = UUID(str(fingerprint))
     enrichment = get_enrichment_with_session(session, tenant_id, incident_id)
@@ -500,8 +508,11 @@ def _enrich_incident(
                 description=action_description,
             )
             session.add(audit)
-        session.commit()
-        session.refresh(enrichment)
+        if commit:
+            session.commit()
+            session.refresh(enrichment)
+        else:
+            session.flush()
         return enrichment
     else:
         try:
@@ -520,7 +531,10 @@ def _enrich_incident(
                     description=action_description,
                 )
                 session.add(audit)
-            session.commit()
+            if commit:
+                session.commit()
+            else:
+                session.flush()
             return incident_enrichment
         except IntegrityError:
             logger.warning(
@@ -531,6 +545,11 @@ def _enrich_incident(
                     "enrichments": enrichments,
                 },
             )
+            if not commit:
+                # Someone else created the row concurrently. Rolling back here
+                # would silently drop whatever else the caller staged in this
+                # transaction and still return success; let them decide.
+                raise
             session.rollback()
             return get_enrichment_with_session(session, tenant_id, incident_id)
 
@@ -547,6 +566,7 @@ def _enrich_entity(
     audit_enabled=True,
     strict=True,
     entity_type: str = "alert",
+    commit=True,
 ):
     """
     Enrich an entity (alert or incident).
@@ -574,6 +594,7 @@ def _enrich_entity(
             action_description,
             force=force,
             audit_enabled=audit_enabled,
+            commit=commit,
         )
 
     normalized = normalize_enrichments(enrichments, strict=strict)
@@ -606,9 +627,12 @@ def _enrich_entity(
         )
         session.add(audit)
 
-    session.commit()
-    if last_alert is not None:
-        session.refresh(last_alert)
+    if commit:
+        session.commit()
+        if last_alert is not None:
+            session.refresh(last_alert)
+    else:
+        session.flush()
     return last_alert
 
 
@@ -816,7 +840,12 @@ def enrich_entity(
     audit_enabled=True,
     strict=True,
     entity_type: str = "alert",
+    commit=True,
 ):
+    """`commit=False` leaves the transaction open for the caller to commit, so
+    this write can be made atomic with others on the same session. Only
+    meaningful when `session` is supplied — an internally-created session is
+    closed on exit, discarding uncommitted work."""
     with existed_or_new_session(session) as session:
         return _enrich_entity(
             session,
@@ -830,6 +859,7 @@ def enrich_entity(
             audit_enabled=audit_enabled,
             strict=strict,
             entity_type=entity_type,
+            commit=commit,
         )
 
 
@@ -3130,27 +3160,100 @@ def update_incident_from_dto_by_id(
 def delete_incident_by_id(
     tenant_id: str, incident_id: UUID, session: Optional[Session] = None
 ) -> bool:
+    """Delete an incident for real. Returns False when it did not exist.
+
+    This used to flip `status` to a `deleted` value that no query filtered on,
+    so "deleted" incidents kept showing up everywhere. Rows now go away.
+
+    What goes: the incident row, its alert links, its enrichment row, its audit
+    trail and the comment @mentions on that trail.
+
+    What stays: the alerts themselves and their LastAlert rows — they outlive the
+    incident that grouped them — along with their own audit history, which is
+    keyed on the alert fingerprint rather than the incident id.
+
+    EVERY DEPENDENT IS REMOVED EXPLICITLY, not left to ON DELETE. The FKs do
+    declare CASCADE/SET NULL, but SQLite (a supported backend) ships with
+    `PRAGMA foreign_keys` OFF, so referential actions never fire there and the
+    same delete would strand links and enrichment rows. Doing it by hand makes
+    the outcome identical on every dialect; the FK actions stay as a backstop.
+
+    Two of these have no FK to fall back on at all: `alertaudit` rows for an
+    incident are keyed by its UUID in the `fingerprint` column, and
+    `commentmention` lost its FK to `alertaudit` deliberately. Without the
+    explicit deletes below, both would survive as rows nothing can reach, since
+    every read path finds them through a live incident id.
+
+    Note this also discards the record of who did what to the incident. Deleting
+    an incident is not itself audited, so there is no "who deleted it" entry that
+    this would contradict.
+    """
     if isinstance(incident_id, str):
         incident_id = __convert_to_uuid(incident_id)
     with existed_or_new_session(session) as session:
-        incident = session.exec(
-            select(Incident).filter(
-                Incident.tenant_id == tenant_id,
-                Incident.id == incident_id,
+        audit_fingerprint = str(incident_id)
+        audit_ids = select(AlertAudit.id).where(
+            AlertAudit.tenant_id == tenant_id,
+            AlertAudit.fingerprint == audit_fingerprint,
+        )
+        # Mentions before the audit rows they point at, so the subquery can still
+        # find them.
+        session.execute(
+            delete(CommentMention).where(
+                CommentMention.tenant_id == tenant_id,
+                CommentMention.comment_id.in_(audit_ids),
             )
-        ).first()
-
+        )
+        session.execute(
+            delete(AlertAudit).where(
+                AlertAudit.tenant_id == tenant_id,
+                AlertAudit.fingerprint == audit_fingerprint,
+            )
+        )
+        session.execute(
+            delete(LastAlertToIncident).where(
+                LastAlertToIncident.tenant_id == tenant_id,
+                LastAlertToIncident.incident_id == incident_id,
+            )
+        )
+        session.execute(
+            delete(AlertToIncident).where(
+                AlertToIncident.tenant_id == tenant_id,
+                AlertToIncident.incident_id == incident_id,
+            )
+        )
+        session.execute(
+            delete(IncidentEnrichment).where(
+                IncidentEnrichment.tenant_id == tenant_id,
+                IncidentEnrichment.incident_id == incident_id,
+            )
+        )
+        # Sibling incidents point at this one; clear those references so they
+        # don't dangle (the FKs say SET NULL, which SQLite would skip).
         session.execute(
             update(Incident)
             .where(
                 Incident.tenant_id == tenant_id,
-                Incident.id == incident.id,
+                Incident.merged_into_incident_id == incident_id,
             )
-            .values({"status": IncidentStatus.DELETED.value})
+            .values(merged_into_incident_id=None)
         )
-
+        session.execute(
+            update(Incident)
+            .where(
+                Incident.tenant_id == tenant_id,
+                Incident.same_incident_in_the_past_id == incident_id,
+            )
+            .values(same_incident_in_the_past_id=None)
+        )
+        result = session.execute(
+            delete(Incident).where(
+                Incident.tenant_id == tenant_id,
+                Incident.id == incident_id,
+            )
+        )
         session.commit()
-        return True
+        return result.rowcount > 0
 
 
 def get_incidents_count(

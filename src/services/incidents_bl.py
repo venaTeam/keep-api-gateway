@@ -33,9 +33,19 @@ from src.repositories.db import (
 from src.repositories.elastic import ElasticClient
 from src.repositories.incidents import get_last_incidents_by_cel
 from src.models.action_type import ActionType
-from src.models.db.incident import Incident, IncidentSeverity, IncidentStatus
+from src.models.db.incident import (
+    Incident,
+    IncidentDismissMode,
+    IncidentSeverity,
+    IncidentStatus,
+)
 from src.models.db.rule import ResolveOn
-from src.models.incident import IncidentDto, IncidentDtoIn, IncidentSorting
+from src.models.incident import (
+    IncidentDto,
+    IncidentDtoIn,
+    IncidentSorting,
+    IncidentStatusChangeDto,
+)
 from src.utils.enrichment_helpers import convert_db_alerts_to_dto_alerts
 from src.utils.pagination import IncidentsPaginatedResultsDto
 from src.services.identity_manager.authenticatedentity import AuthenticatedEntity
@@ -419,7 +429,23 @@ class IncidentBl:
         new_status: IncidentStatus,
         change_by: AuthenticatedEntity,
         dispose_on_new_alert: bool = False,
+        dismiss_mode: Optional[IncidentDismissMode] = None,
+        dismissed_until: Optional[datetime] = None,
+        commit: bool = True,
     ) -> IncidentDto:
+        """Move an incident to `new_status`.
+
+        SUPPRESSED is the odd one out: it is never written to `incident.status`,
+        because a time-boxed dismissal has to be able to lapse without anything
+        rewriting the row. It is recorded as dismiss state instead, layered over
+        the status the incident reverts to. Every other status change clears
+        that dismiss state — asking for firing/acknowledged/resolved is an
+        explicit statement that the incident should be visible again.
+
+        `commit=False` stages the change and skips the client notification, for
+        callers bundling it into a larger transaction. They own the commit and
+        must notify afterwards.
+        """
         self.logger.info(
             "Fetching incident",
             extra={
@@ -473,17 +499,124 @@ class IncidentBl:
                 commit=False,
             )
 
+        previous_status = incident.get_effective_status()
+
+        if new_status == IncidentStatus.SUPPRESSED:
+            # Leave `incident.status` untouched — it is what the incident shows
+            # again once the dismissal lifts.
+            incident.dismiss_mode = (
+                dismiss_mode or IncidentDismissMode.PERMANENT
+            ).value
+            incident.dismissed_until = (
+                dismissed_until
+                if incident.dismiss_mode == IncidentDismissMode.DISMISS_UNTIL.value
+                else None
+            )
+            if incident.dismissed_until is not None:
+                audit_description = (
+                    f"Incident suppressed until {incident.dismissed_until.isoformat()}"
+                )
+            else:
+                audit_description = "Incident suppressed permanently"
+        else:
+            incident.dismiss_mode = None
+            incident.dismissed_until = None
+            incident.status = new_status.value
+            audit_description = (
+                f"Incident status changed from {previous_status} to {new_status.value}"
+            )
+
         add_audit(
             self.tenant_id,
             str(incident_id),
             change_by.email,
             ActionType.INCIDENT_STATUS_CHANGE,
-            f"Incident status changed from {incident.status} to {new_status.value}",
+            audit_description,
             session=self.session,
             commit=False,
         )
-        incident.status = new_status.value
         self.session.add(incident)
+        if not commit:
+            self.session.flush()
+            return IncidentDto.from_db_incident(incident)
+
         self.session.commit()
 
         return self.__postprocess_incident_change(incident)
+
+    async def enrich_and_change_status(
+        self,
+        incident_id: UUID | str,
+        change: Optional[IncidentStatusChangeDto],
+        enrichments: Optional[dict],
+        change_by: AuthenticatedEntity,
+        enrichment_bl: EnrichmentsBl,
+        force: bool = False,
+    ) -> IncidentDto:
+        """Apply an enrichment and a status change to one incident atomically.
+
+        These arrive together — dismissing an incident in the UI is a status
+        change plus a note — and splitting them across two requests meant a
+        failure could leave the note saved with the dismissal missing, with
+        nothing to say which half landed. Both writes are staged on one session
+        and committed once; either both apply or neither does.
+
+        Side effects (Kafka, client notification) deliberately run AFTER the
+        commit, so nothing downstream is told about a change that may roll back.
+        """
+        if change is None and not enrichments:
+            raise HTTPException(
+                status_code=422, detail="Nothing to apply: no enrichments, no status"
+            )
+
+        incident_dto = None
+
+        if enrichments:
+            await enrichment_bl.enrich_entity(
+                fingerprint=incident_id,
+                enrichments=enrichments,
+                action_type=ActionType.INCIDENT_ENRICH,
+                action_callee=change_by.email,
+                action_description=f"Incident enriched by {change_by.email}",
+                force=force,
+                entity_type="incident",
+                commit=False,
+            )
+
+        if change is not None:
+            incident_dto = self.change_status(
+                incident_id,
+                change.status,
+                change_by,
+                change.dispose_on_new_alert,
+                dismiss_mode=change.dismiss_mode,
+                dismissed_until=change.dismissed_until,
+                commit=False,
+            )
+
+        self.session.commit()
+
+        # Durable now — safe to tell the rest of the world.
+        if enrichments:
+            await enrichment_bl.publish_enrichment_event(
+                fingerprint=incident_id,
+                enrichments=enrichments,
+                action_type=ActionType.INCIDENT_ENRICH,
+                action_callee=change_by.email,
+                action_description=f"Incident enriched by {change_by.email}",
+                force=force,
+            )
+
+        self.update_client_on_incident_change(
+            incident_id if isinstance(incident_id, UUID) else None
+        )
+
+        # Re-read rather than returning the DTO built mid-transaction: that one
+        # predates the committed enrichment row, so its `enrichments` overlay
+        # would be stale.
+        incident = get_incident_by_id(
+            self.tenant_id, incident_id, session=self.session
+        )
+        if not incident:
+            raise HTTPException(status_code=404, detail="Incident not found")
+        return IncidentDto.from_db_incident(incident)
