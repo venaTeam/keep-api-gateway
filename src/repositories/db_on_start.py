@@ -1,4 +1,4 @@
-﻿"""
+"""
 This module is responsible for creating the database and tables when the application starts.
 
 The reason to split this code from db.py is that the functions here are invoked from the master process
@@ -11,14 +11,28 @@ and the engine will be shared among all the processes, causing issues with the c
 
 The mitigation is to create different engines for each process, and the master process should only be responsible
 for creating the database and tables, while the worker processes should only be responsible for creating the sessions.
+
+The schema check
+----------------
+
+This image does not migrate. The schema is owned by `keep-migrations`, whose
+image Argo runs as a PreSync hook Job once per release, before any pod of the new
+ReplicaSet exists. Nothing here reads a migration script, and there are none in
+the image to read.
+
+What is left is `schema_drift`, which backs `/readyz`: does the live schema
+contain every table and column *this image's models* declare? That question is
+answerable from the database alone, which is what lets the scripts leave. It is
+also the better question — a revision comparison trusts `alembic_version`, so it
+passes a stamped-but-half-applied migration and a hand-edited schema alike.
 """
 
 import hashlib
 import logging
 import os
 
-import alembic.command
-import alembic.config
+from sqlalchemy import inspect as sa_inspect
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
@@ -33,6 +47,10 @@ from src.models.db.provider import *  # pylint: disable=unused-wildcard-import
 from src.models.db.rule import *  # pylint: disable=unused-wildcard-import
 from src.models.db.statistics import *  # pylint: disable=unused-wildcard-import
 from src.models.db.tenant import *  # pylint: disable=unused-wildcard-import
+
+# The full, deterministic table set for `schema_drift` -- the wildcard imports
+# above are whatever this module happens to need, not what the image declares.
+from src.models.db.all_models import declared_tables
 
 # This import is required to create the tables
 from src.services.identity_manager.rbac import Admin as AdminRole
@@ -165,24 +183,92 @@ def try_create_single_tenant(tenant_id: str, create_default_user=True) -> None:
             pass
 
 
-def migrate_db():
-    """
-    Run migrations to make sure the DB is up-to-date.
-    """
-    if os.environ.get("SKIP_DB_CREATION", "false") == "true":
-        logger.info("Skipping running migrations...")
-        return None
 
-    logger.info("Running migrations...")
-    config_path = os.path.dirname(os.path.abspath(__file__)) + "/../../" + "alembic.ini"
-    config = alembic.config.Config(file_=config_path)
-    # Re-defined because alembic.ini uses relative paths which doesn't work
-    # when running the app as a pyhton pakage (could happen form any path)
-    config.set_main_option(
-        "script_location",
-        os.path.dirname(os.path.abspath(__file__)) + "/../models/db/migrations",
+_schema_drift_ok_cache: bool = False
+
+
+def live_tables(conn=None) -> dict[str, set[str]]:
+    """{table name -> column names} for the database this process is pointed at.
+
+    One query rather than `inspect()`'s table-then-columns walk: on a 51-table
+    database that walk is 52 round trips and ~260ms, against ~37ms here. The pool
+    is 5 + 10 overflow per worker and `pool_timeout` (10s) exceeds the probe's own
+    budget (2s), so a checkout this endpoint cannot cancel is worth avoiding.
+
+    sqlite has no `information_schema`, so it takes the reflection path. Only
+    tests and single-process dev run on sqlite, where the round trips are free.
+
+    `conn` lets a caller that already holds a connection reuse it rather than
+    check out a second one. `/readyz` does: the pool is 5 + 10 overflow per
+    worker and `pool_timeout` (10s) exceeds the probe's own budget (2s), so a
+    checkout the endpoint cannot cancel is worth not making twice.
+    """
+    if engine.dialect.name == "sqlite":
+        inspector = sa_inspect(engine)
+        return {
+            table: {column["name"] for column in inspector.get_columns(table)}
+            for table in inspector.get_table_names()
+        }
+
+    query = text(
+        "SELECT table_name, column_name FROM information_schema.columns "
+        "WHERE table_schema = current_schema()"
     )
-    alembic.command.upgrade(config, "head")
-    logger.info("Finished migrations")
+    if conn is not None:
+        rows = conn.execute(query).fetchall()
+    else:
+        with engine.connect() as owned:
+            rows = owned.execute(query).fetchall()
+    live: dict[str, set[str]] = {}
+    for table, column in rows:
+        live.setdefault(table, set()).add(column)
+    return live
 
 
+def schema_drift(conn=None) -> tuple[bool, dict]:
+    """(satisfied, missing) -- does the live schema contain everything this
+    image's models declare?
+
+    Deliberately one-directional. Tables and columns the database has and the
+    models do not are IGNORED, which is what makes image rollback work: an older
+    image declares fewer columns, finds them all, and is happy. It also means the
+    automation tables -- migrated here but modelled in keep-automation-api -- need
+    no exclusion list, because they only ever appear in the ignored direction.
+
+    Compares names, never types. A type-level comparison is not portable across
+    sqlite and Postgres (`sa.Enum` degrades to VARCHAR+CHECK, `timezone=True` is
+    unrepresented, JSONB becomes JSON).
+
+    Memoised on success only, like `_script_directory`: the schema only moves
+    forward during a process's life, so once satisfied it stays satisfied. A
+    transient failure must not be cached, or the probe never recovers.
+    """
+    global _schema_drift_ok_cache
+    if _schema_drift_ok_cache:
+        return True, {}
+
+    declared = declared_tables()
+    live = live_tables(conn)
+
+    missing_tables = sorted(name for name in declared if name not in live)
+    missing_columns = {
+        name: sorted(columns - live[name])
+        for name, columns in declared.items()
+        if name in live and columns - live[name]
+    }
+
+    satisfied = not missing_tables and not missing_columns
+    if satisfied:
+        _schema_drift_ok_cache = True
+        logger.info(
+            "Live schema satisfies all %s declared tables", len(declared)
+        )
+        return True, {}
+
+    logger.error(
+        "Live schema does not satisfy this image's models: "
+        "missing_tables=%s missing_columns=%s",
+        missing_tables,
+        missing_columns,
+    )
+    return False, {"missing_tables": missing_tables, "missing_columns": missing_columns}

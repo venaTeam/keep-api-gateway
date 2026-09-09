@@ -15,7 +15,7 @@ from src.repositories.db import (
     get_last_alerts_for_incidents,
     get_last_incidents,
 )
-from src.repositories.dependencies import SINGLE_TENANT_UUID
+from src.repositories.dependencies import GENERIC_TENANT_UUID
 from src.utils.limiter import limiter
 from src.models.alert import AlertDto
 
@@ -59,7 +59,7 @@ def get_metrics(
     # they would make us expose our app's pod id's. This is a customer-facing endpoint
     # we're deploying to SaaS, and we want to hide our internal infra.
 
-    tenant_id = SINGLE_TENANT_UUID
+    tenant_id = GENERIC_TENANT_UUID
 
     export = str()
 

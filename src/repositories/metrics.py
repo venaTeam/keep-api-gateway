@@ -1,23 +1,10 @@
-import os
-from prometheus_client import Counter, Gauge, Histogram, Summary
+"""Metric definitions for the gateway.
 
-# This MUST be called before any prometheus_client import
-prom_multiproc_dir = os.environ.get("PROMETHEUS_MULTIPROC_DIR", "/tmp/prometheus")
-os.environ["PROMETHEUS_MULTIPROC_DIR"] = prom_multiproc_dir
-try:
-    os.makedirs(prom_multiproc_dir, exist_ok=True)
-except Exception:
-    # This might fail if we don't have permissions, but we shouldn't crash
-    pass
-
-
-def init_metrics():
-    # Deprecated: logic moved to top level
-    pass
-
-
-# Initialize metrics configuration
-init_metrics()
+prometheus_client is imported via `prometheus_multiproc`, never directly: the
+multiprocess directory has to be settled before that library first loads, and
+that ordering is isolated in the one module whose job it is.
+"""
+from src.repositories.prometheus_multiproc import Counter, Gauge, Histogram, Summary
 
 METRIC_PREFIX = "keep_"
 

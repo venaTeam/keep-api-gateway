@@ -841,6 +841,18 @@ def test_filter_large_dataset(db_session, setup_stress_alerts):
     print("time taken for 1k alerts with db: ", db_end_time - db_start_time)
 
 
+# CI runs the suite with `--timeout 60`, which this test does not fit inside:
+# the DB leg alone is a complex OR query returning thousands of rows from
+# SQLite, measured at ~38s locally with the whole item at ~88s. That left the
+# call phase at roughly two thirds of the budget, so any slower-than-usual
+# runner tipped it over — it has been failing intermittently on unrelated
+# branches, not on anything the branch under test changed.
+#
+# A longer budget costs nothing here: the test asserts elastic/DB *parity*
+# (`len(elastic) == len(db)`), never a duration, so the timeout is only a
+# runaway guard and never the thing under test. The timings it prints are the
+# actual benchmark signal.
+@pytest.mark.timeout(300)
 @pytest.mark.parametrize("setup_stress_alerts", [{"num_alerts": 10000}], indirect=True)
 def test_complex_logical_operations_large_dataset(db_session, setup_stress_alerts):
     search_query = SearchQuery(

@@ -5,7 +5,7 @@ from elasticsearch import ApiError, BadRequestError, Elasticsearch
 from elasticsearch.helpers import BulkIndexError, bulk
 
 from src.repositories.db import get_enrichments
-from src.repositories.dependencies import SINGLE_TENANT_UUID
+from src.repositories.dependencies import GENERIC_TENANT_UUID
 from src.repositories.tenant_configuration import TenantConfiguration
 from src.models.alert import AlertDto, AlertSeverity
 from src.utils.cel_utils import preprocess_cel_expression
@@ -26,8 +26,8 @@ class ElasticClient:
 
         enabled = os.environ.get("ELASTIC_ENABLED", "false").lower() == "true"
 
-        # if its a single tenant deployment or elastic is disabled, return
-        if tenant_id == SINGLE_TENANT_UUID:
+        # if its a generic tenant deployment or elastic is disabled, return
+        if tenant_id == GENERIC_TENANT_UUID:
             self.enabled = enabled
         # if its a multi tenant deployment and elastic is on, check if its enabled for the tenant
         elif not enabled:
@@ -64,12 +64,12 @@ class ElasticClient:
                 "No Elastic configuration found although Elastic is enabled"
             )
 
-        # single tenant id should have an index suffix
-        if tenant_id == SINGLE_TENANT_UUID and not os.environ.get(
+        # generic tenant id should have an index suffix
+        if tenant_id == GENERIC_TENANT_UUID and not os.environ.get(
             "ELASTIC_INDEX_SUFFIX"
         ):
             raise ValueError(
-                "No Elastic index suffix found although Elastic is enabled for single tenant"
+                "No Elastic index suffix found although Elastic is enabled for generic tenant"
             )
 
         if any(basic_auth):
@@ -91,7 +91,7 @@ class ElasticClient:
 
     @property
     def alerts_index(self):
-        if self.tenant_id == SINGLE_TENANT_UUID:
+        if self.tenant_id == GENERIC_TENANT_UUID:
             suffix = os.environ.get("ELASTIC_INDEX_SUFFIX")
             return f"keep-alerts-{suffix}"
         else:

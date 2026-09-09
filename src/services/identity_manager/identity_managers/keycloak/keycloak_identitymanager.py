@@ -50,8 +50,9 @@ class KeycloakIdentityManager(BaseIdentityManager):
             os.environ.get("KEYCLOAK_VERIFY_CERT", "true").lower() == "true"
         )
         try:
+            base_keycloak_url = os.environ["KEYCLOAK_URL"].rstrip("/")
             self.keycloak_admin = KeycloakAdmin(
-                server_url=os.environ["KEYCLOAK_URL"] + "/admin",
+                server_url=base_keycloak_url + "/admin",
                 username=os.environ.get("KEYCLOAK_ADMIN_USER"),
                 password=os.environ.get("KEYCLOAK_ADMIN_PASSWORD"),
                 realm_name=os.environ["KEYCLOAK_REALM"],
@@ -60,16 +61,17 @@ class KeycloakIdentityManager(BaseIdentityManager):
             self.client_id = self.keycloak_admin.get_client_id(
                 os.environ["KEYCLOAK_CLIENT_ID"]
             )
+            keycloak_url = base_keycloak_url + "/"
             self.keycloak_id_connection = KeycloakOpenIDConnection(
-                server_url=os.environ["KEYCLOAK_URL"],
+                server_url=keycloak_url,
                 client_id=os.environ["KEYCLOAK_CLIENT_ID"],
                 realm_name=os.environ["KEYCLOAK_REALM"],
                 client_secret_key=os.environ["KEYCLOAK_CLIENT_SECRET"],
                 verify=self.keycloak_verify_cert,
             )
 
-            self.admin_url = f"{os.environ['KEYCLOAK_URL']}/admin/realms/{os.environ['KEYCLOAK_REALM']}/clients/{self.client_id}"
-            self.admin_url_without_client = f"{os.environ['KEYCLOAK_URL']}/admin/realms/{os.environ['KEYCLOAK_REALM']}"
+            self.admin_url = f"{base_keycloak_url}/admin/realms/{os.environ['KEYCLOAK_REALM']}/clients/{self.client_id}"
+            self.admin_url_without_client = f"{base_keycloak_url}/admin/realms/{os.environ['KEYCLOAK_REALM']}"
             self.realm = os.environ["KEYCLOAK_REALM"]
             # if Keep controls the Keycloak server so it have event listener
             # for future use
@@ -413,8 +415,27 @@ class KeycloakIdentityManager(BaseIdentityManager):
         org_id = authenticated_entity.org_id
         return f"{self.server_url}realms/{tenant_realm}/wizard/?org_id={org_id}/#iss={self.server_url}/realms/{tenant_realm}"
 
-    def get_users(self) -> list[User]:
+    def get_users(self, search: str | None = None) -> list[User]:
         try:
+            # Search path (for the async picker): let Keycloak filter server-side
+            # and SKIP the per-user groups/role lookups. Fetching every user and
+            # enriching each with 2 more Admin API calls times out (504) on a large
+            # LDAP directory -- so search returns lightweight, matches-only results.
+            if search:
+                users = self.keycloak_admin.get_users(
+                    {"search": search, "max": 20}
+                )
+                return [
+                    User(
+                        email=u.get("email", ""),
+                        username=u.get("username", ""),
+                        name=u.get("firstName", "") or u.get("username", ""),
+                        created_at=u.get("createdTimestamp", ""),
+                    )
+                    for u in users
+                    if "username" in u
+                ]
+
             # TODO: query only users that Keep created (so not show all LDAP users)
             users = self.keycloak_admin.get_users({})
             users = [user for user in users if "firstName" in user]
@@ -433,6 +454,7 @@ class KeycloakIdentityManager(BaseIdentityManager):
                 role = self.get_user_current_role(user_id=user.get("id"))
                 user_dto = User(
                     email=user.get("email", ""),
+                    username=user.get("username", ""),
                     name=user.get("firstName", ""),
                     role=role,
                     created_at=user.get("createdTimestamp", ""),
@@ -650,8 +672,27 @@ class KeycloakIdentityManager(BaseIdentityManager):
             self.logger.error("Failed to delete resource from Keycloak: %s", str(e))
             raise HTTPException(status_code=500, detail="Failed to delete resource")
 
-    def get_groups(self) -> list[dict]:
+    def get_groups(self, search: str | None = None) -> list[dict]:
         try:
+            # Search path (async picker): filter server-side and SKIP the
+            # per-group member fetch, which is what makes this slow at scale.
+            if search:
+                groups = self.keycloak_admin.get_groups(
+                    query={
+                        "briefRepresentation": True,
+                        "search": search,
+                        "max": 20,
+                    }
+                )
+                return [
+                    Group(
+                        id=g["id"],
+                        name=g["name"],
+                        path=g.get("path"),
+                    )
+                    for g in groups
+                ]
+
             groups = self.keycloak_admin.get_groups(
                 query={"briefRepresentation": False}
             )
@@ -670,6 +711,7 @@ class KeycloakIdentityManager(BaseIdentityManager):
                     Group(
                         id=group_id,
                         name=group_name,
+                        path=group.get("path"),
                         roles=roles,
                         memberCount=member_count,
                         members=member_names,

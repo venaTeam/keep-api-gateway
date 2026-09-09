@@ -3,6 +3,14 @@ Server-Sent Events (SSE) broadcaster for real-time notifications.
 
 This module provides an in-memory SSE broadcaster that maintains per-tenant
 connection queues and broadcasts events to all connected clients.
+
+An idle stream emits a `: keepalive` comment every
+`SSE_KEEPALIVE_INTERVAL_SECONDS` (default 15 s). Every proxy between the
+browser and this process applies an idle timeout to the response — the
+OpenShift router's `timeout server` defaults to 30 s — and closes the stream
+when no byte crosses it in time, so the interval must stay well below the
+smallest such timeout on the path. Keep the two values apart: at 30 s / 30 s
+the router wins the race and every idle stream reconnects each half minute.
 """
 
 import asyncio
@@ -10,6 +18,7 @@ import json
 import logging
 from typing import Any, AsyncGenerator, Dict, List
 
+from src.config.config import SSE_KEEPALIVE_INTERVAL_SECONDS
 from src.repositories.metrics import connected_users_gauge
 
 logger = logging.getLogger(__name__)
@@ -38,7 +47,9 @@ class SSEBroadcaster:
             tenant_id: The tenant ID to subscribe to
             
         Yields:
-            SSE-formatted event strings
+            SSE-formatted event strings, plus a `: keepalive` comment whenever
+            no event arrived for `SSE_KEEPALIVE_INTERVAL_SECONDS`, so idle
+            streams outlive the proxies' idle timeouts.
         """
         queue: asyncio.Queue = asyncio.Queue()
         
@@ -66,7 +77,9 @@ class SSEBroadcaster:
             while True:
                 try:
                     # Wait for events with a timeout to send keepalives
-                    event_data = await asyncio.wait_for(queue.get(), timeout=30.0)
+                    event_data = await asyncio.wait_for(
+                        queue.get(), timeout=SSE_KEEPALIVE_INTERVAL_SECONDS
+                    )
                     yield event_data
                 except asyncio.TimeoutError:
                     # Send keepalive comment to prevent connection timeout
