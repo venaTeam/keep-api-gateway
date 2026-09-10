@@ -33,8 +33,37 @@ from src.repositories.cel_to_sql.properties_metadata import (
 )
 
 
+class CelToSqlErrorCode:
+    """Diagnostic codes shared by the validation endpoint and query execution.
+
+    They travel with the exception so callers classify a failure by code instead
+    of by re-reading its message.
+    """
+
+    SYNTAX_ERROR = "SYNTAX_ERROR"
+    UNKNOWN_FIELD = "UNKNOWN_FIELD"
+    UNSUPPORTED_EXPRESSION = "UNSUPPORTED_EXPRESSION"
+
+
 class CelToSqlException(Exception):
-    pass
+    """A CEL expression the converter cannot turn into SQL.
+
+    Always a rejected *user expression*, never an internal failure - the query
+    routes map it to HTTP 400. Anything the converter does not classify stays an
+    ordinary exception and surfaces as 5xx.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        code: str = CelToSqlErrorCode.UNSUPPORTED_EXPRESSION,
+        line: int = None,
+        column: int = None,
+    ):
+        super().__init__(message)
+        self.code = code
+        self.line = line
+        self.column = column
 
 
 class CelToSqlResult:
@@ -125,14 +154,37 @@ class BaseCelToSqlProvider:
         try:
             original_query = CelToAstConverter.convert_to_ast(cel)
         except CELParseError as e:
-            raise CelToSqlException(f"Error parsing CEL expression: {str(e)}") from e
+            raise CelToSqlException(
+                f"Error parsing CEL expression: {str(e)}",
+                code=CelToSqlErrorCode.SYNTAX_ERROR,
+                line=e.line,
+                column=e.column,
+            ) from e
+        except Exception as e:
+            # Parsing is a pure text -> AST step with no I/O, so every failure in
+            # it is attributable to the submitted expression (unsupported literal,
+            # method, ternary, map literal, ...). celpy surfaces those as plain
+            # NotImplementedError/ValueError/AttributeError, so they are classified
+            # here rather than leaking out as a 500.
+            raise CelToSqlException(
+                f"Unsupported CEL expression: {str(e)}",
+                code=CelToSqlErrorCode.UNSUPPORTED_EXPRESSION,
+            ) from e
 
         try:
             with_mapped_props, involved_fields = (
                 self.properties_mapper.map_props_in_ast(original_query)
             )
         except PropertiesMappingException as e:
-            raise CelToSqlException(f"Error while mapping columns: {str(e)}") from e
+            raise CelToSqlException(
+                f"Error while mapping columns: {str(e)}",
+                code=CelToSqlErrorCode.UNKNOWN_FIELD,
+            ) from e
+        except NotImplementedError as e:
+            raise CelToSqlException(
+                f"Error while mapping CEL expression tree: {str(e)}",
+                code=CelToSqlErrorCode.UNSUPPORTED_EXPRESSION,
+            ) from e
 
         if not with_mapped_props:
             return CelToSqlResult(sql="", involved_fields=[])
@@ -142,7 +194,8 @@ class BaseCelToSqlProvider:
             return CelToSqlResult(sql=sql_filter, involved_fields=involved_fields)
         except NotImplementedError as e:
             raise CelToSqlException(
-                f"Error while converting CEL expression tree to SQL: {str(e)}"
+                f"Error while converting CEL expression tree to SQL: {str(e)}",
+                code=CelToSqlErrorCode.UNSUPPORTED_EXPRESSION,
             ) from e
 
     def get_order_by_expression(self, sort_options: list[tuple[str, str]]) -> str:
@@ -165,7 +218,10 @@ class BaseCelToSqlProvider:
         (which used to surface as an opaque AttributeError / HTTP 500)."""
         metadata = self.properties_metadata.get_property_metadata_for_str(cel_field)
         if metadata is None:
-            raise CelToSqlException(f"Unknown sort/filter field: '{cel_field}'")
+            raise CelToSqlException(
+                f"Unknown sort/filter field: '{cel_field}'",
+                code=CelToSqlErrorCode.UNKNOWN_FIELD,
+            )
         return metadata
 
     def get_field_expression(self, cel_field: str) -> str:

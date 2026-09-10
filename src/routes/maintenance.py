@@ -9,10 +9,34 @@ from src.models.db.maintenance_window import (
     MaintenanceRuleRead,
     MaintenanceWindowRule,
 )
+from src.services.cel_validation import (
+    InvalidCelException,
+    ensure_valid_cel,
+    http_exception_from_invalid_cel,
+)
 from src.services.identity_manager.authenticatedentity import AuthenticatedEntity
 from src.services.identity_manager.identitymanagerfactory import IdentityManagerFactory
 
 router = APIRouter()
+
+
+def _validate_cel_query(cel_query: str) -> None:
+    """Reject a maintenance rule whose condition cannot be evaluated.
+
+    A client can bypass the UI entirely, so the write endpoint validates rather
+    than trusting a preflight. Maintenance conditions run on celpy in the event
+    handler, not as SQL, so they are checked in the `maintenance` context - the
+    alert-query field rules do not apply to them.
+    """
+    if not cel_query or not cel_query.strip():
+        # Unlike an alert search, a maintenance rule with no condition would
+        # silence everything, so an expression is required here.
+        raise HTTPException(status_code=400, detail="cel_query is required")
+
+    try:
+        ensure_valid_cel(cel_query, "maintenance")
+    except InvalidCelException as e:
+        raise http_exception_from_invalid_cel(e) from e
 
 
 @router.get(
@@ -44,6 +68,7 @@ def create_maintenance_rule(
     ),
     session: Session = Depends(get_session),
 ) -> MaintenanceRuleRead:
+    _validate_cel_query(rule_dto.cel_query)
     rule_dto.start_time = rule_dto.start_time.astimezone(timezone.utc).replace(
         tzinfo=None
     )
@@ -85,6 +110,7 @@ def update_maintenance_rule(
         raise HTTPException(
             status_code=404, detail="Maintenance rule not found or access denied"
         )
+    _validate_cel_query(rule_dto.cel_query)
     rule_dto.start_time = rule_dto.start_time.astimezone(timezone.utc).replace(
         tzinfo=None
     )
