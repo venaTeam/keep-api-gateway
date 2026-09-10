@@ -26,12 +26,7 @@ from src.repositories.metrics import (
     alert_ingestion_total,
 )
 from src.repositories.cel_to_sql.sql_providers.base import CelToSqlException
-from src.services.cel_validation import (
-    InvalidCelException,
-    ensure_valid_alert_filter_cel,
-    http_exception_from_converter_error,
-    http_exception_from_invalid_cel,
-)
+from src.services.cel_validation import http_exception_from_converter_error
 from src.repositories.db import dismiss_error_alerts as dismiss_error_alerts_db
 from src.repositories.db import (
     enrich_alerts_with_incidents,
@@ -270,24 +265,8 @@ def fetch_alert_facet_options(
         },
     )
 
-    # Facet options execute alert filters too, so they run the same preflight -
-    # otherwise a rejected search would come back as facet counts for a filter
-    # the alerts query refused.
-    try:
-        ensure_valid_alert_filter_cel(facet_options_query.cel)
-
-        for facet_id, facet_cel in (facet_options_query.facet_queries or {}).items():
-            try:
-                ensure_valid_alert_filter_cel(facet_cel)
-            except InvalidCelException as e:
-                logger.info(
-                    "Invalid CEL in facet query",
-                    extra={"tenant_id": tenant_id, "facet_id": facet_id},
-                )
-                raise http_exception_from_invalid_cel(e) from e
-    except InvalidCelException as e:
-        raise http_exception_from_invalid_cel(e) from e
-
+    # Both the main filter and each per-facet query are converted during
+    # execution, and the converter rejects anything that is not a usable filter.
     try:
         facet_options = get_alert_facets_data(
             tenant_id=tenant_id, facet_options_query=facet_options_query
@@ -383,11 +362,6 @@ def query_alerts_count(
     )
 
     try:
-        ensure_valid_alert_filter_cel(query.cel)
-    except InvalidCelException as e:
-        raise http_exception_from_invalid_cel(e) from e
-
-    try:
         total_count = query_total_alerts_count(tenant_id=tenant_id, query=query)
         logger.info(
             msg="Fetched alerts count from DB",
@@ -425,13 +399,8 @@ def query_alerts(
         extra={"tenant_id": tenant_id, "cel_expression": query.cel},
     )
 
-    # Validated here regardless of whether the caller ran the preflight - a client
-    # can bypass /cel/validate entirely.
-    try:
-        ensure_valid_alert_filter_cel(query.cel)
-    except InvalidCelException as e:
-        raise http_exception_from_invalid_cel(e) from e
-
+    # The filter is validated by the converter as the query is built, so an
+    # expression that skipped /cel/validate is still rejected here.
     try:
         db_alerts = query_last_alerts(tenant_id=tenant_id, query=query)
     except CelToSqlException as e:
@@ -884,11 +853,6 @@ async def batch_enrich_alerts(
 
     # If CEL is provided, use it to find matching alerts
     if enrich_data.cel:
-        try:
-            ensure_valid_alert_filter_cel(enrich_data.cel)
-        except InvalidCelException as e:
-            raise http_exception_from_invalid_cel(e) from e
-
         logger.info(
             "Enriching alerts by CEL query",
             extra={

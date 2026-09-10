@@ -72,7 +72,8 @@ def test_empty_alert_search_cel_means_no_filter(cel):
         # Unknown fields and unsupported constructs.
         ("no_such_field == 'x'", CelDiagnosticCode.UNKNOWN_FIELD),
         ("severity.matches('x')", CelDiagnosticCode.UNSUPPORTED_EXPRESSION),
-        ("1 + 2", CelDiagnosticCode.UNSUPPORTED_EXPRESSION),
+        # Arithmetic parses and maps fine; it just is not a predicate.
+        ("1 + 2", CelDiagnosticCode.EXPECTED_BOOLEAN),
         ("severity > 'info' ? 1 : 2", CelDiagnosticCode.UNSUPPORTED_EXPRESSION),
     ],
 )

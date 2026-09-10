@@ -5,6 +5,7 @@ from sqlalchemy import Dialect, String
 
 from src.repositories.cel_to_sql.ast_nodes import (
     ComparisonNode,
+    LogicalNode,
     ComparisonNodeOperator,
     ConstantNode,
     DataType,
@@ -17,6 +18,7 @@ from src.repositories.cel_to_sql.ast_nodes import (
     UnaryNode,
     UnaryNodeOperator,
     from_type_to_data_type,
+    is_boolean_filter_node,
 )
 from src.repositories.cel_to_sql.cel_ast_converter import CelToAstConverter
 from src.repositories.cel_to_sql.properties_mapper import (
@@ -41,6 +43,7 @@ class CelToSqlErrorCode:
     """
 
     SYNTAX_ERROR = "SYNTAX_ERROR"
+    EXPECTED_BOOLEAN = "EXPECTED_BOOLEAN"
     UNKNOWN_FIELD = "UNKNOWN_FIELD"
     UNSUPPORTED_EXPRESSION = "UNSUPPORTED_EXPRESSION"
 
@@ -59,11 +62,30 @@ class CelToSqlException(Exception):
         code: str = CelToSqlErrorCode.UNSUPPORTED_EXPRESSION,
         line: int = None,
         column: int = None,
+        end_line: int = None,
+        end_column: int = None,
     ):
         super().__init__(message)
         self.code = code
+        # One-based source span, end exclusive, or None where the failure has no
+        # reliable location. A single-character span sets only line/column.
         self.line = line
         self.column = column
+        self.end_line = end_line if end_line is not None else line
+        self.end_column = (
+            end_column if end_column is not None else (column + 1 if column else None)
+        )
+
+
+def _whole_expression_span(cel: str) -> dict:
+    """One-based span covering the entire expression, end exclusive."""
+    lines = cel.splitlines() or [""]
+    return {
+        "line": 1,
+        "column": 1,
+        "end_line": len(lines),
+        "end_column": len(lines[-1]) + 1,
+    }
 
 
 class CelToSqlResult:
@@ -170,6 +192,23 @@ class BaseCelToSqlProvider:
                 f"Unsupported CEL expression: {str(e)}",
                 code=CelToSqlErrorCode.UNSUPPORTED_EXPRESSION,
             ) from e
+
+        if not is_boolean_filter_node(original_query):
+            # A filter has to be a predicate. Enforced here rather than in a
+            # separate preflight so that validating and executing an expression
+            # cannot disagree, and so neither path pays to convert it twice.
+            raise CelToSqlException(
+                "A CEL filter must evaluate to true or false",
+                code=CelToSqlErrorCode.EXPECTED_BOOLEAN,
+                # The whole expression is the offending span only when the
+                # expression itself is the non-boolean value; a bad operand
+                # inside a logical expression has no reliable location.
+                **(
+                    {}
+                    if isinstance(original_query, LogicalNode)
+                    else _whole_expression_span(cel)
+                ),
+            )
 
         try:
             with_mapped_props, involved_fields = (

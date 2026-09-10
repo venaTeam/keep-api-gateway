@@ -30,17 +30,7 @@ from src.models.cel import (
     CelValidationResult,
     InvalidCelDetail,
 )
-from src.repositories.cel_to_sql.ast_nodes import (
-    ComparisonNode,
-    ConstantNode,
-    LogicalNode,
-    MemberAccessNode,
-    Node,
-    ParenthesisNode,
-    UnaryNode,
-    UnaryNodeOperator,
-)
-from src.repositories.cel_to_sql.properties_mapper import MultipleFieldsNode
+from src.repositories.cel_to_sql.ast_nodes import LogicalNode, Node, is_boolean_filter_node
 from src.repositories.cel_to_sql.sql_providers.base import (
     CelToSqlErrorCode,
     CelToSqlException,
@@ -62,6 +52,7 @@ _MESSAGES = {
 
 _CONVERTER_CODE_TO_DIAGNOSTIC = {
     CelToSqlErrorCode.SYNTAX_ERROR: CelDiagnosticCode.SYNTAX_ERROR,
+    CelToSqlErrorCode.EXPECTED_BOOLEAN: CelDiagnosticCode.EXPECTED_BOOLEAN,
     CelToSqlErrorCode.UNKNOWN_FIELD: CelDiagnosticCode.UNKNOWN_FIELD,
     CelToSqlErrorCode.UNSUPPORTED_EXPRESSION: CelDiagnosticCode.UNSUPPORTED_EXPRESSION,
 }
@@ -109,6 +100,22 @@ def _point_range(
     )
 
 
+def _range_from_converter_error(exc: CelToSqlException) -> Optional[CelDiagnosticRange]:
+    """The span the converter attached, or None when it could not locate one."""
+    line = getattr(exc, "line", None)
+    column = getattr(exc, "column", None)
+
+    if line is None or column is None:
+        return None
+
+    return CelDiagnosticRange(
+        startLine=line,
+        startColumn=column,
+        endLine=getattr(exc, "end_line", None) or line,
+        endColumn=getattr(exc, "end_column", None) or column + 1,
+    )
+
+
 def _diagnostic(
     code: CelDiagnosticCode,
     message: str = None,
@@ -117,60 +124,22 @@ def _diagnostic(
     return CelDiagnostic(code=code, message=message or _MESSAGES[code], range=range)
 
 
-def _is_boolean_filter(node) -> bool:
-    """Whether `node` yields a true/false result usable as a filter.
-
-    Bare field references count: the converter turns them into a truthiness test,
-    which is a valid filter. A bare non-boolean *literal* does not - a quoted
-    string or a number is a value, not a filter.
-    """
-    if isinstance(node, ParenthesisNode):
-        return _is_boolean_filter(node.expression)
-
-    if isinstance(node, LogicalNode):
-        # Both operands of the logical operator must themselves be filters,
-        # otherwise the generated SQL puts a bare value where a predicate belongs.
-        return _is_boolean_filter(node.left) and _is_boolean_filter(node.right)
-
-    if isinstance(node, UnaryNode):
-        if node.operator == UnaryNodeOperator.NOT:
-            return _is_boolean_filter(node.operand)
-        if node.operator == UnaryNodeOperator.HAS:
-            return True
-        # Arithmetic negation yields a number.
-        return False
-
-    if isinstance(node, ComparisonNode):
-        return True
-
-    if isinstance(node, ConstantNode):
-        return isinstance(node.value, bool)
-
-    if isinstance(node, (MemberAccessNode, MultipleFieldsNode)):
-        return True
-
-    # Anything else (arithmetic, ternaries, ...) is rejected by the converter
-    # before it reaches here; treat it as non-boolean if it ever does.
-    return False
-
-
 def _diagnostics_from_converter_error(exc: CelToSqlException) -> List[CelDiagnostic]:
     code = _CONVERTER_CODE_TO_DIAGNOSTIC.get(
         getattr(exc, "code", None), CelDiagnosticCode.UNSUPPORTED_EXPRESSION
     )
     return [
-        _diagnostic(
-            code,
-            message=str(exc),
-            range=_point_range(
-                getattr(exc, "line", None), getattr(exc, "column", None)
-            ),
-        )
+        _diagnostic(code, message=str(exc), range=_range_from_converter_error(exc))
     ]
 
 
 def validate_alert_filter_cel(cel: Optional[str]) -> CelValidationResult:
     """Validate `cel` as an alert-search filter.
+
+    Delegates to the very converter the query runs on, so a preflight verdict
+    and an execution verdict cannot disagree - syntax, fields, methods, the
+    boolean-result rule and dialect compatibility are all checked by that one
+    call, and neither path converts the expression twice.
 
     An empty expression is valid and means "no filter". Endpoints that *require*
     an expression (saved filters, maintenance rules) enforce that separately -
@@ -179,7 +148,6 @@ def validate_alert_filter_cel(cel: Optional[str]) -> CelValidationResult:
     # Imported lazily: pulling the alert field metadata in at module import time
     # would drag the database engine into every importer of this module.
     from src.repositories.alerts import properties_metadata
-    from src.repositories.cel_to_sql.cel_ast_converter import CelToAstConverter
     from src.repositories.cel_to_sql.sql_providers.get_cel_to_sql_provider_for_dialect import (
         get_cel_to_sql_provider,
     )
@@ -188,48 +156,10 @@ def validate_alert_filter_cel(cel: Optional[str]) -> CelValidationResult:
         return CelValidationResult(valid=True, diagnostics=[])
 
     try:
-        ast: Node = CelToAstConverter.convert_to_ast(cel)
-    except Exception as e:  # noqa: BLE001 - parsing is pure text -> AST, no I/O,
-        # so every failure in it is attributable to the submitted expression.
-        line = getattr(e, "line", None)
-        column = getattr(e, "column", None)
-        is_syntax = line is not None or column is not None
-        code = (
-            CelDiagnosticCode.SYNTAX_ERROR
-            if is_syntax
-            else CelDiagnosticCode.UNSUPPORTED_EXPRESSION
-        )
-        return CelValidationResult(
-            valid=False,
-            diagnostics=[_diagnostic(code, range=_point_range(line, column))],
-        )
-
-    # Run the real converter against the configured dialect: an expression that
-    # parses can still be unconvertible, and the deployed dialect is part of
-    # what "supported" means.
-    try:
         get_cel_to_sql_provider(properties_metadata).convert_to_sql_str_v2(cel)
     except CelToSqlException as e:
         return CelValidationResult(
             valid=False, diagnostics=_diagnostics_from_converter_error(e)
-        )
-
-    if not _is_boolean_filter(ast):
-        return CelValidationResult(
-            valid=False,
-            diagnostics=[
-                _diagnostic(
-                    CelDiagnosticCode.EXPECTED_BOOLEAN,
-                    # The whole expression is the offending span only when the
-                    # expression itself is the non-boolean value; a bad operand
-                    # inside a logical expression has no reliable location.
-                    range=(
-                        None
-                        if isinstance(ast, LogicalNode)
-                        else _whole_expression_range(cel)
-                    ),
-                )
-            ],
         )
 
     return CelValidationResult(valid=True, diagnostics=[])
@@ -269,7 +199,7 @@ def validate_event_filter_cel(cel: Optional[str]) -> CelValidationResult:
             diagnostics=[_diagnostic(code, range=_point_range(line, column))],
         )
 
-    if not _is_boolean_filter(ast):
+    if not is_boolean_filter_node(ast):
         return CelValidationResult(
             valid=False,
             diagnostics=[

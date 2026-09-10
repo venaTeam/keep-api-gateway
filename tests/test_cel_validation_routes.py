@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import OperationalError
 
+from src.repositories.alerts import static_facets
 from src.repositories.cel_to_sql.sql_providers.get_cel_to_sql_provider_for_dialect import (
     get_cel_to_sql_provider_for_dialect,
 )
@@ -110,10 +111,15 @@ def test_facet_options_reject_the_same_expressions(db_session, client, test_app,
 
 @pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
 def test_facet_options_reject_an_invalid_per_facet_query(db_session, client, test_app):
+    """A per-facet query is combined with the main filter and converted too."""
+    severity_facet = next(
+        facet for facet in static_facets if facet.property_path == "severity"
+    )
+
     response = client.post(
         "/alerts/facets/options",
         headers=AUTH,
-        json={"cel": "", "facet_queries": {"severity": "'some text'"}},
+        json={"cel": "", "facet_queries": {severity_facet.id: "'some text'"}},
     )
 
     assert response.status_code == 400
@@ -287,7 +293,7 @@ class TestDatabaseFailuresStayFailures:
     [
         ("no_such_field == 'x'", CelToSqlErrorCode.UNKNOWN_FIELD),
         ("severity.matches('x')", CelToSqlErrorCode.UNSUPPORTED_EXPRESSION),
-        ("1 + 2", CelToSqlErrorCode.UNSUPPORTED_EXPRESSION),
+        ("1 + 2", CelToSqlErrorCode.EXPECTED_BOOLEAN),
         ("severity ==", CelToSqlErrorCode.SYNTAX_ERROR),
     ],
 )
@@ -315,3 +321,32 @@ def test_supported_expressions_convert_for_every_dialect(dialect, cel):
     provider = get_cel_to_sql_provider_for_dialect(dialect, properties_metadata)
 
     provider.convert_to_sql_str_v2(cel)
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+def test_a_query_converts_its_filter_exactly_once(db_session, client, test_app):
+    """Validation and execution share one conversion, not one each.
+
+    The boolean rule lives inside the converter precisely so that a request does
+    not parse and convert its filter twice - once to check it and again to run
+    it. This pins that, because a separate preflight is an easy thing to
+    reintroduce.
+    """
+    from src.repositories.cel_to_sql.sql_providers import base
+
+    original = base.BaseCelToSqlProvider.convert_to_sql_str_v2
+    conversions = []
+
+    def counted(self, cel):
+        conversions.append(cel)
+        return original(self, cel)
+
+    with patch.object(base.BaseCelToSqlProvider, "convert_to_sql_str_v2", counted):
+        response = client.post(
+            "/alerts/query",
+            headers=AUTH,
+            json={"cel": "severity == 'critical'", "limit": 20, "offset": 0},
+        )
+
+    assert response.status_code == 200
+    assert conversions == ["severity == 'critical'"]
