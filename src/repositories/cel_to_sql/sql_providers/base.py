@@ -5,7 +5,6 @@ from sqlalchemy import Dialect, String
 
 from src.repositories.cel_to_sql.ast_nodes import (
     ComparisonNode,
-    LogicalNode,
     ComparisonNodeOperator,
     ConstantNode,
     DataType,
@@ -218,11 +217,6 @@ class BaseCelToSqlProvider:
             raise CelToSqlException(
                 f"Error while mapping columns: {str(e)}",
                 code=CelToSqlErrorCode.UNKNOWN_FIELD,
-            ) from e
-        except NotImplementedError as e:
-            raise CelToSqlException(
-                f"Error while mapping CEL expression tree: {str(e)}",
-                code=CelToSqlErrorCode.UNSUPPORTED_EXPRESSION,
             ) from e
 
         if not with_mapped_props:

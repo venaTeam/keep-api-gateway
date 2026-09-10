@@ -171,11 +171,16 @@ def test_diagnostic_omits_the_range_when_no_position_is_available(
 
 
 @pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
-def test_unknown_context_is_a_request_validation_error(db_session, client, test_app):
-    """A bad `context` is a malformed request, not an invalid CEL expression."""
-    response = client.post(
-        "/cel/validate", headers=AUTH, json={"cel": "severity", "context": "nope"}
-    )
+@pytest.mark.parametrize("payload", [{"cel": "severity", "context": "nope"}, {"cel": "severity"}])
+def test_context_must_be_one_of_the_known_engines(
+    db_session, client, test_app, payload
+):
+    """An unknown or missing context is a malformed request, not invalid CEL.
+
+    It must never fall back to a default: silently validating a workflow trigger
+    against alert-query rules is the bug the context exists to prevent.
+    """
+    response = client.post("/cel/validate", headers=AUTH, json=payload)
 
     assert response.status_code == 422
     assert "INVALID_CEL" not in response.text
@@ -193,36 +198,6 @@ def test_generic_request_validation_is_not_labelled_invalid_cel(
 
     assert response.status_code == 422
     assert "INVALID_CEL" not in response.text
-
-
-@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
-class TestLegacyContract:
-    """Clients that have not migrated still get the marker-array response."""
-
-    def test_valid_expression_returns_an_empty_array(self, db_session, client, test_app):
-        response = client.post("/cel/validate", headers=AUTH, json={"cel": "severity"})
-
-        assert response.status_code == 200
-        assert response.json() == []
-
-    def test_syntax_error_returns_markers(self, db_session, client, test_app):
-        response = client.post(
-            "/cel/validate", headers=AUTH, json={"cel": "severity =="}
-        )
-
-        assert response.status_code == 200
-        (marker,) = response.json()
-        assert marker["columnEnd"] == marker["columnStart"] + 1
-
-    def test_unsupported_expression_no_longer_escapes_as_a_500(
-        self, db_session, client, test_app
-    ):
-        cel = "severity.matches('x')"
-        response = client.post("/cel/validate", headers=AUTH, json={"cel": cel})
-
-        assert response.status_code == 200
-        (marker,) = response.json()
-        assert marker == {"columnStart": 1, "columnEnd": len(cel) + 1}
 
 
 @pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
