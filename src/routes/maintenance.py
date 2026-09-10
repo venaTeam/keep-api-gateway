@@ -24,9 +24,9 @@ def _validate_cel_query(cel_query: str) -> None:
     """Reject a maintenance rule whose condition cannot be evaluated.
 
     A client can bypass the UI entirely, so the write endpoint validates rather
-    than trusting a preflight. Maintenance conditions run on celpy in the event
-    handler, not as SQL, so they are checked in the `maintenance` context - the
-    alert-query field rules do not apply to them.
+    than trusting a preflight. Maintenance conditions are evaluated by celpy in
+    the event handler, not run as SQL, so they are checked in the `maintenance`
+    context - the alert-query field rules do not apply to them.
     """
     if not cel_query or not cel_query.strip():
         # Unlike an alert search, a maintenance rule with no condition would

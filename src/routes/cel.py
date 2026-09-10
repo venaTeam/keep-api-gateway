@@ -13,10 +13,13 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 # The editor is shared between features whose execution engines differ, so a
-# check is always made *for a context*. Alert filters run as SQL; maintenance
-# conditions are evaluated in-process by the event handler. A new context must
-# be added deliberately rather than inheriting alert-query rules.
-CelValidationContext = Literal["alerts", "maintenance"]
+# check is always made *for a context*. Alert filters run as SQL; maintenance,
+# extraction, correlation rules and workflow triggers are evaluated in-process by
+# celpy over the raw event payload. A new context must be added deliberately
+# rather than inheriting another feature's rules.
+CelValidationContext = Literal[
+    "alerts", "maintenance", "extraction", "rules", "workflows"
+]
 
 
 class CelExpressionPayload(BaseModel):

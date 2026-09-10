@@ -13,7 +13,7 @@ from src.services.cel_validation import (
     ensure_valid_alert_filter_cel,
     validate_alert_filter_cel,
     validate_cel,
-    validate_maintenance_cel,
+    validate_event_filter_cel,
 )
 
 
@@ -133,33 +133,41 @@ def test_ensure_valid_accepts_a_supported_filter():
     ensure_valid_alert_filter_cel("severity == 'critical'")
 
 
-class TestMaintenanceContext:
-    """Maintenance runs on celpy, not SQL - it has its own rules."""
+class TestEventFilterContext:
+    """Maintenance, extraction, rules and workflow triggers run on celpy."""
 
     def test_unknown_fields_are_allowed(self):
         """Maintenance conditions match the raw alert payload, so any key is fair.
 
         Applying the alert-query field mapping here would reject legitimate rules.
         """
-        assert validate_maintenance_cel("some_payload_key == 'x'").valid
+        assert validate_event_filter_cel("some_payload_key == 'x'").valid
         assert not validate_alert_filter_cel("some_payload_key == 'x'").valid
 
     def test_still_requires_a_boolean_result(self):
-        result = validate_maintenance_cel("'some text'")
+        result = validate_event_filter_cel("'some text'")
 
         assert not result.valid
         assert _codes(result) == [CelDiagnosticCode.EXPECTED_BOOLEAN]
 
     def test_still_requires_valid_syntax(self):
-        result = validate_maintenance_cel("severity ==")
+        result = validate_event_filter_cel("severity ==")
 
         assert not result.valid
         assert _codes(result) == [CelDiagnosticCode.SYNTAX_ERROR]
 
 
+@pytest.mark.parametrize(
+    "context", ["maintenance", "extraction", "rules", "workflows"]
+)
+def test_celpy_contexts_do_not_inherit_alert_query_rules(context):
+    """A payload key is valid for every in-process engine, but not for a search."""
+    assert validate_cel("some_payload_key == 'x'", context).valid
+    assert not validate_cel("some_payload_key == 'x'", "alerts").valid
+
+
 def test_validate_cel_dispatches_by_context():
     assert validate_cel("severity == 'critical'", "alerts").valid
-    assert validate_cel("anything == 'x'", "maintenance").valid
 
     with pytest.raises(NotImplementedError):
         validate_cel("severity == 'critical'", "not-a-context")

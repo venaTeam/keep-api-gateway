@@ -235,14 +235,17 @@ def validate_alert_filter_cel(cel: Optional[str]) -> CelValidationResult:
     return CelValidationResult(valid=True, diagnostics=[])
 
 
-def validate_maintenance_cel(cel: Optional[str]) -> CelValidationResult:
-    """Validate `cel` as a maintenance-window condition.
+def validate_event_filter_cel(cel: Optional[str]) -> CelValidationResult:
+    """Validate `cel` as an in-process filter over a raw event payload.
 
-    Maintenance rules are **not** executed as SQL - the event handler evaluates
-    them with celpy against the incoming alert payload. So the alert-query rules
-    do not apply here: any payload key is a legitimate field, and there is no
-    dialect to be compatible with. What still holds is that the expression must
-    parse and must produce true/false, because the engine branches on its result.
+    Maintenance windows, extraction rules, correlation rules and workflow
+    triggers are **not** executed as SQL - they are evaluated with celpy against
+    the incoming alert payload, in the event handler or the workflow engine. So
+    the alert-query rules do not apply: any payload key is a legitimate field,
+    and there is no database dialect to be compatible with.
+
+    What still holds is that the expression must parse and must produce
+    true/false, because every one of those engines branches on its result.
 
     Whether an expression is *required* is the caller's rule, not this one.
     """
@@ -284,9 +287,15 @@ def validate_maintenance_cel(cel: Optional[str]) -> CelValidationResult:
     return CelValidationResult(valid=True, diagnostics=[])
 
 
+# Every feature names its own context, even where two of them currently share an
+# implementation: that keeps a later divergence a one-line change here instead of
+# a silent behaviour change for whichever feature was borrowing the other's name.
 _VALIDATORS = {
     "alerts": validate_alert_filter_cel,
-    "maintenance": validate_maintenance_cel,
+    "maintenance": validate_event_filter_cel,
+    "extraction": validate_event_filter_cel,
+    "rules": validate_event_filter_cel,
+    "workflows": validate_event_filter_cel,
 }
 
 
