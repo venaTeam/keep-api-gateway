@@ -14,10 +14,8 @@ from src.repositories.alerts import static_facets
 from src.repositories.cel_to_sql.sql_providers.get_cel_to_sql_provider_for_dialect import (
     get_cel_to_sql_provider_for_dialect,
 )
-from src.repositories.cel_to_sql.sql_providers.base import (
-    CelToSqlErrorCode,
-    CelToSqlException,
-)
+from src.models.cel import CelDiagnosticCode
+from src.repositories.cel_to_sql.sql_providers.base import CelToSqlException
 from tests.fixtures.client import client, setup_api_key, test_app  # noqa
 
 AUTH = {"x-api-key": "some-key"}
@@ -266,10 +264,10 @@ class TestDatabaseFailuresStayFailures:
 @pytest.mark.parametrize(
     "cel,expected_code",
     [
-        ("no_such_field == 'x'", CelToSqlErrorCode.UNKNOWN_FIELD),
-        ("severity.matches('x')", CelToSqlErrorCode.UNSUPPORTED_EXPRESSION),
-        ("1 + 2", CelToSqlErrorCode.EXPECTED_BOOLEAN),
-        ("severity ==", CelToSqlErrorCode.SYNTAX_ERROR),
+        ("no_such_field == 'x'", CelDiagnosticCode.UNKNOWN_FIELD),
+        ("severity.matches('x')", CelDiagnosticCode.UNSUPPORTED_EXPRESSION),
+        ("1 + 2", CelDiagnosticCode.EXPECTED_BOOLEAN),
+        ("severity ==", CelDiagnosticCode.SYNTAX_ERROR),
     ],
 )
 def test_converter_classifies_rejections_for_every_dialect(dialect, cel, expected_code):

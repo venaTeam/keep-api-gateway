@@ -3,6 +3,7 @@ from typing import Any, List
 from celpy import CELParseError
 from sqlalchemy import Dialect, String
 
+from src.models.cel import CelDiagnosticCode
 from src.repositories.cel_to_sql.ast_nodes import (
     ComparisonNode,
     ComparisonNodeOperator,
@@ -34,19 +35,6 @@ from src.repositories.cel_to_sql.properties_metadata import (
 )
 
 
-class CelToSqlErrorCode:
-    """Diagnostic codes shared by the validation endpoint and query execution.
-
-    They travel with the exception so callers classify a failure by code instead
-    of by re-reading its message.
-    """
-
-    SYNTAX_ERROR = "SYNTAX_ERROR"
-    EXPECTED_BOOLEAN = "EXPECTED_BOOLEAN"
-    UNKNOWN_FIELD = "UNKNOWN_FIELD"
-    UNSUPPORTED_EXPRESSION = "UNSUPPORTED_EXPRESSION"
-
-
 class CelToSqlException(Exception):
     """A CEL expression the converter cannot turn into SQL.
 
@@ -58,7 +46,7 @@ class CelToSqlException(Exception):
     def __init__(
         self,
         message: str,
-        code: str = CelToSqlErrorCode.UNSUPPORTED_EXPRESSION,
+        code: CelDiagnosticCode = CelDiagnosticCode.UNSUPPORTED_EXPRESSION,
         line: int = None,
         column: int = None,
         end_line: int = None,
@@ -177,7 +165,7 @@ class BaseCelToSqlProvider:
         except CELParseError as e:
             raise CelToSqlException(
                 f"Error parsing CEL expression: {str(e)}",
-                code=CelToSqlErrorCode.SYNTAX_ERROR,
+                code=CelDiagnosticCode.SYNTAX_ERROR,
                 line=e.line,
                 column=e.column,
             ) from e
@@ -189,7 +177,7 @@ class BaseCelToSqlProvider:
             # here rather than leaking out as a 500.
             raise CelToSqlException(
                 f"Unsupported CEL expression: {str(e)}",
-                code=CelToSqlErrorCode.UNSUPPORTED_EXPRESSION,
+                code=CelDiagnosticCode.UNSUPPORTED_EXPRESSION,
             ) from e
 
         if not is_boolean_filter_node(original_query):
@@ -198,7 +186,7 @@ class BaseCelToSqlProvider:
             # cannot disagree, and so neither path pays to convert it twice.
             raise CelToSqlException(
                 "A CEL filter must evaluate to true or false",
-                code=CelToSqlErrorCode.EXPECTED_BOOLEAN,
+                code=CelDiagnosticCode.EXPECTED_BOOLEAN,
                 # The whole expression is the offending span only when the
                 # expression itself is the non-boolean value; a bad operand
                 # inside a logical expression has no reliable location.
@@ -216,7 +204,7 @@ class BaseCelToSqlProvider:
         except PropertiesMappingException as e:
             raise CelToSqlException(
                 f"Error while mapping columns: {str(e)}",
-                code=CelToSqlErrorCode.UNKNOWN_FIELD,
+                code=CelDiagnosticCode.UNKNOWN_FIELD,
             ) from e
 
         if not with_mapped_props:
@@ -228,7 +216,7 @@ class BaseCelToSqlProvider:
         except NotImplementedError as e:
             raise CelToSqlException(
                 f"Error while converting CEL expression tree to SQL: {str(e)}",
-                code=CelToSqlErrorCode.UNSUPPORTED_EXPRESSION,
+                code=CelDiagnosticCode.UNSUPPORTED_EXPRESSION,
             ) from e
 
     def get_order_by_expression(self, sort_options: list[tuple[str, str]]) -> str:
@@ -253,7 +241,7 @@ class BaseCelToSqlProvider:
         if metadata is None:
             raise CelToSqlException(
                 f"Unknown sort/filter field: '{cel_field}'",
-                code=CelToSqlErrorCode.UNKNOWN_FIELD,
+                code=CelDiagnosticCode.UNKNOWN_FIELD,
             )
         return metadata
 

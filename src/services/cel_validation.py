@@ -32,7 +32,6 @@ from src.models.cel import (
 )
 from src.repositories.cel_to_sql.ast_nodes import LogicalNode, Node, is_boolean_filter_node
 from src.repositories.cel_to_sql.sql_providers.base import (
-    CelToSqlErrorCode,
     CelToSqlException,
 )
 
@@ -48,13 +47,6 @@ _MESSAGES = {
     CelDiagnosticCode.UNSUPPORTED_EXPRESSION: (
         "This expression is not supported by the alert filter."
     ),
-}
-
-_CONVERTER_CODE_TO_DIAGNOSTIC = {
-    CelToSqlErrorCode.SYNTAX_ERROR: CelDiagnosticCode.SYNTAX_ERROR,
-    CelToSqlErrorCode.EXPECTED_BOOLEAN: CelDiagnosticCode.EXPECTED_BOOLEAN,
-    CelToSqlErrorCode.UNKNOWN_FIELD: CelDiagnosticCode.UNKNOWN_FIELD,
-    CelToSqlErrorCode.UNSUPPORTED_EXPRESSION: CelDiagnosticCode.UNSUPPORTED_EXPRESSION,
 }
 
 
@@ -125,9 +117,7 @@ def _diagnostic(
 
 
 def _diagnostics_from_converter_error(exc: CelToSqlException) -> List[CelDiagnostic]:
-    code = _CONVERTER_CODE_TO_DIAGNOSTIC.get(
-        getattr(exc, "code", None), CelDiagnosticCode.UNSUPPORTED_EXPRESSION
-    )
+    code = getattr(exc, "code", None) or CelDiagnosticCode.UNSUPPORTED_EXPRESSION
     return [
         _diagnostic(code, message=str(exc), range=_range_from_converter_error(exc))
     ]
