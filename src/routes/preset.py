@@ -31,6 +31,11 @@ from src.models.db.preset import (
     UserPresetColumnConfig,
 )
 from src.models.time_stamp import TimeStampFilter, _get_time_stamp_filter
+from src.services.cel_validation import (
+    InvalidCelException,
+    ensure_valid_alert_filter_cel,
+    http_exception_from_invalid_cel,
+)
 from src.services.identity_manager.authenticatedentity import AuthenticatedEntity
 from src.services.identity_manager.identitymanagerfactory import IdentityManagerFactory
 from src.services.search_engine import SearchEngine
@@ -77,6 +82,23 @@ def get_presets(
     return presets_dto
 
 
+def _validate_preset_cel_options(options: list) -> None:
+    """Reject a preset whose saved CEL is not a runnable alert filter.
+
+    Presets execute as alert searches, so they are validated in the `alerts`
+    context - the same rules the query endpoint enforces. Done at the write
+    endpoint because a client can save without ever calling /cel/validate.
+    """
+    for option in options:
+        if option.label != "CEL":
+            continue
+
+        try:
+            ensure_valid_alert_filter_cel(option.value)
+        except InvalidCelException as e:
+            raise http_exception_from_invalid_cel(e) from e
+
+
 class CreateOrUpdatePresetDto(BaseModel):
     name: str | None
     options: list[PresetOption]
@@ -99,6 +121,7 @@ def create_preset(
     tenant_id = authenticated_entity.tenant_id
     if not body.options or not body.name:
         raise HTTPException(400, "Options and name are required")
+    _validate_preset_cel_options(body.options)
     if body.name == "Feed" or body.name == "Deleted":
         raise HTTPException(400, "Cannot create preset with this name")
     options_dict = [option.dict() for option in body.options]
@@ -223,6 +246,7 @@ def update_preset(
     options_dict = [option.dict() for option in body.options]
     if not options_dict:
         raise HTTPException(400, "Options cannot be empty")
+    _validate_preset_cel_options(body.options)
 
     # preserve existing options that are not in the new options (merge)
     # this allows us to update only specific options (like CEL/SQL) without losing others (like column config/tabs)
