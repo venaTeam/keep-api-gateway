@@ -6,7 +6,7 @@ import uuid
 import pytest
 from fastapi.testclient import TestClient
 
-from src.repositories.dependencies import SINGLE_TENANT_UUID
+from src.repositories.dependencies import GENERIC_TENANT_UUID
 from src.services.producers.factory import get_event_producer
 from src.services.producers.base_event_handler import EventProducer
 from src.models.db.tenant import TenantApiKey
@@ -61,7 +61,7 @@ class MockEventProducer(EventProducer):
         
         # If we have a db_session, simulate the event-handler by saving to DB
         if self.db_session:
-            tenant_id = kwargs.get("tenant_id", SINGLE_TENANT_UUID)
+            tenant_id = kwargs.get("tenant_id", GENERIC_TENANT_UUID)
             provider_type = kwargs.get("provider_type", "keep")
             provider_id = kwargs.get("provider_id")
             
@@ -293,7 +293,7 @@ def client(test_app, db_session, monkeypatch):
 
 # Common setup for tests
 def setup_api_key(
-    db_session, api_key_value, tenant_id=SINGLE_TENANT_UUID, role="admin"
+    db_session, api_key_value, tenant_id=GENERIC_TENANT_UUID, role="admin"
 ):
     hash_api_key = hashlib.sha256(api_key_value.encode()).hexdigest()
     db_session.add(

@@ -1,6 +1,5 @@
 import logging
 import threading
-
 from src.providers.base.base_provider import BaseProvider
 from src.providers.providers_factory import ProvidersFactory
 
@@ -87,16 +86,37 @@ class EventSubscriber:
                 break
         self.logger.info("Removed consumer %s", provider_id)
 
-    def stop(self):
-        """Stops the consumers"""
+    def stop(self, join_timeout: float | None = None):
+        """Stops the consumers.
+
+        Synchronous on purpose (it joins threads) — callers on the event loop
+        must not `await` it; see `src/main.py:shutdown`, which offloads it.
+
+        Args:
+            join_timeout: per-thread join bound. None waits forever, which can
+                hang shutdown if a consumer thread is stuck in a provider call.
+        """
         for consumer in self.consumers:
             self.logger.info("Stopping consumer %s", consumer)
-            consumer.stop_consume()
-            self.logger.info("Stopped consumer %s", consumer)
+            try:
+                consumer.stop_consume()
+            except Exception:
+                self.logger.exception("Failed to stop consumer %s", consumer)
+            else:
+                self.logger.info("Stopped consumer %s", consumer)
 
         # Join the threads
         self.logger.info("Joining consumer threads")
         for thread in self.consumer_threads:
-            thread.join()
+            thread.join(timeout=join_timeout)
+
+            if thread.is_alive():
+                self.logger.warning(
+                    "Consumer thread %s did not stop within %ss; abandoning it",
+                    thread.name,
+                    join_timeout,
+                )
+        self.consumers = []
+        self.consumer_threads = []
         self.started = False
         self.logger.info("Joined consumer threads")

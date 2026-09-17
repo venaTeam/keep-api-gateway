@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.repositories.dependencies import SINGLE_TENANT_UUID
+from src.repositories.dependencies import GENERIC_TENANT_UUID
 from src.models.db.tenant import TenantApiKey
 from tests.fixtures.client import client, setup_api_key, test_app  # noqa
 
@@ -33,7 +33,7 @@ def get_mock_jwt_payload(token, *args, **kwargs):
         raise Exception("Invalid token")
     if auth_type == "SINGLE_TENANT":
         return {
-            "tenant_id": SINGLE_TENANT_UUID,
+            "tenant_id": GENERIC_TENANT_UUID,
             "keep_role": "admin",
             "email": "admin@single-tenant.com",
         }
@@ -350,6 +350,39 @@ def test_api_key_impersonation_provisioned_user_cant_login(
 @pytest.mark.parametrize(
     "test_app",
     [
+        {"AUTH_TYPE": "DB", "KEEP_JWT_SECRET": "testsecret"},
+    ],
+    indirect=True,
+)
+def test_signin_tenant_resolution(db_session, client, test_app):
+    from src.models.tenant import RoleAssignment
+    from src.repositories import db
+    from src.repositories.dependencies import GENERIC_TENANT_UUID
+
+    # Create a user in DB
+    db.create_user(GENERIC_TENANT_UUID, "tenantuser@example.com", "pass123", "admin")
+
+    # 1. User has 0 tenant role grants -> returns GENERIC_TENANT_UUID
+    resp = client.post("/signin", json={"username": "tenantuser@example.com", "password": "pass123"})
+    assert resp.status_code == 200
+    assert resp.json()["tenantId"] == GENERIC_TENANT_UUID
+
+    # 2. Add 1 tenant grant for user -> returns that tenant's ID
+    t1 = db.create_tenant_atomic("Tenant Alpha", [RoleAssignment(subject="tenantuser@example.com", subject_type="user", role="admin")])
+    resp = client.post("/signin", json={"username": "tenantuser@example.com", "password": "pass123"})
+    assert resp.status_code == 200
+    assert resp.json()["tenantId"] == t1.id
+
+    # 3. Add a 2nd tenant grant for user -> returns one of those 2 tenant IDs
+    t2 = db.create_tenant_atomic("Tenant Beta", [RoleAssignment(subject="tenantuser@example.com", subject_type="user", role="admin")])
+    resp = client.post("/signin", json={"username": "tenantuser@example.com", "password": "pass123"})
+    assert resp.status_code == 200
+    assert resp.json()["tenantId"] in {t1.id, t2.id}
+
+
+@pytest.mark.parametrize(
+    "test_app",
+    [
         {
             "AUTH_TYPE": "OAUTH2PROXY",
             "KEEP_OAUTH2_PROXY_USER_HEADER": "x-forwarded-email",
@@ -429,7 +462,7 @@ def test_deleted_api_key_authentication(db_session, client, test_app):
     import hashlib
 
     from src.repositories.db import get_api_key
-    from src.repositories.dependencies import SINGLE_TENANT_UUID
+    from src.repositories.dependencies import GENERIC_TENANT_UUID
     from src.models.db.tenant import TenantApiKey
 
     auth_type = os.getenv("AUTH_TYPE")
@@ -438,7 +471,7 @@ def test_deleted_api_key_authentication(db_session, client, test_app):
     # Create API key in database directly
     hash_api_key = hashlib.sha256(valid_api_key.encode()).hexdigest()
     api_key_entry = TenantApiKey(
-        tenant_id=SINGLE_TENANT_UUID,
+        tenant_id=GENERIC_TENANT_UUID,
         reference_id="test_deleted",
         key_hash=hash_api_key,
         created_by="test@example.com",
