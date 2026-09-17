@@ -26,6 +26,7 @@ from src.repositories.metrics import (
     alert_ingestion_total,
 )
 from src.repositories.cel_to_sql.sql_providers.base import CelToSqlException
+from src.services.cel_validation import http_exception_from_converter_error
 from src.repositories.db import dismiss_error_alerts as dismiss_error_alerts_db
 from src.repositories.db import (
     enrich_alerts_with_incidents,
@@ -264,6 +265,8 @@ def fetch_alert_facet_options(
         },
     )
 
+    # Both the main filter and each per-facet query are converted during
+    # execution, and the converter rejects anything that is not a usable filter.
     try:
         facet_options = get_alert_facets_data(
             tenant_id=tenant_id, facet_options_query=facet_options_query
@@ -272,10 +275,7 @@ def fetch_alert_facet_options(
         logger.exception(
             f'Error parsing CEL expression "{facet_options_query.cel}". {str(e)}'
         )
-        raise HTTPException(
-            status_code=400,
-            detail=f"Error parsing CEL expression: {facet_options_query.cel}",
-        ) from e
+        raise http_exception_from_converter_error(facet_options_query.cel, e) from e
 
     logger.info(
         "Fetched alert facets from DB",
@@ -375,9 +375,7 @@ def query_alerts_count(
 
     except CelToSqlException as e:
         logger.exception(f'Error parsing CEL expression "{query.cel}". {str(e)}')
-        raise HTTPException(
-            status_code=400, detail=f"Error parsing CEL expression: {query.cel}"
-        ) from e
+        raise http_exception_from_converter_error(query.cel, e) from e
 
 @router.post(
     "/query",
@@ -401,13 +399,13 @@ def query_alerts(
         extra={"tenant_id": tenant_id, "cel_expression": query.cel},
     )
 
+    # The filter is validated by the converter as the query is built, so an
+    # expression that skipped /cel/validate is still rejected here.
     try:
         db_alerts = query_last_alerts(tenant_id=tenant_id, query=query)
     except CelToSqlException as e:
         logger.exception(f'Error parsing CEL expression "{query.cel}". {str(e)}')
-        raise HTTPException(
-            status_code=400, detail=f"Error parsing CEL expression: {query.cel}"
-        ) from e
+        raise http_exception_from_converter_error(query.cel, e) from e
 
     db_alerts = enrich_alerts_with_incidents(tenant_id, db_alerts)
     enriched_alerts_dto = convert_db_alerts_to_dto_alerts(
@@ -892,10 +890,7 @@ async def batch_enrich_alerts(
             logger.exception(
                 f'Error parsing CEL expression "{enrich_data.cel}". {str(e)}'
             )
-            raise HTTPException(
-                status_code=400,
-                detail=f"Error parsing CEL expression: {enrich_data.cel}",
-            ) from e
+            raise http_exception_from_converter_error(enrich_data.cel, e) from e
         except Exception as e:
             logger.exception("Failed to process CEL query", extra={"error": str(e)})
             return {"status": "failed", "message": str(e)}

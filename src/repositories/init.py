@@ -4,7 +4,7 @@ import os
 from src.services.alert_deduplicator.deduplication_rules_provisioning import (
     provision_deduplication_rules_from_env,
 )
-from src.repositories.db_on_start import migrate_db, try_create_single_tenant
+from src.repositories.db_on_start import try_create_single_tenant
 from src.repositories.dependencies import GENERIC_TENANT_UUID
 from src.repositories.tenant_configuration import TenantConfiguration
 from src.services.identity_manager.identitymanagerfactory import IdentityManagerTypes
@@ -72,7 +72,9 @@ def init_services(auth_type: str, provision_dashboards_func=None, skip_ngrok=Fal
     """
     logger.info("Keep server starting")
 
-    migrate_db()
+    # No migration here: the schema is applied by the keep-migrations image,
+    # which Argo runs as a PreSync hook Job before any pod of this ReplicaSet
+    # exists. `/readyz` refuses to start a pod the schema does not satisfy.
 
     # Load this early and use preloading
     ProvidersFactory.get_all_providers()
