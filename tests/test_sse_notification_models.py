@@ -1,7 +1,7 @@
 """Tests for SSE notification pydantic models.
 
 Verifies that SSENotification correctly accepts typed data payloads
-(AlertNotifyData, PresetNotifyData, IncidentNotifyData) and rejects
+(AlertNotifyData, IncidentNotifyData) and rejects
 invalid types like plain strings.
 """
 
@@ -11,7 +11,6 @@ from pydantic import ValidationError
 from src.routes.sse_routes import (
     AlertNotifyData,
     IncidentNotifyData,
-    PresetNotifyData,
     SSENotification,
 )
 
@@ -27,15 +26,6 @@ class TestSSENotificationModels:
         )
         assert isinstance(notif.data, AlertNotifyData)
         assert len(notif.data.alerts) == 1
-
-    def test_accepts_preset_notify_data(self):
-        notif = SSENotification(
-            tenant_id="t1",
-            event="poll-presets",
-            data={"preset_names": ["feed", "critical"]},
-        )
-        assert isinstance(notif.data, PresetNotifyData)
-        assert notif.data.preset_names == ["feed", "critical"]
 
     def test_accepts_incident_notify_data(self):
         notif = SSENotification(
@@ -69,8 +59,8 @@ class TestSSENotificationModels:
         with pytest.raises(ValidationError):
             SSENotification(
                 tenant_id="t1",
-                event="poll-presets",
-                data='["feed", "critical"]',
+                event="poll-alerts",
+                data='["a1", "a2"]',
             )
 
     def test_default_data_is_empty(self):

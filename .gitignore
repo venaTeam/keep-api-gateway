@@ -69,3 +69,4 @@ dmypy.json
 
 # Local SQLite databases (never ship in the image)
 *.db
+.venv
