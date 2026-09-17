@@ -23,6 +23,7 @@ from sqlmodel import (
 )
 
 from src.models.alert import SeverityBaseInterface
+from src.models.db.helpers import DismissMode, is_dismiss_active
 from src.models.db.rule import ResolveOn
 from src.models.db.tenant import Tenant
 
@@ -238,26 +239,8 @@ class Incident(SQLModel, table=True):
         A permanent dismissal always is. A time-boxed one only until
         `dismissed_until` passes — and nothing rewrites the row at that moment,
         so callers must ask rather than trust a stored status.
-
-        Kept in sync with the equivalent SQL CASE that CEL filters and facets
-        compile against (`incident_field_configurations` in
-        `src/repositories/incidents.py`). Change one, change the other, or the
-        list view and the detail view will disagree about what is suppressed.
         """
-        if self.dismiss_mode == IncidentDismissMode.PERMANENT.value:
-            return True
-
-        if self.dismiss_mode == IncidentDismissMode.DISMISS_UNTIL.value:
-            if self.dismissed_until is None:
-                return False
-            # The column is timezone-aware, but SQLite round-trips it naive;
-            # assume UTC there so the comparison below can't raise.
-            deadline = self.dismissed_until
-            if deadline.tzinfo is None:
-                deadline = deadline.replace(tzinfo=timezone.utc)
-            return deadline > (now or datetime.now(timezone.utc))
-
-        return False
+        return is_dismiss_active(self.dismiss_mode, self.dismissed_until, now)
 
     def get_effective_status(self, now: datetime | None = None) -> str:
         """The status to show callers: `suppressed` while a dismissal is live,

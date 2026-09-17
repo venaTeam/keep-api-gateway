@@ -311,11 +311,20 @@ def normalize_enrichments(enrichments: dict, strict: bool = True) -> dict:
     unknown keys.
 
     Translation rules (see ALERTENRICHMENT_REMOVAL_SPEC §"Dismiss"):
-      - dismissed: true  -> status='suppressed', dismiss_mode='permanent'
+      - dismissed: true  -> dismiss_mode='permanent'
           (if a dismiss_until/timestamp is also present -> dismiss_mode='dismiss_until',
            dismissed_until=<ts>)
-      - dismissed: false -> status=None, dismiss_mode=None, dismissed_until=None
+      - dismissed: false -> dismiss_mode=None, dismissed_until=None
       - dismiss_mode/dismissed_until forwarded directly.
+
+    DISMISS NO LONGER WRITES `status`. It used to set status='suppressed', which
+    made suppression a stored fact — and since nothing sweeps the table, a
+    `dismiss_until` alert stayed suppressed forever once its deadline passed.
+    Suppression is now derived from dismiss_mode/dismissed_until on read
+    (`LastAlert.get_effective_status`), so `status` is left holding the override
+    the alert reverts to when the dismissal lapses. An explicit `status` in the
+    same payload is still honoured — it is a status change that happens to travel
+    with a dismissal, not part of the dismissal.
 
     Unknown keys (e.g. arbitrary extraction/mapping fields, which have no
     destination in the strict schema):
@@ -331,36 +340,28 @@ def normalize_enrichments(enrichments: dict, strict: bool = True) -> dict:
         if ts is None:
             ts = normalized.pop("dismiss_until", None)
         if dismissed:
-            normalized.setdefault("status", "suppressed")
             if ts:
-                normalized["dismiss_mode"] = "dismiss_until"
+                normalized["dismiss_mode"] = DismissMode.DISMISS_UNTIL.value
                 normalized["dismissed_until"] = ts
             else:
-                normalized.setdefault("dismiss_mode", "permanent")
+                normalized.setdefault(
+                    "dismiss_mode", DismissMode.PERMANENT.value
+                )
         else:
-            # Undismiss: clear dismiss state; revert status to provider value
-            # unless the caller supplied an explicit status (e.g. change-status
-            # modal moving suppressed -> acknowledged).
-            normalized.setdefault("status", None)
+            # Undismiss: clear the dismiss state. The status override is left
+            # alone — clearing the dismissal is what un-suppresses the alert.
             normalized["dismiss_mode"] = None
             normalized["dismissed_until"] = None
     elif "dismiss_until" in normalized:
         # dismiss_until without dismissed flag -> treat as dismiss_until mode
         ts = normalized.pop("dismiss_until")
         if ts:
-            normalized.setdefault("status", "suppressed")
-            normalized["dismiss_mode"] = "dismiss_until"
+            normalized["dismiss_mode"] = DismissMode.DISMISS_UNTIL.value
             normalized["dismissed_until"] = ts
-    elif "dismiss_mode" in normalized:
-        # Direct dismiss_mode write (new UI / non-legacy callers). Couple the
-        # status to the dismiss state so a dismiss suppresses the alert and an
-        # un-dismiss reverts it, matching the legacy `dismissed` translation
-        # above. An explicit caller-supplied status always wins (setdefault).
-        if normalized.get("dismiss_mode"):
-            normalized.setdefault("status", "suppressed")
-        else:
-            normalized.setdefault("status", None)
-            normalized.setdefault("dismissed_until", None)
+    elif "dismiss_mode" in normalized and not normalized.get("dismiss_mode"):
+        # Clearing dismiss_mode directly also clears the deadline, so a stale
+        # timestamp can't outlive the dismissal it belonged to.
+        normalized.setdefault("dismissed_until", None)
 
     unknown = set(normalized) - LASTALERT_ENRICHMENT_COLUMNS
     if unknown:
@@ -390,7 +391,6 @@ def last_alert_enrichments_dict(last_alert: "LastAlert") -> dict:
     """
     data: dict = {}
     for col_name in (
-        "status",
         "assignee",
         "note",
         "dismiss_mode",
@@ -401,6 +401,12 @@ def last_alert_enrichments_dict(last_alert: "LastAlert") -> dict:
         val = getattr(last_alert, col_name, None)
         if val is not None:
             data[col_name] = val
+    # Derived, not copied: a live dismissal reads as suppressed, and once it
+    # lapses the stored override (or the provider value, when there is none)
+    # takes over again.
+    effective_status = last_alert.get_effective_status()
+    if effective_status is not None:
+        data["status"] = effective_status
     if last_alert.dismissed_until is not None:
         ts = last_alert.dismissed_until
         if isinstance(ts, datetime):

@@ -662,11 +662,19 @@ async def add_alerts_to_incident(
         IdentityManagerFactory.get_auth_verifier(["write:incident"])
     ),
     session: Session = Depends(get_session),
+    event_producer: EventProducer = Depends(get_event_producer),
 ):
     tenant_id = authenticated_entity.tenant_id
-    incident_bl = IncidentBl(tenant_id, session)
+    incident_bl = IncidentBl(tenant_id, session, user=authenticated_entity.email)
+    # A suppressed/acknowledged incident imposes its state on alerts joining it,
+    # which is an enrichment write — hence the producer and the acting user.
+    enrichment_bl = EnrichmentsBl(tenant_id, session, event_producer=event_producer)
     await incident_bl.add_alerts_to_incident(
-        incident_id, alert_fingerprints, is_created_by_ai
+        incident_id,
+        alert_fingerprints,
+        is_created_by_ai,
+        change_by=authenticated_entity,
+        enrichment_bl=enrichment_bl,
     )
     return Response(status_code=202)
 
@@ -769,36 +777,44 @@ async def receive_event(
     return Response(status_code=202)
 
 
-@router.post("/{incident_id}/assign", description="Assign incident to user")
-def assign_incident(
+@router.post(
+    "/{incident_id}/assign",
+    description="Self-assign an incident, acknowledging it and its alerts",
+    response_model=IncidentDto,
+)
+async def assign_incident(
     incident_id: UUID,
     authenticated_entity: AuthenticatedEntity = Depends(
         IdentityManagerFactory.get_auth_verifier(["write:incident"])
     ),
     session: Session = Depends(get_session),
-):
+    event_producer: EventProducer = Depends(get_event_producer),
+) -> IncidentDto:
     logger.info(
         "Assigning incident to user",
         extra={"incident_id": incident_id, "assignee": authenticated_entity.email},
     )
-    incident = get_incident_by_id(
-        authenticated_entity.tenant_id, incident_id, session=session
-    )
+    tenant_id = authenticated_entity.tenant_id
+    incident = get_incident_by_id(tenant_id, incident_id, session=session)
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
-    incident.assignee = authenticated_entity.email
-    add_audit(
-        authenticated_entity.tenant_id,
-        str(incident_id),
-        authenticated_entity.email,
-        ActionType.INCIDENT_ASSIGN,
-        f"Incident self-assigned to {authenticated_entity.email}",
+
+    # Claiming an incident acknowledges it, and the acknowledgement plus the
+    # assignee both reach its non-resolved alerts — `change_status` handles the
+    # status half, and `assignee` rides along on the same enrichment write.
+    incident_bl = IncidentBl(tenant_id, session, user=authenticated_entity.email)
+    enrichment_bl = EnrichmentsBl(tenant_id, session, event_producer=event_producer)
+
+    incident_dto = await incident_bl.change_status(
+        incident_id,
+        IncidentStatus.ACKNOWLEDGED,
+        authenticated_entity,
+        enrichment_bl=enrichment_bl,
     )
-    session.commit()
     record_user_action(
-        tenant_id=authenticated_entity.tenant_id, feature="incidents", action="assign"
+        tenant_id=tenant_id, feature="incidents", action="assign"
     )
-    return Response(status_code=202)
+    return incident_dto
 
 
 @router.post(
@@ -806,25 +822,30 @@ def assign_incident(
     description="Change incident status",
     response_model=IncidentDto,
 )
-def change_incident_status(
+async def change_incident_status(
     incident_id: UUID,
     change: IncidentStatusChangeDto,
     authenticated_entity: AuthenticatedEntity = Depends(
         IdentityManagerFactory.get_auth_verifier(["write:incident"])
     ),
     session: Session = Depends(get_session),
+    event_producer: EventProducer = Depends(get_event_producer),
 ) -> IncidentDto:
     tenant_id = authenticated_entity.tenant_id
 
-    incident_bl = IncidentBl(tenant_id, session)
+    incident_bl = IncidentBl(tenant_id, session, user=authenticated_entity.email)
+    # The status change propagates to the incident's alerts, which is an
+    # enrichment write — so the producer has to come along for the ride.
+    enrichment_bl = EnrichmentsBl(tenant_id, session, event_producer=event_producer)
 
-    new_incident_dto = incident_bl.change_status(
+    new_incident_dto = await incident_bl.change_status(
         incident_id,
         change.status,
         authenticated_entity,
         change.dispose_on_new_alert,
         dismiss_mode=change.dismiss_mode,
         dismissed_until=change.dismissed_until,
+        enrichment_bl=enrichment_bl,
     )
     record_user_action(
         tenant_id=tenant_id, feature="incidents", action="change_status"

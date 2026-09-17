@@ -30,7 +30,7 @@ from src.models.db.alert import (
     LastAlertToIncident,
 )
 from src.models.db.facet import FacetType
-from src.models.db.incident import IncidentDismissMode
+from src.models.db.helpers import suppressed_if_dismiss_active_sql
 from src.models.facet import FacetDto, FacetOptionDto, FacetOptionsQueryDto
 from src.models.incident import IncidentSorting
 from src.models.query import SortOptionsDto
@@ -40,17 +40,7 @@ logger = logging.getLogger(__name__)
 # SQL twin of `Incident.is_dismiss_active` — yields 'suppressed' while a
 # dismissal is in force and NULL otherwise, so it can sit at the head of a
 # COALESCE chain and fall through when it isn't.
-#
-# CURRENT_TIMESTAMP rather than NOW() because this string is emitted verbatim
-# into whichever dialect is configured, and SQLite has no NOW().
-_SUPPRESSED_IF_DISMISS_ACTIVE_SQL = (
-    "CASE"
-    f" WHEN incident.dismiss_mode = '{IncidentDismissMode.PERMANENT.value}'"
-    " THEN 'suppressed'"
-    f" WHEN incident.dismiss_mode = '{IncidentDismissMode.DISMISS_UNTIL.value}'"
-    " AND incident.dismissed_until > CURRENT_TIMESTAMP THEN 'suppressed'"
-    " ELSE NULL END"
-)
+_SUPPRESSED_IF_DISMISS_ACTIVE_SQL = suppressed_if_dismiss_active_sql("incident")
 
 incident_field_configurations = [
     FieldMappingConfiguration(

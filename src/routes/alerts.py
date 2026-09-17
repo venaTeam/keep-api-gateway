@@ -176,14 +176,18 @@ def _translate_dismiss_enrichments(enrichments: dict) -> None:
     status/dismiss_mode/dismissed_until model. Mutates `enrichments` in place.
 
     See ALERTENRICHMENT_REMOVAL_SPEC §"Dismiss" / "API Compatibility":
-      - dismissed: "true"  -> status='suppressed', dismiss_mode='permanent'
+      - dismissed: "true"  -> dismiss_mode='permanent'
           (with a dismiss-until timestamp -> dismiss_mode='dismiss_until',
            dismissed_until=<ts>)
-      - dismissed: "false" -> status=None, dismiss_mode=None, dismissed_until=None
+      - dismissed: "false" -> dismiss_mode=None, dismissed_until=None
+
+    Dismiss does not write `status`: suppression is derived from the dismiss
+    columns on read, so a time-boxed dismissal can lapse without anything
+    rewriting the row. `status` keeps whatever override the alert reverts to.
 
     The db layer's normalize_enrichments performs the same translation for other
-    callers; doing it here too keeps `status` available for the route's action-type
-    metadata derivation.
+    callers; doing it here too keeps the dismiss keys available for the route's
+    action-type metadata derivation.
     """
     if "dismissed" not in enrichments:
         return
@@ -193,17 +197,15 @@ def _translate_dismiss_enrichments(enrichments: dict) -> None:
 
     ts = enrichments.get("dismissed_until") or enrichments.pop("dismiss_until", None)
     if dismissed:
-        enrichments.setdefault("status", AlertStatus.SUPPRESSED.value)
         if ts:
-            enrichments["dismiss_mode"] = "dismiss_until"
+            enrichments["dismiss_mode"] = DismissMode.DISMISS_UNTIL.value
             enrichments["dismissed_until"] = ts
         else:
-            enrichments.setdefault("dismiss_mode", "permanent")
+            enrichments.setdefault("dismiss_mode", DismissMode.PERMANENT.value)
     else:
-        # Restoring (undismissing): clear the dismiss state. Revert status to the
-        # provider value UNLESS the caller supplied an explicit status (e.g. the
-        # change-status modal moving an alert from suppressed -> acknowledged).
-        enrichments.setdefault("status", None)
+        # Restoring (undismissing): clear the dismiss state. Any explicit status
+        # the caller sent (e.g. the change-status modal moving an alert from
+        # suppressed -> acknowledged) is left to apply on its own.
         enrichments["dismiss_mode"] = None
         enrichments["dismissed_until"] = None
 

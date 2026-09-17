@@ -9,7 +9,7 @@ from uuid import UUID
 
 from fastapi import HTTPException
 from sqlalchemy.orm.exc import StaleDataError
-from sqlmodel import Session
+from sqlmodel import Session, col, select
 
 from src.services.producers.base_event_handler import EventType
 
@@ -33,6 +33,8 @@ from src.repositories.db import (
 from src.repositories.elastic import ElasticClient
 from src.repositories.incidents import get_last_incidents_by_cel
 from src.models.action_type import ActionType
+from src.models.alert import AlertStatus
+from src.models.db.alert import Alert, LastAlert
 from src.models.db.incident import (
     Incident,
     IncidentDismissMode,
@@ -134,6 +136,8 @@ class IncidentBl:
         alert_fingerprints: List[str],
         is_created_by_ai: bool = False,
         override_count: bool = False,
+        change_by: Optional[AuthenticatedEntity] = None,
+        enrichment_bl: Optional[EnrichmentsBl] = None,
     ) -> None:
         self.logger.info(
             "Adding alerts to incident",
@@ -162,6 +166,12 @@ class IncidentBl:
                 "incident_id": incident_id,
                 "alert_fingerprints": alert_fingerprints,
             },
+        )
+        await self.inherit_incident_status(
+            incident,
+            alert_fingerprints,
+            change_by=change_by,
+            enrichment_bl=enrichment_bl,
         )
         self.__postprocess_alerts_change(incident, alert_fingerprints)
         self.logger.info(
@@ -423,7 +433,7 @@ class IncidentBl:
 
         return incident
 
-    def change_status(
+    async def change_status(
         self,
         incident_id: UUID | str,
         new_status: IncidentStatus,
@@ -432,8 +442,9 @@ class IncidentBl:
         dismiss_mode: Optional[IncidentDismissMode] = None,
         dismissed_until: Optional[datetime] = None,
         commit: bool = True,
+        enrichment_bl: Optional[EnrichmentsBl] = None,
     ) -> IncidentDto:
-        """Move an incident to `new_status`.
+        """Move an incident to `new_status`, carrying its alerts along.
 
         SUPPRESSED is the odd one out: it is never written to `incident.status`,
         because a time-boxed dismissal has to be able to lapse without anything
@@ -441,6 +452,9 @@ class IncidentBl:
         the status the incident reverts to. Every other status change clears
         that dismiss state — asking for firing/acknowledged/resolved is an
         explicit statement that the incident should be visible again.
+
+        The alerts follow per `_status_to_propagate`; see that docstring for which
+        transitions reach them.
 
         `commit=False` stages the change and skips the client notification, for
         callers bundling it into a larger transaction. They own the commit and
@@ -454,34 +468,16 @@ class IncidentBl:
             },
         )
 
-        with_alerts = new_status in [
-            IncidentStatus.RESOLVED,
-            IncidentStatus.ACKNOWLEDGED,
-        ]
+        # Alerts are needed whenever the change might reach them, which is every
+        # status except resolved.
         incident = get_incident_by_id(
-            self.tenant_id, incident_id, with_alerts=with_alerts, session=self.session
+            self.tenant_id, incident_id, with_alerts=True, session=self.session
         )
 
         if not incident:
             raise HTTPException(status_code=404, detail="Incident not found")
 
-        if new_status in [IncidentStatus.RESOLVED, IncidentStatus.ACKNOWLEDGED]:
-            enrichments = {"status": new_status.value}
-            fingerprints = [alert.fingerprint for alert in incident.alerts]
-            enrichments_bl = EnrichmentsBl(self.tenant_id, db=self.session)
-            (
-                action_type,
-                action_description,
-                should_check_incidents_resolution,
-            ) = enrichments_bl.get_enrichment_metadata(enrichments, change_by)
-            enrichments_bl.batch_enrich(
-                fingerprints,
-                enrichments,
-                action_type,
-                change_by.email,
-                action_description,
-                dispose_on_new_alert=dispose_on_new_alert,
-            )
+        previous_status = incident.get_effective_status()
 
         if new_status == IncidentStatus.RESOLVED:
             end_time = datetime.now(tz=timezone.utc)
@@ -498,8 +494,6 @@ class IncidentBl:
                 session=self.session,
                 commit=False,
             )
-
-        previous_status = incident.get_effective_status()
 
         if new_status == IncidentStatus.SUPPRESSED:
             # Leave `incident.status` untouched — it is what the incident shows
@@ -536,6 +530,27 @@ class IncidentBl:
             commit=False,
         )
         self.session.add(incident)
+
+        # Acknowledging is claiming: whoever the incident is now assigned to is
+        # assigned its alerts too. This is a property of the transition, not of
+        # the endpoint — it applies equally to the status modal and to
+        # self-assign, which reaches this method as an acknowledge.
+        assignee = (
+            incident.assignee
+            if new_status == IncidentStatus.ACKNOWLEDGED
+            else None
+        )
+
+        await self.propagate_status_to_alerts(
+            incident,
+            previous_status=previous_status,
+            new_status=new_status,
+            change_by=change_by,
+            dispose_on_new_alert=dispose_on_new_alert,
+            enrichment_bl=enrichment_bl,
+            assignee=assignee,
+        )
+
         if not commit:
             self.session.flush()
             return IncidentDto.from_db_incident(incident)
@@ -543,6 +558,212 @@ class IncidentBl:
         self.session.commit()
 
         return self.__postprocess_incident_change(incident)
+
+    @staticmethod
+    def _status_to_propagate(
+        previous_status: str, new_status: IncidentStatus
+    ) -> Optional[IncidentStatus]:
+        """Which status the incident's alerts should take on, or None to leave
+        them alone.
+
+          -> suppressed / acknowledged : always propagates. The incident is being
+             quietened or claimed, and its alerts should say so too.
+          -> firing, from suppressed or acknowledged : propagates. Whatever
+             propagation put the alerts there is undone the same way, so they
+             never sit in a status the incident no longer holds.
+          -> firing, from firing : nothing to do.
+          -> resolved : never propagates. Resolving an incident is a statement
+             about the incident, not a claim that each underlying alert has
+             stopped firing.
+        """
+        if new_status in (IncidentStatus.SUPPRESSED, IncidentStatus.ACKNOWLEDGED):
+            return new_status
+        if new_status == IncidentStatus.FIRING and previous_status in (
+            IncidentStatus.SUPPRESSED.value,
+            IncidentStatus.ACKNOWLEDGED.value,
+        ):
+            return IncidentStatus.FIRING
+        return None
+
+    async def propagate_status_to_alerts(
+        self,
+        incident: Incident,
+        previous_status: str,
+        new_status: IncidentStatus,
+        change_by: AuthenticatedEntity,
+        dispose_on_new_alert: bool = False,
+        enrichment_bl: Optional[EnrichmentsBl] = None,
+        fingerprints: Optional[List[str]] = None,
+        assignee: Optional[str] = None,
+        commit: bool = False,
+    ) -> List[str]:
+        """Push the incident's status onto its non-resolved alerts.
+
+        Resolved alerts are never touched: an alert that has stopped firing has
+        finished its own lifecycle, and dragging it back out would misreport
+        reality. Everything else — firing, acknowledged, already suppressed —
+        takes the incident's status.
+
+        Suppression is expressed as dismiss state, NOT as status='suppressed':
+        alerts derive suppression from dismiss_mode/dismissed_until the same way
+        incidents do, so copying the incident's deadline is what makes the alert
+        come back on the same clock. Writing a status would strand it suppressed.
+
+        Returns the fingerprints actually written, for logging and tests.
+
+        `commit=False` (the default) stages the writes for a caller that owns the
+        transaction — `change_status` commits the incident and its alerts
+        together. `commit=True` is for callers with no wider transaction to join;
+        it commits, then announces the batch, in that order.
+        """
+        target = self._status_to_propagate(previous_status, new_status)
+        if target is None and assignee is None:
+            return []
+
+        candidates = (
+            fingerprints
+            if fingerprints is not None
+            else [alert.fingerprint for alert in incident.alerts]
+        )
+        if not candidates:
+            return []
+
+        affected = self._non_resolved_fingerprints(candidates)
+        if not affected:
+            return []
+
+        enrichments: dict = {}
+        if target == IncidentStatus.SUPPRESSED:
+            # Mirror the incident's dismissal, deadline included, and leave the
+            # alerts' own status override alone — that is what they revert to.
+            enrichments["dismiss_mode"] = incident.dismiss_mode
+            enrichments["dismissed_until"] = incident.dismissed_until
+        elif target is not None:
+            # Acknowledged/firing are plain statuses, and they end any dismissal
+            # the alert was under — it is visible again by definition.
+            enrichments["status"] = target.value
+            enrichments["dismiss_mode"] = None
+            enrichments["dismissed_until"] = None
+
+        if assignee is not None:
+            enrichments["assignee"] = assignee
+
+        bl = enrichment_bl or EnrichmentsBl(self.tenant_id, db=self.session)
+        action_type, action_description, _ = bl.get_enrichment_metadata(
+            enrichments, change_by
+        )
+        action_description = (
+            f"{action_description} (propagated from incident {incident.id})"
+        )
+
+        self.logger.info(
+            "Propagating incident status to alerts",
+            extra={
+                "incident_id": str(incident.id),
+                "tenant_id": self.tenant_id,
+                "target_status": target.value if target else None,
+                "alerts": len(affected),
+                "skipped_resolved": len(candidates) - len(affected),
+            },
+        )
+
+        await bl.batch_enrich(
+            affected,
+            enrichments,
+            action_type,
+            change_by.email,
+            action_description,
+            dispose_on_new_alert=dispose_on_new_alert,
+            # Never announce from in here: the rows are not durable yet, whether
+            # the commit below is ours or the caller's.
+            produce_event=False,
+            commit=False,
+        )
+
+        if commit:
+            self.session.commit()
+            if bl.event_producer is not None:
+                await bl.publish_enrichment_event(
+                    fingerprint=affected,
+                    enrichments=enrichments,
+                    action_type=action_type,
+                    action_callee=change_by.email,
+                    action_description=action_description,
+                    event_type=EventType.BATCH_ENRICH,
+                )
+
+        return affected
+
+    async def inherit_incident_status(
+        self,
+        incident: Incident,
+        alert_fingerprints: List[str],
+        change_by: Optional[AuthenticatedEntity] = None,
+        enrichment_bl: Optional[EnrichmentsBl] = None,
+    ) -> List[str]:
+        """Apply a suppressed/acknowledged incident's state to alerts that have
+        just been linked to it.
+
+        Without this, dismissing an incident only quietens the alerts it held at
+        that moment — the next alert to correlate in would light it up again,
+        which defeats the point of dismissing it. A time-boxed dismissal is
+        inherited deadline and all, so the new alert comes back on the same clock
+        as the incident.
+
+        Only suppressed and acknowledged are inherited; a firing or resolved
+        incident has nothing to impose on an alert that just arrived.
+        """
+        effective = incident.get_effective_status()
+        if effective not in (
+            IncidentStatus.SUPPRESSED.value,
+            IncidentStatus.ACKNOWLEDGED.value,
+        ):
+            return []
+
+        actor = change_by or AuthenticatedEntity(
+            tenant_id=self.tenant_id,
+            email=self.user or "keep",
+        )
+        # `previous_status` is FIRING so the transition reads as "entering" the
+        # incident's current state, which is what propagation keys off.
+        #
+        # commit=True: linking alerts is its own operation, already committed by
+        # `add_alerts_to_incident` above, so there is no wider transaction for
+        # these writes to join. Without it they would be staged and then dropped
+        # when the session closes.
+        return await self.propagate_status_to_alerts(
+            incident,
+            previous_status=IncidentStatus.FIRING.value,
+            new_status=IncidentStatus(effective),
+            change_by=actor,
+            enrichment_bl=enrichment_bl,
+            fingerprints=alert_fingerprints,
+            commit=True,
+        )
+
+    def _non_resolved_fingerprints(self, fingerprints: List[str]) -> List[str]:
+        """Filter to the alerts that are not resolved, by EFFECTIVE status — the
+        user's override, or the provider's value when there is none. Reading
+        `alert.status` alone would re-suppress an alert a user had resolved by
+        hand; reading `lastalert.status` alone would miss provider resolutions."""
+        if not fingerprints:
+            return []
+
+        rows = self.session.exec(
+            select(LastAlert, Alert.status)
+            .join(Alert, LastAlert.alert_id == Alert.id)
+            .where(
+                LastAlert.tenant_id == self.tenant_id,
+                col(LastAlert.fingerprint).in_(fingerprints),
+            )
+        ).all()
+
+        keep = []
+        for last_alert, provider_status in rows:
+            effective = last_alert.get_effective_status(provider_status)
+            if effective != AlertStatus.RESOLVED.value:
+                keep.append(last_alert.fingerprint)
+        return keep
 
     async def enrich_and_change_status(
         self,
@@ -584,7 +805,7 @@ class IncidentBl:
             )
 
         if change is not None:
-            incident_dto = self.change_status(
+            incident_dto = await self.change_status(
                 incident_id,
                 change.status,
                 change_by,
@@ -592,6 +813,7 @@ class IncidentBl:
                 dismiss_mode=change.dismiss_mode,
                 dismissed_until=change.dismissed_until,
                 commit=False,
+                enrichment_bl=enrichment_bl,
             )
 
         self.session.commit()

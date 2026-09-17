@@ -675,7 +675,10 @@ class EnrichmentsBl:
         produce_event=True,
         strict=True,
         entity_type: str = "alert",
+        commit=True,
     ):
+        """`commit=False` stages every row and leaves the transaction open for the
+        caller, so a batch can be made atomic with whatever else it belongs to."""
         self.logger.debug(
             "enriching multiple fingerprints",
             extra={"fingerprints": fingerprints, "tenant_id": self.tenant_id},
@@ -692,6 +695,7 @@ class EnrichmentsBl:
                 produce_event=False,  # Don't produce individual ENRICH events
                 strict=strict,
                 entity_type=entity_type,
+                commit=commit,
             )
 
         if produce_event:
@@ -792,7 +796,7 @@ class EnrichmentsBl:
 
     async def publish_enrichment_event(
         self,
-        fingerprint: str | UUID,
+        fingerprint: str | UUID | list[str],
         enrichments: dict,
         action_type: ActionType,
         action_callee: str,
@@ -800,20 +804,28 @@ class EnrichmentsBl:
         force: bool = False,
         event_type: EventType = EventType.ENRICH,
     ):
-        """Announce an enrichment on the event bus.
+        """Announce an enrichment on the event bus. `fingerprint` is a list for a
+        BATCH_ENRICH event, matching what `batch_enrich` emits.
 
         Called inline by `enrich_entity`, or by hand after the fact when that
         ran with `commit=False` — a deferred commit means the event must wait
         until the data is actually durable.
         """
-        safe_event = enrichments.copy()
+        safe_event = {
+            key: _event_safe_value(value) for key, value in enrichments.items()
+        }
         safe_event.update({
             "action_type": action_type.value,
             "action_callee": action_callee,
             "action_description": action_description,
             "audit_enabled": False,  # Audit already created locally by API Gateway
-            "force": force,
         })
+        # `force` belongs to the single-enrichment contract only. The consumer
+        # validates BATCH_ENRICH payloads against the enrichable column set and
+        # rejects the whole batch on an unknown key, so adding it there would
+        # make every batch event unprocessable.
+        if event_type != EventType.BATCH_ENRICH:
+            safe_event["force"] = force
 
         await self.event_producer.produce(
             event=safe_event,
