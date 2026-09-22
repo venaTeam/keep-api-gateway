@@ -42,12 +42,32 @@ def test_close_all_ends_open_streams_without_waiting_for_the_keepalive(monkeypat
     assert elapsed < 1.0
 
 
-def test_subscribe_after_close_all_still_delivers():
+def test_a_subscription_that_registers_after_close_all_ends_at_once():
+    """A request still authenticating when the shutdown sweep runs registers
+    its queue afterwards; it must end instead of keeping the drain open."""
+
+    async def run():
+        broadcaster = sse_module.SSEBroadcaster()
+        broadcaster.close_all()
+        late = broadcaster.subscribe("t1")
+        try:
+            await asyncio.wait_for(late.__anext__(), timeout=1)
+            return False
+        except StopAsyncIteration:
+            return True
+
+    assert asyncio.run(run()) is True
+
+
+def test_subscribe_after_reopen_delivers_again():
+    """The broadcaster outlives a lifespan; the next lifespan reopens it."""
+
     async def run():
         broadcaster = sse_module.SSEBroadcaster()
         first = broadcaster.subscribe("t1")
         await first.__anext__()
         broadcaster.close_all()
+        broadcaster.reopen()
         second = broadcaster.subscribe("t1")
         await second.__anext__()
         await broadcaster.notify("t1", "poll-alerts", {})
@@ -188,6 +208,7 @@ def test_install_shutdown_handlers_survives_earlier_lifespans_on_closed_loops():
     finally:
         for sig, handler in originals.items():
             signal.signal(sig, handler)
+        sse_module.sse_broadcaster.reopen()
 
 
 def test_notify_counts_unknown_event_names_under_a_fixed_label():

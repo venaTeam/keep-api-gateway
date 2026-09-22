@@ -72,6 +72,8 @@ REDIS_SENTINEL_HOSTS = starlette_config("REDIS_SENTINEL_HOSTS", default="localho
 REDIS_SENTINEL_SERVICE_NAME = starlette_config(
     "REDIS_SENTINEL_SERVICE_NAME", default="mymaster"
 )
+REDIS_SENTINEL_USERNAME = starlette_config("REDIS_SENTINEL_USERNAME", default=None)
+REDIS_SENTINEL_PASSWORD = starlette_config("REDIS_SENTINEL_PASSWORD", default=None)
 # Used for limiter default limits (defaults to 100/minute if env is not set)
 # Note: This shares the env var name with Uvicorn concurrency but expects string format for SlowAPI
 KEEP_LIMITER_DEFAULT_LIMIT = starlette_config("KEEP_LIMIT_CONCURRENCY", default="100/minute", cast=str)
