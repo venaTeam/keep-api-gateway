@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlmodel import Session
 
+from src.models.db.helpers import DismissMode
 from src.services.enrichments_bl import EnrichmentsBl
 from src.repositories.alerts import (
     get_alert_facets,
