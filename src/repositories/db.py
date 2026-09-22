@@ -404,6 +404,8 @@ def last_alert_enrichments_dict(last_alert: "LastAlert") -> dict:
         "ticket_type",
         "ticket_url",
         "ticket_provider_id",
+        "automation_matched",
+        "grace_seconds",
     ):
         val = getattr(last_alert, col_name, None)
         if val is not None:
