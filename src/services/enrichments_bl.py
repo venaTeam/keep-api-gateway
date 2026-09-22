@@ -1,4 +1,5 @@
 import datetime
+from enum import Enum
 import html
 import json
 import logging
@@ -86,6 +87,37 @@ def get_nested_attribute(obj: AlertDto, attr_path: str):
         if obj is None:
             return None
     return obj
+
+
+def _event_safe_value(value):
+    """Recursively convert values (datetime, UUID, Enum, etc.) into JSON-safe
+    representations for producing events to Kafka / event bus.
+    """
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, datetime.datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=datetime.timezone.utc)
+        else:
+            value = value.astimezone(datetime.timezone.utc)
+        return value.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    if isinstance(value, (datetime.date, datetime.time)):
+        return value.isoformat()
+    if isinstance(value, (UUID, uuid.UUID)):
+        return str(value)
+    if isinstance(value, Enum):
+        return _event_safe_value(value.value)
+    if hasattr(value, "model_dump") and callable(value.model_dump):
+        return _event_safe_value(value.model_dump(mode="json"))
+    if hasattr(value, "dict") and callable(value.dict):
+        return _event_safe_value(value.dict())
+    if isinstance(value, dict):
+        return {str(k): _event_safe_value(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_event_safe_value(v) for v in value]
+    if hasattr(value, "isoformat") and callable(value.isoformat):
+        return value.isoformat()
+    return value
 
 
 class EnrichmentsBl:
@@ -715,6 +747,9 @@ class EnrichmentsBl:
                     # Per-fingerprint enrich_entity above already validated the
                     # payload; this branch is defensive only.
                     raise
+            safe_event = {
+                key: _event_safe_value(value) for key, value in safe_event.items()
+            }
             safe_event.update({
                 "action_type": action_type.value,
                 "action_callee": action_callee,
