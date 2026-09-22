@@ -454,7 +454,8 @@ class IncidentBl:
         explicit statement that the incident should be visible again.
 
         The alerts follow per `_status_to_propagate`; see that docstring for which
-        transitions reach them.
+        transitions carry a status to them, and `propagate_status_to_alerts` for
+        the state a transition away from acknowledged/suppressed takes back.
 
         `commit=False` stages the change and skips the client notification, for
         callers bundling it into a larger transaction. They own the commit and
@@ -609,6 +610,13 @@ class IncidentBl:
         incidents do, so copying the incident's deadline is what makes the alert
         come back on the same clock. Writing a status would strand it suppressed.
 
+        Leaving acknowledged or suppressed takes back what entering it wrote: the
+        claim and the dismissal belong to the incident, so they do not outlive
+        the incident holding them. Whichever status the incident moves to, the
+        alerts end up with `assignee`, `dismiss_mode` and `dismissed_until` NULL
+        unless the new status writes them again. That includes resolved — the one
+        transition where no status travels, but the leftovers still go.
+
         Returns the fingerprints actually written, for logging and tests.
 
         `commit=False` (the default) stages the writes for a caller that owns the
@@ -617,7 +625,18 @@ class IncidentBl:
         it commits, then announces the batch, in that order.
         """
         target = self._status_to_propagate(previous_status, new_status)
-        if target is None and assignee is None:
+        # Moving off acknowledged/suppressed undoes what moving onto it wrote.
+        # Re-entering the same state is not a move: it rewrites its own state
+        # below, so there is nothing to take back.
+        undo = (
+            previous_status
+            in (
+                IncidentStatus.ACKNOWLEDGED.value,
+                IncidentStatus.SUPPRESSED.value,
+            )
+            and new_status.value != previous_status
+        )
+        if target is None and assignee is None and not undo:
             return []
 
         candidates = (
@@ -644,9 +663,18 @@ class IncidentBl:
             enrichments["status"] = target.value
             enrichments["dismiss_mode"] = None
             enrichments["dismissed_until"] = None
+        elif undo:
+            # Resolved, after a dismissal. No status travels — a resolved
+            # incident makes no claim about its alerts still firing — but the
+            # dismissal it imposed goes with it.
+            enrichments["dismiss_mode"] = None
+            enrichments["dismissed_until"] = None
 
         if assignee is not None:
             enrichments["assignee"] = assignee
+        elif undo:
+            # The claim was the acknowledgement's; the acknowledgement is over.
+            enrichments["assignee"] = None
 
         bl = enrichment_bl or EnrichmentsBl(self.tenant_id, db=self.session)
         action_type, action_description, _ = bl.get_enrichment_metadata(

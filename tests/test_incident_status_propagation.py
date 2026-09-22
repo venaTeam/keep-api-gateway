@@ -8,6 +8,13 @@ The rules, from `IncidentBl._status_to_propagate`:
   -> resolved : never. Resolving an incident says something about the incident,
      not about whether each underlying alert stopped firing.
 
+Status is only half of it. Moving OFF acknowledged or suppressed also takes back
+what moving onto it wrote — the assignee, the dismiss_mode, the dismissed_until —
+because that state was the incident's, not the alert's, and it must not outlive
+the incident holding it. This runs on every transition away, resolved included:
+resolving writes no status to the alerts but still drops the claim and the
+dismissal. State the alert holds on its own account is untouched.
+
 A resolved alert is never touched by any of it: it has finished its own
 lifecycle, and dragging it back out would misreport reality.
 
@@ -317,7 +324,7 @@ async def test_un_acknowledging_returns_alerts_to_firing(db_session):
     assert _state(db_session, fp)["effective"] == "firing"
 
 
-# === resolved: the one status that stays put ===
+# === resolved: no status travels, but the leftovers still go ===
 
 
 @pytest.mark.asyncio
@@ -334,17 +341,26 @@ async def test_resolving_an_incident_leaves_its_alerts_alone(db_session):
 
 
 @pytest.mark.asyncio
-async def test_resolving_does_not_lift_an_existing_suppression(db_session):
+async def test_resolving_lifts_a_propagated_suppression(db_session):
+    """Resolving writes no status to the alerts, but still takes back the
+    dismissal it imposed on them."""
     incident = _incident(db_session)
     fp = _alert(db_session, "prop-res-sup")
     _link(db_session, incident, fp)
     bl = _bl(db_session)
 
     await bl.change_status(incident.id, IncidentStatus.SUPPRESSED, ACTOR)
+    assert _state(db_session, fp)["effective"] == "suppressed"
+
     await bl.change_status(incident.id, IncidentStatus.RESOLVED, ACTOR)
 
-    # The incident resolved; the alert keeps the dismissal it was given.
-    assert _state(db_session, fp)["effective"] == "suppressed"
+    state = _state(db_session, fp)
+    assert state["dismiss_mode"] is None
+    assert state["dismissed_until"] is None
+    # The alert is visible again, on its own provider status — not resolved,
+    # which is the incident's business and not a claim about the alert.
+    assert state["effective"] == "firing"
+    assert state["override"] is None
 
 
 # === newly linked alerts inherit ===
@@ -476,6 +492,110 @@ async def test_other_status_changes_do_not_assign_alerts(db_session, new_status)
     await _bl(db_session).change_status(incident.id, new_status, ACTOR)
 
     assert _state(db_session, fp)["assignee"] is None
+
+
+# === leaving a propagated state takes back what it wrote ===
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "new_status",
+    [IncidentStatus.FIRING, IncidentStatus.RESOLVED, IncidentStatus.SUPPRESSED],
+)
+async def test_moving_off_acknowledged_unassigns_the_alerts(db_session, new_status):
+    """The claim is the acknowledgement's. Whatever status the incident moves
+    to next, the alerts stop carrying the assignee it gave them."""
+    incident = _incident(db_session)
+    fp = _alert(db_session, f"prop-unassign-{new_status.value}")
+    _link(db_session, incident, fp)
+    bl = _bl(db_session)
+
+    await bl.change_status(incident.id, IncidentStatus.ACKNOWLEDGED, ACTOR)
+    assert _state(db_session, fp)["assignee"] == ACTOR.email
+
+    await bl.change_status(incident.id, new_status, ACTOR)
+
+    assert _state(db_session, fp)["assignee"] is None
+
+
+@pytest.mark.asyncio
+async def test_moving_off_suppressed_to_resolved_clears_the_dismiss_fields(db_session):
+    """A deadline is the strongest case: left behind, it would keep the alert
+    quiet on a clock the incident no longer runs."""
+    incident = _incident(db_session)
+    fp = _alert(db_session, "prop-unsup-resolved")
+    _link(db_session, incident, fp)
+    bl = _bl(db_session)
+
+    await bl.change_status(
+        incident.id,
+        IncidentStatus.SUPPRESSED,
+        ACTOR,
+        dismiss_mode=IncidentDismissMode.DISMISS_UNTIL,
+        dismissed_until=_future(),
+    )
+    assert _state(db_session, fp)["dismissed_until"] is not None
+
+    await bl.change_status(incident.id, IncidentStatus.RESOLVED, ACTOR)
+
+    state = _state(db_session, fp)
+    assert state["dismiss_mode"] is None
+    assert state["dismissed_until"] is None
+
+
+@pytest.mark.asyncio
+async def test_acknowledging_after_suppressing_clears_the_dismissal_and_claims(
+    db_session,
+):
+    """Both halves at once: the dismissal goes, the claim arrives."""
+    incident = _incident(db_session)
+    fp = _alert(db_session, "prop-sup-then-ack")
+    _link(db_session, incident, fp)
+    bl = _bl(db_session)
+
+    await bl.change_status(incident.id, IncidentStatus.SUPPRESSED, ACTOR)
+    await bl.change_status(incident.id, IncidentStatus.ACKNOWLEDGED, ACTOR)
+
+    state = _state(db_session, fp)
+    assert state["effective"] == "acknowledged"
+    assert state["dismiss_mode"] is None
+    assert state["dismissed_until"] is None
+    assert state["assignee"] == ACTOR.email
+
+
+@pytest.mark.asyncio
+async def test_re_acknowledging_reassigns_rather_than_unassigns(db_session):
+    """Acknowledging an already-acknowledged incident is not leaving it: the
+    alerts move to the new owner instead of being unassigned."""
+    incident = _incident(db_session)
+    fp = _alert(db_session, "prop-reack")
+    _link(db_session, incident, fp)
+
+    await _bl(db_session).change_status(
+        incident.id, IncidentStatus.ACKNOWLEDGED, ACTOR
+    )
+    assert _state(db_session, fp)["assignee"] == ACTOR.email
+
+    other = AuthenticatedEntity(tenant_id=SINGLE_TENANT_UUID, email="second@keep")
+    await IncidentBl(SINGLE_TENANT_UUID, db_session, user=other.email).change_status(
+        incident.id, IncidentStatus.ACKNOWLEDGED, other
+    )
+
+    assert _state(db_session, fp)["assignee"] == other.email
+
+
+@pytest.mark.asyncio
+async def test_an_alerts_own_assignee_survives_an_unrelated_transition(db_session):
+    """Only a state the incident imposed is taken back. An assignee set on the
+    alert itself, under an incident that was never acknowledged, is the user's
+    and stays put."""
+    incident = _incident(db_session)
+    fp = _alert(db_session, "prop-own-assignee", assignee="owner@keep")
+    _link(db_session, incident, fp)
+
+    await _bl(db_session).change_status(incident.id, IncidentStatus.RESOLVED, ACTOR)
+
+    assert _state(db_session, fp)["assignee"] == "owner@keep"
 
 
 # === no alerts linked ===
