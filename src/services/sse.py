@@ -38,7 +38,9 @@ from src.config.config import (
     REDIS_PORT,
     REDIS_SENTINEL_ENABLED,
     REDIS_SENTINEL_HOSTS,
+    REDIS_SENTINEL_PASSWORD,
     REDIS_SENTINEL_SERVICE_NAME,
+    REDIS_SENTINEL_USERNAME,
     REDIS_SSL,
     REDIS_USERNAME,
     SSE_FANOUT,
@@ -81,6 +83,7 @@ class SSEBroadcaster:
     def __init__(self):
         self._connections: Dict[str, List[asyncio.Queue]] = {}
         self._lock = asyncio.Lock()
+        self._draining = False
 
     async def subscribe(self, tenant_id: str) -> AsyncGenerator[str, None]:
         """
@@ -102,6 +105,9 @@ class SSEBroadcaster:
         queue: asyncio.Queue = asyncio.Queue()
 
         async with self._lock:
+            if self._draining:
+                sse_streams_closed_total.labels(reason="shutdown").inc()
+                return
             if tenant_id not in self._connections:
                 self._connections[tenant_id] = []
             self._connections[tenant_id].append(queue)
@@ -223,12 +229,20 @@ class SSEBroadcaster:
         Runs on the event loop thread and only enqueues a close marker per
         subscriber; each `subscribe()` generator returns when it dequeues it,
         which ends its `StreamingResponse` so a graceful shutdown can finish
-        instead of waiting on streams that would otherwise never end.
+        instead of waiting on streams that would otherwise never end. The
+        broadcaster stays draining until `reopen()`, so a request that was
+        still authenticating and subscribes after this sweep ends at once
+        instead of holding the drain open.
         """
+        self._draining = True
         queues = [queue for queues in self._connections.values() for queue in queues]
         for queue in queues:
             queue.put_nowait(_CLOSE)
         logger.info("Closing SSE streams for shutdown", extra={"streams": len(queues)})
+
+    def reopen(self) -> None:
+        """Accept subscriptions again; the lifespan calls this at startup."""
+        self._draining = False
 
     def _format_sse(self, event: str, data: Any) -> str:
         """
@@ -285,6 +299,8 @@ async def start_fanout() -> None:
         password=REDIS_PASSWORD,
         sentinel_hosts=REDIS_SENTINEL_HOSTS if REDIS_SENTINEL_ENABLED else None,
         sentinel_service=REDIS_SENTINEL_SERVICE_NAME,
+        sentinel_username=REDIS_SENTINEL_USERNAME,
+        sentinel_password=REDIS_SENTINEL_PASSWORD,
     )
     channel = f"{REDIS_KEY_PREFIX}{SSE_FANOUT_CHANNEL}"
     _fanout = RedisFanout(sse_broadcaster, client_factory, channel=channel)
@@ -395,6 +411,7 @@ def install_shutdown_handlers(loop: asyncio.AbstractEventLoop) -> None:
     """
     global _server_loop
     _server_loop = loop
+    sse_broadcaster.reopen()
     if threading.current_thread() is not threading.main_thread():
         logger.warning("Not on the main thread; SSE streams will not close on shutdown")
         return

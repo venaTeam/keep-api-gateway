@@ -104,6 +104,7 @@ variable; keep-ui needs none.
 | `REDIS_SENTINEL_ENABLED` | if Sentinel | `false` | |
 | `REDIS_SENTINEL_HOSTS` | if Sentinel | `localhost:26379` | `host:port,host:port` |
 | `REDIS_SENTINEL_SERVICE_NAME` | if Sentinel | `mymaster` | |
+| `REDIS_SENTINEL_USERNAME` / `REDIS_SENTINEL_PASSWORD` | if the Sentinels require AUTH | unset | Sentinel discovery credentials; may differ from the master's. |
 | `SSE_NOTIFY_TOKEN` | recommended | unset | When set, `POST /sse/notify` requires header `X-Keep-Notify-Token`. Unset leaves the route open, and it reaches every browser. |
 | `SSE_KEEPALIVE_INTERVAL_SECONDS` | no | `15` | Announced to the client, which sets its watchdog to `max(10s, 3 × interval)`. Must stay **below** your router/LB idle timeout or idle streams get cut. |
 

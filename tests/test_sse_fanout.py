@@ -27,6 +27,9 @@ class FakePubSubServer:
         self.subscribers = []
         self.published = []
         self.down = False
+        self.hang_publish = False
+        self.silent = False
+        self.pings = 0
         self.loop = asyncio.get_running_loop()
 
     def check_loop(self):
@@ -45,7 +48,11 @@ class FakeRedisClient:
         self.server.check_loop()
         if self.server.down:
             raise ConnectionError("redis down")
+        if self.server.hang_publish:
+            await asyncio.Event().wait()
         self.server.published.append((channel, message))
+        if self.server.silent:
+            return
         for subscriber in list(self.server.subscribers):
             await subscriber.put(
                 {"type": "message", "channel": channel, "data": message}
@@ -68,6 +75,12 @@ class FakePubSub:
         if self.server.down:
             raise ConnectionError("redis down")
         self.server.subscribers.append(self.queue)
+
+    async def ping(self):
+        self.server.check_loop()
+        self.server.pings += 1
+        if not self.server.silent:
+            await self.queue.put({"type": "pong", "channel": None, "data": b""})
 
     async def get_message(self, ignore_subscribe_messages=True, timeout=None):
         try:
@@ -134,6 +147,113 @@ def test_the_publishing_process_delivers_locally_exactly_once():
     first, second = asyncio.run(run())
     assert first.startswith("event: poll-alerts\n")
     assert second is None
+
+
+def test_every_process_delivers_notifications_in_publish_order():
+    """Two notifications about the same alert arrive at different processes.
+    Every process, the one that received the later notification included, must
+    end on the later state: local delivery must not overtake a message that is
+    already on its way through the channel."""
+
+    async def run():
+        server = FakePubSubServer()
+        broker_a, broker_b = sse_module.SSEBroadcaster(), sse_module.SSEBroadcaster()
+        fanout_a = RedisFanout(broker_a, server.client, channel="keep:sse", origin="a")
+        fanout_b = RedisFanout(broker_b, server.client, channel="keep:sse", origin="b")
+        await fanout_a.start()
+        await fanout_b.start()
+        await asyncio.sleep(0.1)
+        streams = [broker_a.subscribe("t1"), broker_b.subscribe("t1")]
+        for stream in streams:
+            await stream.__anext__()
+        await fanout_a.broadcast("t1", "poll-alerts", {"status": "firing"})
+        await fanout_b.broadcast("t1", "poll-alerts", {"status": "resolved"})
+        seen = []
+        for stream in streams:
+            events = [
+                await asyncio.wait_for(stream.__anext__(), timeout=2) for _ in range(2)
+            ]
+            seen.append([json.loads(e.split("data: ")[1])["status"] for e in events])
+            await stream.aclose()
+        await fanout_a.stop()
+        await fanout_b.stop()
+        return seen
+
+    assert asyncio.run(run()) == [["firing", "resolved"], ["firing", "resolved"]]
+
+
+def test_a_publish_that_never_answers_falls_back_to_local_delivery():
+    """Redis accepting PUBLISH but never replying must not hold the notify
+    request past the senders' own timeout."""
+
+    async def run():
+        server = FakePubSubServer()
+        broker = sse_module.SSEBroadcaster()
+        fanout = RedisFanout(
+            broker, server.client, channel="keep:sse", origin="a", publish_timeout=0.2
+        )
+        await fanout.start()
+        await asyncio.sleep(0.1)
+        stream = broker.subscribe("t1")
+        await stream.__anext__()
+        server.hang_publish = True
+        errors_before = _counter(metrics.sse_fanout_errors_total, operation="publish")
+        started = asyncio.get_running_loop().time()
+        await asyncio.wait_for(fanout.broadcast("t1", "poll-alerts", {}), timeout=2)
+        elapsed = asyncio.get_running_loop().time() - started
+        event = await asyncio.wait_for(stream.__anext__(), timeout=2)
+        await stream.aclose()
+        await fanout.stop()
+        return (
+            event,
+            elapsed,
+            _counter(metrics.sse_fanout_errors_total, operation="publish")
+            - errors_before,
+        )
+
+    event, elapsed, errors = asyncio.run(run())
+    assert event.startswith("event: poll-alerts\n")
+    assert elapsed < 1.0
+    assert errors == 1
+
+
+def test_a_subscription_that_stops_answering_pings_is_rebuilt():
+    """A connection that stays open but no longer returns anything, PONGs
+    included, must be dropped and subscribed again rather than reported as
+    connected while cross-process notifications stop arriving."""
+
+    async def run():
+        server = FakePubSubServer()
+        broker = sse_module.SSEBroadcaster()
+        fanout = RedisFanout(
+            broker,
+            server.client,
+            channel="keep:sse",
+            origin="a",
+            reconnect_delay=0.05,
+            ping_interval=0.1,
+            pong_timeout=0.1,
+        )
+        subscribe_errors = _counter(
+            metrics.sse_fanout_errors_total, operation="subscribe"
+        )
+        await fanout.start()
+        await asyncio.sleep(0.3)
+        healthy_pings = server.pings
+        server.silent = True
+        await asyncio.sleep(0.5)
+        server.silent = False
+        await asyncio.sleep(0.3)
+        await fanout.stop()
+        return (
+            healthy_pings,
+            _counter(metrics.sse_fanout_errors_total, operation="subscribe")
+            - subscribe_errors,
+        )
+
+    healthy_pings, subscribe_delta = asyncio.run(run())
+    assert healthy_pings >= 1
+    assert subscribe_delta >= 1
 
 
 def test_redis_being_down_degrades_to_local_delivery():
@@ -437,6 +557,8 @@ def test_start_fanout_passes_the_redis_settings_to_the_client_factory(monkeypatc
     monkeypatch.setattr(sse_module, "REDIS_SENTINEL_ENABLED", False)
     monkeypatch.setattr(sse_module, "REDIS_SENTINEL_HOSTS", "s1:26379")
     monkeypatch.setattr(sse_module, "REDIS_SENTINEL_SERVICE_NAME", "mymaster")
+    monkeypatch.setattr(sse_module, "REDIS_SENTINEL_USERNAME", "su")
+    monkeypatch.setattr(sse_module, "REDIS_SENTINEL_PASSWORD", "sp")
     monkeypatch.setattr(sse_module, "REDIS_DB", 3)
     monkeypatch.setattr(sse_module, "REDIS_SSL", True)
     monkeypatch.setattr(sse_module, "REDIS_KEY_PREFIX", "acme:")
@@ -460,6 +582,8 @@ def test_start_fanout_passes_the_redis_settings_to_the_client_factory(monkeypatc
         "password": "p",
         "sentinel_hosts": None,
         "sentinel_service": "mymaster",
+        "sentinel_username": "su",
+        "sentinel_password": "sp",
     }
 
 
@@ -708,6 +832,50 @@ def test_the_sentinel_client_selects_the_database():
         )
         for s in pool.sentinel_manager.sentinels
     ] == [("s1", 26379), ("s2", 26379)]
+
+
+def test_the_sentinel_discovery_connections_carry_their_own_credentials():
+    """Sentinels that require AUTH get the Sentinel credentials, which may
+    differ from the master's; without them discovery fails with NOAUTH."""
+    from src.services.sse_fanout import redis_client_factory
+
+    client = redis_client_factory(
+        host="ignored",
+        port=6379,
+        username="master-user",
+        password="master-pass",
+        sentinel_hosts="s1:26379",
+        sentinel_service="mymaster",
+        sentinel_username="sentinel-user",
+        sentinel_password="sentinel-pass",
+    )()
+    pool = client.connection_pool
+    discovery = pool.sentinel_manager.sentinels[0].connection_pool.connection_kwargs
+    assert (discovery["username"], discovery["password"]) == (
+        "sentinel-user",
+        "sentinel-pass",
+    )
+    assert (
+        pool.connection_kwargs["username"],
+        pool.connection_kwargs["password"],
+    ) == ("master-user", "master-pass")
+
+
+def test_sentinels_without_credentials_are_contacted_without_auth():
+    from src.services.sse_fanout import redis_client_factory
+
+    client = redis_client_factory(
+        host="ignored",
+        port=6379,
+        username="master-user",
+        password="master-pass",
+        sentinel_hosts="s1:26379",
+        sentinel_service="mymaster",
+    )()
+    discovery = client.connection_pool.sentinel_manager.sentinels[
+        0
+    ].connection_pool.connection_kwargs
+    assert discovery.get("password") is None
 
 
 @pytest.mark.skipif(

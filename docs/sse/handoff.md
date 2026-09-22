@@ -54,8 +54,9 @@ The divisor is **`replicas × KEEP_WORKERS`** — each gunicorn worker is its ow
 its own broker.
 
 Tier 1 gives the processes a shared bus: each subscribes to one Redis channel; a pod that
-receives a notify delivers locally *and* publishes, and every other pod delivers to its own
-subscribers. Nothing else in the stack can do this (Kafka is consumed by the event handler,
+receives a notify publishes it, and every pod, that one included, delivers what arrives on the
+channel to its own subscribers, so all pods deliver in the same (publish) order. A pod delivers
+directly only when the publish fails or times out (2 s) or its own subscription is down. Nothing else in the stack can do this (Kafka is consumed by the event handler,
 not the gateway), so **without `SSE_FANOUT=redis` the new images behave exactly like the
 old ones for delivery.** You would still get: streams closing on SIGTERM, the UI
 self-healing, no `poll-presets` work, and the notify token.
@@ -94,6 +95,7 @@ Only **keep-api-gateway** talks to Redis.
 | `REDIS_SSL` | if TLS | `false` | |
 | `REDIS_USERNAME` / `REDIS_PASSWORD` | if auth | unset | ACL user needs **PUBLISH and SUBSCRIBE** on the channel. |
 | `REDIS_SENTINEL_ENABLED` / `_HOSTS` / `_SERVICE_NAME` | if Sentinel | `false` / `localhost:26379` / `mymaster` | `host:port,host:port` |
+| `REDIS_SENTINEL_USERNAME` / `REDIS_SENTINEL_PASSWORD` | if the Sentinels require AUTH | unset | Credentials for the Sentinel discovery connections; may differ from `REDIS_USERNAME`/`REDIS_PASSWORD`, which go to the master. |
 | `SSE_NOTIFY_TOKEN` | recommended | unset | When set, `POST /sse/notify` requires `X-Keep-Notify-Token`. Unset = open route that reaches every browser. |
 | `SSE_KEEPALIVE_INTERVAL_SECONDS` | no | `15` | Client watchdog = `max(10 s, 3 × interval)`. Must stay **below** the router/LB idle timeout. |
 
