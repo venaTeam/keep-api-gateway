@@ -7,17 +7,24 @@ Two endpoints, one per probe:
   answer for liveness on an HTTP server: if it replies at all, the process can
   serve. Checking dependencies here would restart every replica at once on a
   Postgres blip. There is no separate `/livez` because this already is it.
-* `/readyz` — DB reachable, schema not behind this image, producer connected.
+* `/readyz` — DB reachable, schema satisfies this image's models, producer
+  connected.
 
-`/readyz` is wired to the **startupProbe**, sized to the worst-case migration:
-migrations run before the socket binds, so liveness would otherwise kill the pod
-mid-way. Deliberately not the readinessProbe yet — a schema comparison going
-false on every replica at once would empty the Service mid-rollout.
+The schema check asks whether the live database contains every table and column
+this image declares. Extra tables and columns are ignored, which is what makes an
+image rollback work: an older image declares fewer columns, finds them all, and
+is happy. It reads no migration script — there are none in this image, since
+`keep-migrations` applies the schema as an Argo PreSync Job before any pod of the
+new ReplicaSet exists.
 
-Because it gates startup, a false negative kills the container, so both
-judgements are levered:
+`/readyz` is wired to the **startupProbe**. With migrations ordered ahead of the
+pods it is a safety net rather than the gate it used to be. Deliberately not the
+readinessProbe — a schema comparison going false on every replica at once would
+empty the Service mid-rollout.
 
-* `KEEP_READYZ_SCHEMA_STRICT` — exact revision equality instead of "not behind".
+Because it gates startup, a false negative kills the container, so the producer
+judgement is levered:
+
 * `KEEP_READYZ_REQUIRE_PRODUCER` — set false during a Kafka incident, or with
   the brokers down no pod can finish starting, rather than starting and
   answering the retryable 503 the ingestion route exists to give senders.
@@ -61,29 +68,33 @@ def healthcheck() -> dict:
 
 
 def _check_db() -> tuple[bool, dict]:
-    """DB reachable, and the stamped revision matches this image's alembic head."""
+    """DB reachable, and its schema satisfies the models this image declares.
+
+    One connection for both questions. `SELECT 1` stays rather than letting the
+    schema query stand in for it: `schema_drift` is memoised on success, so on
+    every probe after the first it answers from cache without touching the
+    database — and would report a dead database as reachable. Reusing this
+    connection for the schema scan is what removes the second checkout, which
+    matters because `pool_timeout` (10s) exceeds this endpoint's own budget.
+    """
     try:
         with db.engine.connect() as conn:
             conn.execute(text("SELECT 1"))
+            satisfied, missing = db_on_start.schema_drift(conn)
     except Exception as exc:
-        return False, {"reachable": False, "error": f"{type(exc).__name__}: {exc}"}
-
-    try:
-        at_head, db_revision, script_head = db_on_start.schema_at_head()
-    except Exception as exc:
+        logger.error("Database check failed: %s", exc, exc_info=True)
         return False, {
-            "reachable": True,
-            "at_head": False,
+            "reachable": False,
+            "satisfied": False,
             "error": f"{type(exc).__name__}: {exc}",
         }
 
-    detail = {
-        "reachable": True,
-        "at_head": at_head,
-        "db_revision": db_revision,
-        "script_head": script_head,
-    }
-    return at_head, detail
+    detail = {"reachable": True, "satisfied": satisfied, "missing": missing}
+    if not satisfied:
+        logger.warning("Database schema does not satisfy this image: %s", missing)
+    else:
+        logger.info("Database readiness check passed: schema satisfies this image")
+    return satisfied, detail
 
 
 async def _check_producer() -> tuple[bool, dict]:
@@ -92,14 +103,24 @@ async def _check_producer() -> tuple[bool, dict]:
     producer = factory.get_producer_instance()
     if producer is None:
         # startup() creates it, so this means startup hasn't got that far yet.
+        logger.warning("Producer check failed: event producer instance not initialized yet")
         return False, {"created": False}
 
     try:
         healthy, detail = await producer.health(attempt_reconnect=True)
     except Exception as exc:
+        logger.error("Producer health check failed with exception: %s", exc, exc_info=True)
         return False, {"created": True, "error": f"{type(exc).__name__}: {exc}"}
 
     detail["created"] = True
+    if not healthy:
+        logger.error(
+            "Producer check failed: %s",
+            detail.get("last_error") or "not connected",
+            extra={"producer": detail},
+        )
+    else:
+        logger.info("Producer readiness check passed", extra={"producer": detail})
     return healthy, detail
 
 
@@ -123,17 +144,27 @@ async def _bounded(awaitable, name: str) -> tuple[bool, dict]:
     if not done:
         task.cancel()
         task.add_done_callback(_discard)
+        logger.error("Readiness check '%s' timed out after %ss", name, READYZ_CHECK_TIMEOUT)
         return False, {"error": f"{name} check timed out after {READYZ_CHECK_TIMEOUT}s"}
 
     try:
         return task.result()
     except Exception as exc:
+        logger.error(
+            "Readiness check '%s' failed with unhandled exception: %s",
+            name,
+            exc,
+            exc_info=True,
+        )
         return False, {"error": f"{type(exc).__name__}: {exc}"}
 
 
 @router.get(
     "/readyz",
-    description="Readiness: DB reachable and at head, Kafka producer connected",
+    description=(
+        "Readiness: DB reachable, its schema satisfies this image's models, "
+        "Kafka producer connected"
+    ),
 )
 async def readyz(response: Response) -> dict:
     checks = {}
@@ -159,7 +190,40 @@ async def readyz(response: Response) -> dict:
 
     if not ready:
         response.status_code = 503
-        logger.warning("Readiness check failed", extra={"checks": checks})
+        reasons = []
+        if not db_ok:
+            db_detail = checks["database"]
+            if db_detail.get("error"):
+                reasons.append(f"database ({db_detail['error']})")
+            elif not db_detail.get("reachable", True):
+                reasons.append("database unreachable")
+            elif not db_detail.get("satisfied", True):
+                missing = db_detail.get("missing") or {}
+                reasons.append(
+                    "database schema does not satisfy this image "
+                    f"(missing tables={missing.get('missing_tables')}, "
+                    f"columns={missing.get('missing_columns')})"
+                )
+            else:
+                reasons.append("database unhealthy")
+
+        if REQUIRE_PRODUCER and not producer_ok:
+            prod_detail = checks["producer"]
+            if not prod_detail.get("created", True):
+                reasons.append("producer not created")
+            elif prod_detail.get("error"):
+                reasons.append(f"producer ({prod_detail['error']})")
+            elif prod_detail.get("last_error"):
+                reasons.append(f"producer ({prod_detail['last_error']})")
+            elif not prod_detail.get("started", True):
+                reasons.append("producer not connected")
+            else:
+                reasons.append("producer unhealthy")
+
+        reason_str = f": {'; '.join(reasons)}" if reasons else ""
+        logger.error(f"Readiness check failed {reason_str}", extra={"checks": checks})
+    else:
+        logger.debug("Readiness check passed", extra={"checks": checks})
 
     return {"status": "ok" if ready else "unavailable", "checks": checks}
 

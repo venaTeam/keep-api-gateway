@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import functools
 import logging
 import os
@@ -28,7 +28,7 @@ from src.config.consts import (
 )
 
 from src.repositories.db import dispose_session
-from src.repositories.dependencies import SINGLE_TENANT_UUID
+from src.repositories.dependencies import GENERIC_TENANT_UUID
 from src.utils.limiter import limiter
 from src.utils.logging import CONFIG as logging_config, setup_logging
 from src.middlewares import LoggingMiddleware
@@ -313,7 +313,7 @@ def get_app(
     logger.info(f"Starting Keep with authentication type: {AUTH_TYPE}")
     # If we run Keep with SINGLE_TENANT auth type, we want to add the signin endpoint
     identity_manager = IdentityManagerFactory.get_identity_manager(
-        SINGLE_TENANT_UUID, None, AUTH_TYPE
+        GENERIC_TENANT_UUID, None, AUTH_TYPE
     )
     # if any endpoints needed, add them on_start
     identity_manager.on_start(app)

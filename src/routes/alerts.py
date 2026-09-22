@@ -26,6 +26,7 @@ from src.repositories.metrics import (
     alert_ingestion_total,
 )
 from src.repositories.cel_to_sql.sql_providers.base import CelToSqlException
+from src.services.cel_validation import http_exception_from_converter_error
 from src.repositories.db import dismiss_error_alerts as dismiss_error_alerts_db
 from src.repositories.db import (
     enrich_alerts_with_incidents,
@@ -34,6 +35,7 @@ from src.repositories.db import (
     get_alerts_metrics_by_provider,
     get_last_alerts,
     get_last_alerts_by_fingerprints,
+    get_operator_by_name,
     get_session,
     is_all_alerts_resolved,
 )
@@ -43,6 +45,7 @@ from src.services.sse import notify_sse
 from src.repositories.db import get_alert_audit as get_alert_audit_db
 from src.repositories.db import get_error_alerts as get_error_alerts_db
 from src.repositories.dependencies import (
+    GENERIC_TENANT_UUID,
     extract_generic_body,
 )
 from src.services.producers.factory import get_event_producer
@@ -163,6 +166,40 @@ def _publish_failed_response(
     )
 
 
+def _extract_operator(event) -> str | None:
+    """Best-effort read of the alert's `operator` routing key from an incoming
+    event, which may be a single AlertDto, a list, or a raw dict. For a batch we
+    use the first alert's operator (VENA-5596 Epic 5)."""
+    item = event[0] if isinstance(event, list) and event else event
+    if item is None:
+        return None
+    if isinstance(item, dict):
+        return item.get("operator")
+    return getattr(item, "operator", None)
+
+
+def _resolve_ingestion_tenant(event) -> str:
+    """Route an alert to the tenant that owns its `operator`. An alert with no
+    operator, or an operator that maps to no tenant, goes to the GENERAL tenant --
+    NOT the ingesting key's tenant -- so a specific tenant only ever receives its
+    own operators' alerts (VENA-5596 Epic 5)."""
+    operator_name = _extract_operator(event)
+    if not operator_name:
+        return GENERIC_TENANT_UUID
+    operator = get_operator_by_name(operator_name)
+    if operator is None:
+        logger.info(
+            "Alert operator matched no tenant; routing to general",
+            extra={"operator": operator_name, "tenant_id": GENERIC_TENANT_UUID},
+        )
+        return GENERIC_TENANT_UUID
+    logger.info(
+        "Routing alert by operator",
+        extra={"operator": operator_name, "tenant_id": operator.tenant_id},
+    )
+    return operator.tenant_id
+
+
 class AlertHistoryResponse(BaseModel):
     """Alert-history response: provider occurrences + user/system activity."""
 
@@ -230,6 +267,8 @@ def fetch_alert_facet_options(
         },
     )
 
+    # Both the main filter and each per-facet query are converted during
+    # execution, and the converter rejects anything that is not a usable filter.
     try:
         facet_options = get_alert_facets_data(
             tenant_id=tenant_id, facet_options_query=facet_options_query
@@ -238,10 +277,7 @@ def fetch_alert_facet_options(
         logger.exception(
             f'Error parsing CEL expression "{facet_options_query.cel}". {str(e)}'
         )
-        raise HTTPException(
-            status_code=400,
-            detail=f"Error parsing CEL expression: {facet_options_query.cel}",
-        ) from e
+        raise http_exception_from_converter_error(facet_options_query.cel, e) from e
 
     logger.info(
         "Fetched alert facets from DB",
@@ -341,9 +377,7 @@ def query_alerts_count(
 
     except CelToSqlException as e:
         logger.exception(f'Error parsing CEL expression "{query.cel}". {str(e)}')
-        raise HTTPException(
-            status_code=400, detail=f"Error parsing CEL expression: {query.cel}"
-        ) from e
+        raise http_exception_from_converter_error(query.cel, e) from e
 
 @router.post(
     "/query",
@@ -367,13 +401,13 @@ def query_alerts(
         extra={"tenant_id": tenant_id, "cel_expression": query.cel},
     )
 
+    # The filter is validated by the converter as the query is built, so an
+    # expression that skipped /cel/validate is still rejected here.
     try:
         db_alerts = query_last_alerts(tenant_id=tenant_id, query=query)
     except CelToSqlException as e:
         logger.exception(f'Error parsing CEL expression "{query.cel}". {str(e)}')
-        raise HTTPException(
-            status_code=400, detail=f"Error parsing CEL expression: {query.cel}"
-        ) from e
+        raise http_exception_from_converter_error(query.cel, e) from e
 
     db_alerts = enrich_alerts_with_incidents(tenant_id, db_alerts)
     enriched_alerts_dto = convert_db_alerts_to_dto_alerts(
@@ -539,9 +573,9 @@ async def assign_alert(
     unassign: bool = False,
     body: AssignAlertRequestBody = None,
     authenticated_entity: AuthenticatedEntity = Depends(
-        # @tb: this is read because NOC users can also assign alerts to themselves
-        # anyway, this function needs to be refactored
-        IdentityManagerFactory.get_auth_verifier(["read:alert"])
+        # Assigning an alert mutates it -> requires write:alert so a viewer
+        # (read-only) cannot assign. Editors/admins keep access. (VENA-5596)
+        IdentityManagerFactory.get_auth_verifier(["write:alert"])
     ),
     session: Session = Depends(get_session),
     event_producer: EventProducer = Depends(get_event_producer),
@@ -631,11 +665,15 @@ async def receive_generic_event(
         bg_tasks (BackgroundTasks): Background tasks handler.
         tenant_id (str, optional): Defaults to Depends(verify_api_key).
     """
+    # Route by operator: an alert whose operator maps to a tenant goes there,
+    # else it goes to the GENERAL tenant (never the API-key's tenant), so a
+    # specific tenant only receives its own operators' alerts (VENA-5596 Epic 5).
+    tenant_id = _resolve_ingestion_tenant(event)
     # Use the abstract event producer (Redis or Kafka)
     try:
         task_name = await event_producer.produce(
             event=event,
-            tenant_id=authenticated_entity.tenant_id,
+            tenant_id=tenant_id,
             provider_type=None,  # Generic event
             provider_id=provider_id,
             fingerprint=fingerprint,
@@ -700,20 +738,26 @@ async def receive_event(
     # We do NOT parse the event here anymore, we pass the raw body (event) to the worker
     # We do NOT resolve the provider here anymore, we pass the provider_name to the worker
 
+    # Route by operator: an alert whose operator maps to a tenant goes there,
+    # else it goes to the GENERAL tenant (never the API-key's tenant), so a
+    # specific tenant only receives its own operators' alerts (VENA-5596 Epic 5).
+    tenant_id = _resolve_ingestion_tenant(event)
     # Use the abstract event producer (Redis or Kafka)
-    try:
-        task_name = await event_producer.produce(
-            event=event,
-            tenant_id=authenticated_entity.tenant_id,
-            provider_type=provider_type,
-            provider_id=provider_id,
-            fingerprint=fingerprint,
-            api_key_name=authenticated_entity.api_key_name,
-            trace_id=trace_id,
-            provider_name=provider_name,
-        )
-    except Exception as e:
-        return _publish_failed_response(e, source=provider_type, trace_id=trace_id)
+    task_name = await event_producer.produce(
+        event=event,
+        tenant_id=tenant_id,
+        provider_type=provider_type,
+        provider_id=provider_id,
+        fingerprint=fingerprint,
+        api_key_name=authenticated_entity.api_key_name,
+        trace_id=trace_id,
+        provider_name=provider_name,
+    )
+    alert_ingestion_total.labels(source=provider_type, status="success").inc()
+
+
+    if not task_name:
+        task_name = "async-task"
 
     return _ingestion_response(task_name, source=provider_type)
 
@@ -752,7 +796,8 @@ def get_alert(
 async def enrich_alert_note(
     enrich_data: EnrichAlertNoteRequestBody,
     authenticated_entity: AuthenticatedEntity = Depends(
-        IdentityManagerFactory.get_auth_verifier(["read:alert"])  # also NOC
+        # Adding a note mutates the alert -> write:alert (viewer is read-only).
+        IdentityManagerFactory.get_auth_verifier(["write:alert"])
     ),
     session: Session = Depends(get_session),
     event_producer: EventProducer = Depends(get_event_producer),
@@ -847,10 +892,7 @@ async def batch_enrich_alerts(
             logger.exception(
                 f'Error parsing CEL expression "{enrich_data.cel}". {str(e)}'
             )
-            raise HTTPException(
-                status_code=400,
-                detail=f"Error parsing CEL expression: {enrich_data.cel}",
-            ) from e
+            raise http_exception_from_converter_error(enrich_data.cel, e) from e
         except Exception as e:
             logger.exception("Failed to process CEL query", extra={"error": str(e)})
             return {"status": "failed", "message": str(e)}

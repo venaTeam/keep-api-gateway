@@ -20,8 +20,8 @@ from src.services.sse import sse_broadcaster
 from src.services.identity_manager.authenticatedentity import AuthenticatedEntity
 from src.services.identity_manager.identitymanagerfactory import IdentityManagerFactory
 
-# Import single tenant constants for noauth mode
-from src.repositories.dependencies import SINGLE_TENANT_UUID, SINGLE_TENANT_EMAIL
+# Import generic tenant constants for noauth mode
+from src.repositories.dependencies import GENERIC_TENANT_UUID, SINGLE_TENANT_EMAIL
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -35,7 +35,7 @@ def get_sse_authenticated_entity(
     Get authenticated entity for SSE connections.
 
     This dependency supports both authenticated and no-auth modes:
-    - In noauth mode: Returns a default single-tenant entity if no token provided
+    - In noauth mode: Returns a default generic-tenant entity if no token provided
     - In authenticated mode: Validates the token and returns the authenticated entity
 
     Args:
@@ -49,9 +49,9 @@ def get_sse_authenticated_entity(
     
     # Check if we're in noauth mode and no token provided
     if auth_type == "noauth" and not token:
-        logger.debug("SSE connection in noauth mode without token, using single tenant")
+        logger.debug("SSE connection in noauth mode without token, using generic tenant")
         return AuthenticatedEntity(
-            tenant_id=SINGLE_TENANT_UUID,
+            tenant_id=GENERIC_TENANT_UUID,
             email=SINGLE_TENANT_EMAIL,
         )
     
@@ -86,11 +86,11 @@ def get_sse_authenticated_entity(
                 session=session,
             )
     except Exception as e:
-        # If authentication fails in noauth mode, fall back to single tenant
+        # If authentication fails in noauth mode, fall back to generic tenant
         if auth_type == "noauth":
-            logger.debug(f"SSE auth failed in noauth mode, using single tenant: {e}")
+            logger.debug(f"SSE auth failed in noauth mode, using generic tenant: {e}")
             return AuthenticatedEntity(
-                tenant_id=SINGLE_TENANT_UUID,
+                tenant_id=GENERIC_TENANT_UUID,
                 email=SINGLE_TENANT_EMAIL,
             )
         raise
