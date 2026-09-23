@@ -30,6 +30,8 @@ class FakePubSubServer:
         self.hang_publish = False
         self.silent = False
         self.pings = 0
+        self.register_delay = 0.0
+        self.withhold_reply = False
         self.loop = asyncio.get_running_loop()
 
     def check_loop(self):
@@ -57,6 +59,8 @@ class FakeRedisClient:
             await subscriber.put(
                 {"type": "message", "channel": channel, "data": message}
             )
+        if self.server.withhold_reply:
+            await asyncio.Event().wait()
 
     def pubsub(self):
         return FakePubSub(self.server)
@@ -74,7 +78,12 @@ class FakePubSub:
         self.server.check_loop()
         if self.server.down:
             raise ConnectionError("redis down")
+        asyncio.get_running_loop().create_task(self._register(channel))
+
+    async def _register(self, channel):
+        await asyncio.sleep(self.server.register_delay)
         self.server.subscribers.append(self.queue)
+        await self.queue.put({"type": "subscribe", "channel": channel, "data": 1})
 
     async def ping(self):
         self.server.check_loop()
@@ -254,6 +263,85 @@ def test_a_subscription_that_stops_answering_pings_is_rebuilt():
     healthy_pings, subscribe_delta = asyncio.run(run())
     assert healthy_pings >= 1
     assert subscribe_delta >= 1
+
+
+def test_a_subscription_is_not_trusted_before_redis_acknowledges_it():
+    """redis-py returns from subscribe() once SUBSCRIBE is sent. A publish in
+    the window before Redis registers the subscription reaches nobody, so
+    this process must still tell its own browsers."""
+
+    async def run():
+        server = FakePubSubServer()
+        server.register_delay = 0.5
+        broker = sse_module.SSEBroadcaster()
+        fanout = RedisFanout(broker, server.client, channel="keep:sse", origin="a")
+        await fanout.start()
+        await asyncio.sleep(0.1)
+        stream = broker.subscribe("t1")
+        await stream.__anext__()
+        await fanout.broadcast("t1", "poll-alerts", {"alerts": [{"fingerprint": "x"}]})
+        event = await _next_or_none(stream, 1)
+        await stream.aclose()
+        await fanout.stop()
+        return event
+
+    event = asyncio.run(run())
+    assert event is not None and event.startswith("event: poll-alerts\n")
+
+
+def test_an_unanswered_publish_never_replays_a_stale_payload():
+    """Redis delivered `firing` but its reply never came; meanwhile another
+    process published `resolved`. The fallback must not put `firing` back on
+    this process's streams: it asks the views to refetch instead."""
+
+    async def run():
+        server = FakePubSubServer()
+        broker_a, broker_b = sse_module.SSEBroadcaster(), sse_module.SSEBroadcaster()
+        fanout_a = RedisFanout(
+            broker_a, server.client, channel="keep:sse", origin="a", publish_timeout=0.3
+        )
+        fanout_b = RedisFanout(broker_b, server.client, channel="keep:sse", origin="b")
+        await fanout_a.start()
+        await fanout_b.start()
+        await asyncio.sleep(0.1)
+        stream = broker_a.subscribe("t1")
+        await stream.__anext__()
+        server.withhold_reply = True
+        first = asyncio.create_task(
+            fanout_a.broadcast("t1", "poll-alerts", {"status": "firing"})
+        )
+        await asyncio.sleep(0.05)
+        server.withhold_reply = False
+        await fanout_b.broadcast("t1", "poll-alerts", {"status": "resolved"})
+        await first
+        events = []
+        while (event := await _next_or_none(stream, 0.3)) is not None:
+            events.append(json.loads(event.split("data: ")[1]))
+        await stream.aclose()
+        await fanout_a.stop()
+        await fanout_b.stop()
+        return events
+
+    assert asyncio.run(run()) == [{"status": "firing"}, {"status": "resolved"}, {}]
+
+
+def test_a_fallback_keeps_the_payload_of_events_the_views_do_not_refetch():
+    async def run():
+        server = FakePubSubServer()
+        server.down = True
+        broker = sse_module.SSEBroadcaster()
+        fanout = RedisFanout(broker, server.client, channel="keep:sse", origin="a")
+        await fanout.start()
+        stream = broker.subscribe("t1")
+        await stream.__anext__()
+        await fanout.broadcast("t1", "topology-update", {"providerId": "p1"})
+        event = await _next_or_none(stream, 1)
+        await stream.aclose()
+        await fanout.stop()
+        return event
+
+    event = asyncio.run(run())
+    assert json.loads(event.split("data: ")[1]) == {"providerId": "p1"}
 
 
 def test_redis_being_down_degrades_to_local_delivery():

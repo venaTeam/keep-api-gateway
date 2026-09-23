@@ -56,7 +56,11 @@ its own broker.
 Tier 1 gives the processes a shared bus: each subscribes to one Redis channel; a pod that
 receives a notify publishes it, and every pod, that one included, delivers what arrives on the
 channel to its own subscribers, so all pods deliver in the same (publish) order. A pod delivers
-directly only when the publish fails or times out (2 s) or its own subscription is down. Nothing else in the stack can do this (Kafka is consumed by the event handler,
+directly only when delivery through the channel is not certain: the publish fails or times out (2 s),
+or its own subscription is not acknowledged yet or was replaced meanwhile. Since the message may
+still arrive through the channel, alert, incident and comment notifications are then delivered
+with an empty payload, which makes the views refetch instead of applying a possibly stale
+snapshot. Nothing else in the stack can do this (Kafka is consumed by the event handler,
 not the gateway), so **without `SSE_FANOUT=redis` the new images behave exactly like the
 old ones for delivery.** You would still get: streams closing on SIGTERM, the UI
 self-healing, no `poll-presets` work, and the notify token.

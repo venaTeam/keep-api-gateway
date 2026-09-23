@@ -35,6 +35,8 @@ PUBLISH_TIMEOUT_SECONDS = 2.0
 PING_INTERVAL_SECONDS = 15.0
 PONG_TIMEOUT_SECONDS = 5.0
 
+REFETCH_EVENTS = frozenset({"poll-alerts", "incident-change", "incident-comment"})
+
 
 class RedisFanout:
     """
@@ -69,6 +71,7 @@ class RedisFanout:
         self._ping_interval = ping_interval
         self._pong_timeout = pong_timeout
         self._subscribed = False
+        self._subscription = 0
         self._publisher: Any = None
         self._task: Optional[asyncio.Task] = None
         self._stopping = False
@@ -98,14 +101,27 @@ class RedisFanout:
     async def broadcast(self, tenant_id: str, event: str, data: Any) -> None:
         """
         Publish to every process. This process's subscribers get the
-        notification back through its own subscription, in channel order; they
-        get it directly only when the publish failed or the subscription is
-        down, since then nothing would bring it back.
+        notification back through its own subscription, in channel order.
+
+        When that is not certain (the publish failed or timed out, or the
+        subscription was not acknowledged or was replaced while publishing)
+        they are told directly. The notification may still arrive through the
+        channel, before or after newer ones, so a payload replayed here could
+        overwrite newer state: events the views answer by refetching are
+        delivered with an empty payload, which only asks them to refetch.
         """
-        subscribed = self._subscribed
+        subscription = self._subscription if self._subscribed else None
         published = await self._publish(tenant_id, event, data)
-        if not (published and subscribed):
-            await self._broadcaster.notify(tenant_id, event, data)
+        if (
+            published
+            and subscription is not None
+            and self._subscribed
+            and self._subscription == subscription
+        ):
+            return
+        await self._broadcaster.notify(
+            tenant_id, event, {} if event in REFETCH_EVENTS else data
+        )
 
     async def _publish(self, tenant_id: str, event: str, data: Any) -> bool:
         message = json.dumps(
@@ -148,6 +164,8 @@ class RedisFanout:
                 client = self._client_factory()
                 pubsub = client.pubsub()
                 await pubsub.subscribe(self._channel)
+                await self._await_acknowledgement(pubsub)
+                self._subscription += 1
                 self._subscribed = True
                 sse_fanout_connected.set(1)
                 logger.info("SSE fan-out subscribed", extra={"channel": self._channel})
@@ -160,7 +178,9 @@ class RedisFanout:
                     if quiet > self._ping_interval + self._pong_timeout:
                         raise TimeoutError("no PONG from Redis")
                     if quiet > self._ping_interval and not pinged:
-                        await asyncio.wait_for(pubsub.ping(), timeout=self._pong_timeout)
+                        await asyncio.wait_for(
+                            pubsub.ping(), timeout=self._pong_timeout
+                        )
                         pinged = True
                     message = await pubsub.get_message(
                         ignore_subscribe_messages=True,
@@ -203,6 +223,23 @@ class RedisFanout:
                                 "Failed to close a fan-out connection", exc_info=True
                             )
         sse_fanout_connected.set(0)
+
+    async def _await_acknowledgement(self, pubsub: Any) -> None:
+        """
+        redis-py returns from `subscribe()` once SUBSCRIBE is sent; the
+        subscription only exists once Redis acknowledges it, and a publish
+        before that reaches nobody here.
+        """
+        deadline = asyncio.get_running_loop().time() + self._pong_timeout
+        while True:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                raise TimeoutError("Redis did not acknowledge the subscription")
+            message = await pubsub.get_message(
+                ignore_subscribe_messages=False, timeout=min(1.0, remaining)
+            )
+            if message is not None and message.get("type") == "subscribe":
+                return
 
     async def _deliver(self, message: Any) -> None:
         try:
