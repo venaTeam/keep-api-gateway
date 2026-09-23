@@ -1,4 +1,4 @@
-﻿import datetime
+import datetime
 import logging
 from typing import Optional
 
@@ -64,9 +64,10 @@ class AuthVerifierBase:
 
     """
 
-    def __init__(self, scopes: list[str] = []) -> None:
+    def __init__(self, scopes: list[str] = [], tenant_id: Optional[str] = None) -> None:
         ALL_RESOURCES.update([scope.split(":")[1] for scope in scopes])
         self.scopes = scopes
+        self.tenant_id = tenant_id
         self.logger = logging.getLogger(__name__)
         self.impersonation_enabled = (
             config("KEEP_IMPERSONATION_ENABLED", default="false") == "true"

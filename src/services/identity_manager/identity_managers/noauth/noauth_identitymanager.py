@@ -29,7 +29,7 @@ class NoAuthIdentityManager(BaseIdentityManager):
 
         self.logger.info("Added tenant endpoint")
 
-    def get_users(self) -> list[User]:
+    def get_users(self, search: str | None = None) -> list[User]:
         return []
 
     def create_user(self, user_email, user_name, password, role, groups=[]) -> None:

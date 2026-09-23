@@ -1,4 +1,4 @@
-﻿import os
+import os
 
 from src.models.user import Group, Role, User
 from src.services.context_manager import ContextManager
@@ -70,7 +70,7 @@ class OneLoginIdentityManager(BaseIdentityManager):
         """Get the URL for the SSO wizard - redirect to OneLogin login"""
         return f"{self.onelogin_issuer}/auth"
 
-    def get_users(self) -> list[User]:
+    def get_users(self, search: str | None = None) -> list[User]:
         """Get all users from OneLogin - disabled"""
         self.logger.info("get_users called but management functions are disabled")
         return []
@@ -99,9 +99,9 @@ class OneLoginIdentityManager(BaseIdentityManager):
 
     def get_auth_verifier(self, scopes: list) -> AuthVerifierBase:
         """Get the auth verifier for OneLogin - this still works"""
-        return OneLoginAuthVerifier(scopes)
+        return OneLoginAuthVerifier(scopes, tenant_id=self.tenant_id)
 
-    def get_groups(self) -> list[Group]:
+    def get_groups(self, search: str | None = None) -> list[Group]:
         """Get all groups from OneLogin - disabled"""
         self.logger.info("get_groups called but management functions are disabled")
         return []

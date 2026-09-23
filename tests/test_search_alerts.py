@@ -15,8 +15,11 @@ from src.models.alert import AlertDto, AlertStatus
 from src.models.db.mapping import MappingRule
 from src.models.db.preset import PresetSearchQuery as SearchQuery
 from src.models.db.rule import CreateIncidentOn, ResolveOn, Rule
+from src.models.facet import FacetOptionsQueryDto
 from src.models.incident import IncidentDtoIn
 from src.models.query import QueryDto
+from src.repositories.alerts import get_alert_facets_data
+from src.repositories.alerts import static_facets as alert_static_facets
 from src.routes.alerts import query_alerts
 from src.services.identity_manager.authenticatedentity import AuthenticatedEntity
 from src.services.search_engine import SearchEngine
@@ -841,6 +844,18 @@ def test_filter_large_dataset(db_session, setup_stress_alerts):
     print("time taken for 1k alerts with db: ", db_end_time - db_start_time)
 
 
+# CI runs the suite with `--timeout 60`, which this test does not fit inside:
+# the DB leg alone is a complex OR query returning thousands of rows from
+# SQLite, measured at ~38s locally with the whole item at ~88s. That left the
+# call phase at roughly two thirds of the budget, so any slower-than-usual
+# runner tipped it over — it has been failing intermittently on unrelated
+# branches, not on anything the branch under test changed.
+#
+# A longer budget costs nothing here: the test asserts elastic/DB *parity*
+# (`len(elastic) == len(db)`), never a duration, so the timeout is only a
+# runaway guard and never the thing under test. The timings it prints are the
+# actual benchmark signal.
+@pytest.mark.timeout(300)
 @pytest.mark.parametrize("setup_stress_alerts", [{"num_alerts": 10000}], indirect=True)
 def test_complex_logical_operations_large_dataset(db_session, setup_stress_alerts):
     search_query = SearchQuery(
@@ -1772,6 +1787,95 @@ def test_search_alert_incident_not_visible(
     assert len(result_query["results"]) == n_alerts
     assert result_query["count"] == n_alerts
 
+
+
+
+CASE_INSENSITIVE_ENUM_ALERTS = [
+    ("firing-critical", AlertStatus.FIRING, "critical"),
+    ("firing-high", AlertStatus.FIRING, "high"),
+    ("resolved-warning", AlertStatus.RESOLVED, "warning"),
+    ("resolved-info", AlertStatus.RESOLVED, "info"),
+    ("acknowledged-low", AlertStatus.ACKNOWLEDGED, "low"),
+]
+
+
+@pytest.fixture
+def enum_casing_alerts(create_alert):
+    """Five alerts: 2 firing / 3 not, exactly one critical, exactly one low."""
+    base = datetime.datetime.utcnow()
+    for offset, (fingerprint, status, severity) in enumerate(
+        CASE_INSENSITIVE_ENUM_ALERTS
+    ):
+        create_alert(
+            fingerprint,
+            status,
+            base + datetime.timedelta(seconds=offset),
+            {"severity": severity},
+        )
+
+
+@pytest.mark.parametrize(
+    "cel_query, expected_count",
+    [
+        ("status == 'firing'", 2),
+        ("status == 'Firing'", 2),
+        ("status == 'FIRING'", 2),
+        ("status != 'Firing'", 3),
+        ("status in ['Firing', 'Resolved']", 4),
+        ("severity == 'Critical'", 1),
+        ("severity > 'Critical'", 0),
+        ("severity >= 'Info'", 4),
+        ("severity < 'Critical'", 4),
+        ("name == 'Firing'", 0),
+    ],
+)
+def test_enum_literal_casing_row_counts(
+    db_session, enum_casing_alerts, cel_query, expected_count
+):
+    """Mixed-case enum literals must select the same rows as canonical ones."""
+    os.environ["ELASTIC_ENABLED"] = "false"
+
+    result_query = query_alerts(
+        request=MagicMock(),
+        query=QueryDto(cel=cel_query),
+        bg_tasks=MagicMock(),
+        authenticated_entity=AuthenticatedEntity(
+            tenant_id=SINGLE_TENANT_UUID, email="test"
+        ),
+    )
+
+    assert result_query["count"] == expected_count
+
+
+def test_status_facet_count_matches_filtered_row_count(db_session, enum_casing_alerts):
+    """Requirement 8: the facet count and the filtered feed must agree."""
+    os.environ["ELASTIC_ENABLED"] = "false"
+
+    status_facet = next(
+        facet for facet in alert_static_facets if facet.property_path == "status"
+    )
+    with patch("src.repositories.facets.engine", db_session.get_bind()):
+        facet_options = get_alert_facets_data(
+            tenant_id=SINGLE_TENANT_UUID,
+            facet_options_query=FacetOptionsQueryDto(
+                facet_queries={status_facet.id: ""},
+                cel="",
+            ),
+        )
+    firing_option = next(
+        option for option in facet_options[status_facet.id] if option.value == "firing"
+    )
+
+    result_query = query_alerts(
+        request=MagicMock(),
+        query=QueryDto(cel="status == 'Firing'"),
+        bg_tasks=MagicMock(),
+        authenticated_entity=AuthenticatedEntity(
+            tenant_id=SINGLE_TENANT_UUID, email="test"
+        ),
+    )
+
+    assert firing_option.matches_count == result_query["count"] == 2
 
 """
 COMMENTED OUT UNTIL WE FIGURE ' something in list'

@@ -43,7 +43,6 @@ cel-python = "^0.1.5"
 hvac = "^2.1.0"
 python-keycloak = "^5.0.0"
 
-alembic = "^1.13.2"
 google-auth = "2.34.0"
 json5 = "^0.9.28"
 psycopg-binary = "^3.2.3"
@@ -60,6 +59,7 @@ PyJWT = "^2.8.0"
 setuptools = "^75.0.0"
 pytz = "^2024.1"
 arq = "^0.27.0"
+redis = {version = ">=4.2.0,<6", extras = ["hiredis"]}
 prettytable = "^3.17.0"
 [tool.poetry.group.dev.dependencies]
 pre-commit = "^3.0.4"

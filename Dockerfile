@@ -25,8 +25,8 @@ ENV VIRTUAL_ENV="/venv"
 
 ENV PROMETHEUS_MULTIPROC_DIR="/tmp/prometheus"
 
-# Copy application code
-COPY alembic.ini /app/alembic.ini
+# Copy application code. No alembic.ini and no migrations: the schema is
+# owned by keep-migrations, which runs as an Argo PreSync Job.
 COPY src /app/src
 
 CMD ["gunicorn", "src.main:get_app", "--bind" , "0.0.0.0:8080" , "--workers", "1" , "-k" , "uvicorn.workers.UvicornWorker", "-c", "src/config/config.py"]
