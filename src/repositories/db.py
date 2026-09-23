@@ -29,6 +29,7 @@ from sqlalchemy import (
     and_,
     case,
     cast,
+    delete,
     desc,
     func,
     literal,
@@ -318,11 +319,20 @@ def normalize_enrichments(enrichments: dict, strict: bool = True) -> dict:
     unknown keys.
 
     Translation rules (see ALERTENRICHMENT_REMOVAL_SPEC §"Dismiss"):
-      - dismissed: true  -> status='suppressed', dismiss_mode='permanent'
+      - dismissed: true  -> dismiss_mode='permanent'
           (if a dismiss_until/timestamp is also present -> dismiss_mode='dismiss_until',
            dismissed_until=<ts>)
-      - dismissed: false -> status=None, dismiss_mode=None, dismissed_until=None
+      - dismissed: false -> dismiss_mode=None, dismissed_until=None
       - dismiss_mode/dismissed_until forwarded directly.
+
+    DISMISS NO LONGER WRITES `status`. It used to set status='suppressed', which
+    made suppression a stored fact — and since nothing sweeps the table, a
+    `dismiss_until` alert stayed suppressed forever once its deadline passed.
+    Suppression is now derived from dismiss_mode/dismissed_until on read
+    (`LastAlert.get_effective_status`), so `status` is left holding the override
+    the alert reverts to when the dismissal lapses. An explicit `status` in the
+    same payload is still honoured — it is a status change that happens to travel
+    with a dismissal, not part of the dismissal.
 
     Unknown keys (e.g. arbitrary extraction/mapping fields, which have no
     destination in the strict schema):
@@ -338,36 +348,28 @@ def normalize_enrichments(enrichments: dict, strict: bool = True) -> dict:
         if ts is None:
             ts = normalized.pop("dismiss_until", None)
         if dismissed:
-            normalized.setdefault("status", "suppressed")
             if ts:
-                normalized["dismiss_mode"] = "dismiss_until"
+                normalized["dismiss_mode"] = DismissMode.DISMISS_UNTIL.value
                 normalized["dismissed_until"] = ts
             else:
-                normalized.setdefault("dismiss_mode", "permanent")
+                normalized.setdefault(
+                    "dismiss_mode", DismissMode.PERMANENT.value
+                )
         else:
-            # Undismiss: clear dismiss state; revert status to provider value
-            # unless the caller supplied an explicit status (e.g. change-status
-            # modal moving suppressed -> acknowledged).
-            normalized.setdefault("status", None)
+            # Undismiss: clear the dismiss state. The status override is left
+            # alone — clearing the dismissal is what un-suppresses the alert.
             normalized["dismiss_mode"] = None
             normalized["dismissed_until"] = None
     elif "dismiss_until" in normalized:
         # dismiss_until without dismissed flag -> treat as dismiss_until mode
         ts = normalized.pop("dismiss_until")
         if ts:
-            normalized.setdefault("status", "suppressed")
-            normalized["dismiss_mode"] = "dismiss_until"
+            normalized["dismiss_mode"] = DismissMode.DISMISS_UNTIL.value
             normalized["dismissed_until"] = ts
-    elif "dismiss_mode" in normalized:
-        # Direct dismiss_mode write (new UI / non-legacy callers). Couple the
-        # status to the dismiss state so a dismiss suppresses the alert and an
-        # un-dismiss reverts it, matching the legacy `dismissed` translation
-        # above. An explicit caller-supplied status always wins (setdefault).
-        if normalized.get("dismiss_mode"):
-            normalized.setdefault("status", "suppressed")
-        else:
-            normalized.setdefault("status", None)
-            normalized.setdefault("dismissed_until", None)
+    elif "dismiss_mode" in normalized and not normalized.get("dismiss_mode"):
+        # Clearing dismiss_mode directly also clears the deadline, so a stale
+        # timestamp can't outlive the dismissal it belonged to.
+        normalized.setdefault("dismissed_until", None)
 
     unknown = set(normalized) - LASTALERT_ENRICHMENT_COLUMNS
     if unknown:
@@ -397,7 +399,6 @@ def last_alert_enrichments_dict(last_alert: "LastAlert") -> dict:
     """
     data: dict = {}
     for col_name in (
-        "status",
         "assignee",
         "note",
         "dismiss_mode",
@@ -408,6 +409,12 @@ def last_alert_enrichments_dict(last_alert: "LastAlert") -> dict:
         val = getattr(last_alert, col_name, None)
         if val is not None:
             data[col_name] = val
+    # Derived, not copied: a live dismissal reads as suppressed, and once it
+    # lapses the stored override (or the provider value, when there is none)
+    # takes over again.
+    effective_status = last_alert.get_effective_status()
+    if effective_status is not None:
+        data["status"] = effective_status
     if last_alert.dismissed_until is not None:
         ts = last_alert.dismissed_until
         if isinstance(ts, datetime):
@@ -458,6 +465,7 @@ def _enrich_incident(
     action_description: str,
     force=False,
     audit_enabled=True,
+    commit=True,
 ):
     """Upsert an IncidentEnrichment JSONB row for the INCIDENT enrichment path.
 
@@ -468,6 +476,12 @@ def _enrich_incident(
     Incidents keep arbitrary JSONB keys — the dismissed<->dismiss_mode
     translation, the D1 no-op and the strict unknown-key rejection that apply to
     the alert path are intentionally NOT applied here.
+
+    `commit=False` flushes instead, leaving the transaction open so a caller can
+    land this write and a status change together. The caller owns the commit —
+    and the rollback, which is why the duplicate-row path below re-raises rather
+    than swallowing the error: swallowing it would discard the caller's other
+    staged work and report success.
     """
     incident_id = UUID(str(fingerprint))
     enrichment = get_enrichment_with_session(session, tenant_id, incident_id)
@@ -508,8 +522,11 @@ def _enrich_incident(
                 description=action_description,
             )
             session.add(audit)
-        session.commit()
-        session.refresh(enrichment)
+        if commit:
+            session.commit()
+            session.refresh(enrichment)
+        else:
+            session.flush()
         return enrichment
     else:
         try:
@@ -528,7 +545,10 @@ def _enrich_incident(
                     description=action_description,
                 )
                 session.add(audit)
-            session.commit()
+            if commit:
+                session.commit()
+            else:
+                session.flush()
             return incident_enrichment
         except IntegrityError:
             logger.warning(
@@ -539,6 +559,11 @@ def _enrich_incident(
                     "enrichments": enrichments,
                 },
             )
+            if not commit:
+                # Someone else created the row concurrently. Rolling back here
+                # would silently drop whatever else the caller staged in this
+                # transaction and still return success; let them decide.
+                raise
             session.rollback()
             return get_enrichment_with_session(session, tenant_id, incident_id)
 
@@ -555,6 +580,7 @@ def _enrich_entity(
     audit_enabled=True,
     strict=True,
     entity_type: str = "alert",
+    commit=True,
 ):
     """
     Enrich an entity (alert or incident).
@@ -582,6 +608,7 @@ def _enrich_entity(
             action_description,
             force=force,
             audit_enabled=audit_enabled,
+            commit=commit,
         )
 
     normalized = normalize_enrichments(enrichments, strict=strict)
@@ -614,9 +641,12 @@ def _enrich_entity(
         )
         session.add(audit)
 
-    session.commit()
-    if last_alert is not None:
-        session.refresh(last_alert)
+    if commit:
+        session.commit()
+        if last_alert is not None:
+            session.refresh(last_alert)
+    else:
+        session.flush()
     return last_alert
 
 
@@ -824,7 +854,12 @@ def enrich_entity(
     audit_enabled=True,
     strict=True,
     entity_type: str = "alert",
+    commit=True,
 ):
+    """`commit=False` leaves the transaction open for the caller to commit, so
+    this write can be made atomic with others on the same session. Only
+    meaningful when `session` is supplied — an internally-created session is
+    closed on exit, discarding uncommitted work."""
     with existed_or_new_session(session) as session:
         return _enrich_entity(
             session,
@@ -838,6 +873,7 @@ def enrich_entity(
             audit_enabled=audit_enabled,
             strict=strict,
             entity_type=entity_type,
+            commit=commit,
         )
 
 
@@ -3140,27 +3176,100 @@ def update_incident_from_dto_by_id(
 def delete_incident_by_id(
     tenant_id: str, incident_id: UUID, session: Optional[Session] = None
 ) -> bool:
+    """Delete an incident for real. Returns False when it did not exist.
+
+    This used to flip `status` to a `deleted` value that no query filtered on,
+    so "deleted" incidents kept showing up everywhere. Rows now go away.
+
+    What goes: the incident row, its alert links, its enrichment row, its audit
+    trail and the comment @mentions on that trail.
+
+    What stays: the alerts themselves and their LastAlert rows — they outlive the
+    incident that grouped them — along with their own audit history, which is
+    keyed on the alert fingerprint rather than the incident id.
+
+    EVERY DEPENDENT IS REMOVED EXPLICITLY, not left to ON DELETE. The FKs do
+    declare CASCADE/SET NULL, but SQLite (a supported backend) ships with
+    `PRAGMA foreign_keys` OFF, so referential actions never fire there and the
+    same delete would strand links and enrichment rows. Doing it by hand makes
+    the outcome identical on every dialect; the FK actions stay as a backstop.
+
+    Two of these have no FK to fall back on at all: `alertaudit` rows for an
+    incident are keyed by its UUID in the `fingerprint` column, and
+    `commentmention` lost its FK to `alertaudit` deliberately. Without the
+    explicit deletes below, both would survive as rows nothing can reach, since
+    every read path finds them through a live incident id.
+
+    Note this also discards the record of who did what to the incident. Deleting
+    an incident is not itself audited, so there is no "who deleted it" entry that
+    this would contradict.
+    """
     if isinstance(incident_id, str):
         incident_id = __convert_to_uuid(incident_id)
     with existed_or_new_session(session) as session:
-        incident = session.exec(
-            select(Incident).filter(
-                Incident.tenant_id == tenant_id,
-                Incident.id == incident_id,
+        audit_fingerprint = str(incident_id)
+        audit_ids = select(AlertAudit.id).where(
+            AlertAudit.tenant_id == tenant_id,
+            AlertAudit.fingerprint == audit_fingerprint,
+        )
+        # Mentions before the audit rows they point at, so the subquery can still
+        # find them.
+        session.execute(
+            delete(CommentMention).where(
+                CommentMention.tenant_id == tenant_id,
+                CommentMention.comment_id.in_(audit_ids),
             )
-        ).first()
-
+        )
+        session.execute(
+            delete(AlertAudit).where(
+                AlertAudit.tenant_id == tenant_id,
+                AlertAudit.fingerprint == audit_fingerprint,
+            )
+        )
+        session.execute(
+            delete(LastAlertToIncident).where(
+                LastAlertToIncident.tenant_id == tenant_id,
+                LastAlertToIncident.incident_id == incident_id,
+            )
+        )
+        session.execute(
+            delete(AlertToIncident).where(
+                AlertToIncident.tenant_id == tenant_id,
+                AlertToIncident.incident_id == incident_id,
+            )
+        )
+        session.execute(
+            delete(IncidentEnrichment).where(
+                IncidentEnrichment.tenant_id == tenant_id,
+                IncidentEnrichment.incident_id == incident_id,
+            )
+        )
+        # Sibling incidents point at this one; clear those references so they
+        # don't dangle (the FKs say SET NULL, which SQLite would skip).
         session.execute(
             update(Incident)
             .where(
                 Incident.tenant_id == tenant_id,
-                Incident.id == incident.id,
+                Incident.merged_into_incident_id == incident_id,
             )
-            .values({"status": IncidentStatus.DELETED.value})
+            .values(merged_into_incident_id=None)
         )
-
+        session.execute(
+            update(Incident)
+            .where(
+                Incident.tenant_id == tenant_id,
+                Incident.same_incident_in_the_past_id == incident_id,
+            )
+            .values(same_incident_in_the_past_id=None)
+        )
+        result = session.execute(
+            delete(Incident).where(
+                Incident.tenant_id == tenant_id,
+                Incident.id == incident_id,
+            )
+        )
         session.commit()
-        return True
+        return result.rowcount > 0
 
 
 def get_incidents_count(

@@ -1,4 +1,5 @@
 import datetime
+from enum import Enum
 import html
 import json
 import logging
@@ -86,6 +87,37 @@ def get_nested_attribute(obj: AlertDto, attr_path: str):
         if obj is None:
             return None
     return obj
+
+
+def _event_safe_value(value):
+    """Recursively convert values (datetime, UUID, Enum, etc.) into JSON-safe
+    representations for producing events to Kafka / event bus.
+    """
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, datetime.datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=datetime.timezone.utc)
+        else:
+            value = value.astimezone(datetime.timezone.utc)
+        return value.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    if isinstance(value, (datetime.date, datetime.time)):
+        return value.isoformat()
+    if isinstance(value, (UUID, uuid.UUID)):
+        return str(value)
+    if isinstance(value, Enum):
+        return _event_safe_value(value.value)
+    if hasattr(value, "model_dump") and callable(value.model_dump):
+        return _event_safe_value(value.model_dump(mode="json"))
+    if hasattr(value, "dict") and callable(value.dict):
+        return _event_safe_value(value.dict())
+    if isinstance(value, dict):
+        return {str(k): _event_safe_value(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_event_safe_value(v) for v in value]
+    if hasattr(value, "isoformat") and callable(value.isoformat):
+        return value.isoformat()
+    return value
 
 
 class EnrichmentsBl:
@@ -675,7 +707,10 @@ class EnrichmentsBl:
         produce_event=True,
         strict=True,
         entity_type: str = "alert",
+        commit=True,
     ):
+        """`commit=False` stages every row and leaves the transaction open for the
+        caller, so a batch can be made atomic with whatever else it belongs to."""
         self.logger.debug(
             "enriching multiple fingerprints",
             extra={"fingerprints": fingerprints, "tenant_id": self.tenant_id},
@@ -692,6 +727,7 @@ class EnrichmentsBl:
                 produce_event=False,  # Don't produce individual ENRICH events
                 strict=strict,
                 entity_type=entity_type,
+                commit=commit,
             )
 
         if produce_event:
@@ -711,6 +747,9 @@ class EnrichmentsBl:
                     # Per-fingerprint enrich_entity above already validated the
                     # payload; this branch is defensive only.
                     raise
+            safe_event = {
+                key: _event_safe_value(value) for key, value in safe_event.items()
+            }
             safe_event.update({
                 "action_type": action_type.value,
                 "action_callee": action_callee,
@@ -790,6 +829,48 @@ class EnrichmentsBl:
             )
         return result
 
+    async def publish_enrichment_event(
+        self,
+        fingerprint: str | UUID | list[str],
+        enrichments: dict,
+        action_type: ActionType,
+        action_callee: str,
+        action_description: str,
+        force: bool = False,
+        event_type: EventType = EventType.ENRICH,
+    ):
+        """Announce an enrichment on the event bus. `fingerprint` is a list for a
+        BATCH_ENRICH event, matching what `batch_enrich` emits.
+
+        Called inline by `enrich_entity`, or by hand after the fact when that
+        ran with `commit=False` — a deferred commit means the event must wait
+        until the data is actually durable.
+        """
+        safe_event = {
+            key: _event_safe_value(value) for key, value in enrichments.items()
+        }
+        safe_event.update({
+            "action_type": action_type.value,
+            "action_callee": action_callee,
+            "action_description": action_description,
+            "audit_enabled": False,  # Audit already created locally by API Gateway
+        })
+        # `force` belongs to the single-enrichment contract only. The consumer
+        # validates BATCH_ENRICH payloads against the enrichable column set and
+        # rejects the whole batch on an unknown key, so adding it there would
+        # make every batch event unprocessable.
+        if event_type != EventType.BATCH_ENRICH:
+            safe_event["force"] = force
+
+        await self.event_producer.produce(
+            event=safe_event,
+            event_type=event_type,
+            tenant_id=self.tenant_id,
+            provider_type="keep",
+            provider_id="keep",
+            fingerprint=fingerprint,
+        )
+
     async def _enrich_entity_impl(
         self,
         fingerprint: str | UUID,
@@ -804,7 +885,8 @@ class EnrichmentsBl:
         produce_event=True,
         strict=True,
         entity_type: str = "alert",
-        event_type: EventType = EventType.ENRICH
+        event_type: EventType = EventType.ENRICH,
+        commit=True,
     ):
         """
         should_exist = False only in mapping where the alert is not yet in elastic
@@ -814,6 +896,12 @@ class EnrichmentsBl:
             (IncidentEnrichment JSONB, keyed on incident_id)
 
         Enrich the entity with extraction and mapping rules
+
+        commit = False leaves the transaction open so the caller can commit this
+        write together with others (see IncidentBl.enrich_and_change_status).
+        The Kafka event and the Elasticsearch update are then the CALLER's job
+        via `publish_enrichment_event` — broadcasting a change that is still
+        uncommitted, and might yet roll back, is worse than broadcasting it late.
         """
         # enrich db
         if isinstance(fingerprint, UUID):
@@ -862,28 +950,29 @@ class EnrichmentsBl:
             audit_enabled=audit_enabled,
             strict=strict,
             entity_type=entity_type,
+            commit=commit,
         )
+
+        if not commit:
+            # Nothing below this point may run yet: the write is staged, not
+            # committed. The caller commits, then fans out.
+            self.logger.debug(
+                "entity enrichment staged, deferring event and elastic to caller",
+                extra={"fingerprint": fingerprint, "entity_type": entity_type},
+            )
+            return
 
         # Publish to kafka
         if produce_event:
-            safe_event = enrichments.copy()
-            safe_event.update({
-                "action_type": action_type.value,
-                "action_callee": action_callee,
-                "action_description": action_description,
-                "audit_enabled": False,  # Audit already created locally by API Gateway
-                "force": force,
-            })
-            
-            await self.event_producer.produce(
-                event=safe_event,
-                event_type=event_type,
-                tenant_id=self.tenant_id,
-                provider_type="keep",
-                provider_id="keep",
+            await self.publish_enrichment_event(
                 fingerprint=fingerprint,
+                enrichments=enrichments,
+                action_type=action_type,
+                action_callee=action_callee,
+                action_description=action_description,
+                force=force,
+                event_type=event_type,
             )
-
 
         self.logger.debug(
             "alert enriched in db, enriching elastic",

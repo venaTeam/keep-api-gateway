@@ -10,7 +10,11 @@ from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
 from sqlmodel import JSON, TEXT, Column, DateTime, Field, Index, Relationship, SQLModel, String, Integer, Boolean
 
 from src.config.core import config
-from src.models.db.helpers import DATETIME_COLUMN_TYPE, NULL_FOR_DELETED_AT
+from src.models.db.helpers import (
+    DATETIME_COLUMN_TYPE,
+    NULL_FOR_DELETED_AT,
+    is_dismiss_active,
+)
 from src.models.db.incident import Incident
 from src.models.db.tenant import Tenant
 
@@ -144,6 +148,28 @@ class LastAlert(SQLModel, table=True):
         Index("idx_lastalert_tenant_alert_id", "tenant_id", "alert_id"),
         {},
     )
+
+
+    def is_dismiss_active(self, now: datetime | None = None) -> bool:
+        """Whether this alert's dismissal is in force right now.
+
+        `suppressed` is NOT stored in `status` for a dismissal — `status` holds
+        the user's status override, which is what the alert reverts to when a
+        time-boxed dismissal lapses. Nothing rewrites the row at that moment, so
+        every reader has to derive suppression rather than trust the column.
+        """
+        return is_dismiss_active(self.dismiss_mode, self.dismissed_until, now)
+
+    def get_effective_status(
+        self, provider_status: str | None = None, now: datetime | None = None
+    ) -> str | None:
+        """The status to show: `suppressed` while a dismissal is live, else the
+        user's override, else the provider's own status."""
+        if self.is_dismiss_active(now):
+            return "suppressed"
+        if self.status is not None:
+            return self.status
+        return provider_status
 
 
 class LastAlertToIncident(SQLModel, table=True):
@@ -318,7 +344,16 @@ class IncidentEnrichment(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     tenant_id: str = Field(foreign_key="tenant.id")
     timestamp: datetime = Field(default_factory=datetime.utcnow)
-    incident_id: UUID = Field(foreign_key="incident.id", unique=True)
+    # CASCADE so deleting an incident takes its enrichment row with it —
+    # incident delete is a real DELETE, and NO ACTION here made it fail with a
+    # FK violation on any incident a user had actually enriched.
+    incident_id: UUID = Field(
+        sa_column=Column(
+            UUIDType(binary=False),
+            ForeignKey("incident.id", ondelete="CASCADE"),
+            unique=True,
+        )
+    )
     enrichments: dict = Field(
         sa_column=Column(JSON().with_variant(PG_JSONB, "postgresql"))
     )
