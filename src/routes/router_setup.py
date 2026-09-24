@@ -5,6 +5,7 @@ from src.routes import (
     alerts,
     cel,
     dashboard,
+    dashboard_images,
     deduplications,
     extraction,
     facets,
@@ -65,6 +66,9 @@ def setup_routers(app: FastAPI):
         extraction.router, prefix="/extraction", tags=["enrichment", "extraction"]
     )
     app.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
+    app.include_router(
+        dashboard_images.router, prefix="/dashboard-images", tags=["dashboard"]
+    )
     app.include_router(tags.router, prefix="/tags", tags=["tags"])
     app.include_router(maintenance.router, prefix="/maintenance", tags=["maintenance"])
     # app.include_router(topology.router, prefix="/topology", tags=["topology"])
