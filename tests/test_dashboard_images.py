@@ -10,7 +10,13 @@ from src.models.db.all_models import declared_tables
 from src.models.db.dashboard import Dashboard
 from src.models.db.dashboard_image import DashboardImage
 from src.models.db.tenant import Tenant
+from src.repositories import dashboard_images as dashboard_images_module
 from src.repositories.dependencies import SINGLE_TENANT_UUID
+from src.repositories.dashboard_images import (
+    DashboardImageReferenceError,
+    check_dashboard_image_references,
+)
+from src.routes.dashboard_images import _read_capped
 from tests.fixtures.client import client, test_app  # noqa
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
@@ -125,8 +131,6 @@ def test_upload_chunked_over_cap_is_413(db_session, client, test_app, monkeypatc
 
 
 def test_read_capped_stops_streams_past_the_limit():
-    from src.routes.dashboard_images import _read_capped
-
     class _Request:
         async def stream(self):
             yield b"x" * 15
@@ -387,8 +391,6 @@ def test_delete_dashboard_deletes_its_images(db_session, client, test_app):
 
 def test_claim_race_loser_is_rejected(db_session, monkeypatch):
     """Second of two concurrent saves: it read the image as pending, but the guarded UPDATE matches no row."""
-    from src.repositories import dashboard_images as module
-
     first = Dashboard(
         tenant_id=SINGLE_TENANT_UUID, dashboard_name="a", dashboard_config={}
     )
@@ -400,16 +402,20 @@ def test_claim_race_loser_is_rejected(db_session, monkeypatch):
     image_id = _add_image(db_session)
     config = _config(_image_widget(image_id))
 
-    module.sync_dashboard_images(db_session, SINGLE_TENANT_UUID, first.id, config)
+    dashboard_images_module.sync_dashboard_images(
+        db_session, SINGLE_TENANT_UUID, first.id, config
+    )
     db_session.commit()
 
     monkeypatch.setattr(
-        module,
+        dashboard_images_module,
         "_current_owners",
         lambda session, tenant_id, ids: {i: None for i in ids},
     )
-    with pytest.raises(module.DashboardImageReferenceError) as exc:
-        module.sync_dashboard_images(db_session, SINGLE_TENANT_UUID, second.id, config)
+    with pytest.raises(dashboard_images_module.DashboardImageReferenceError) as exc:
+        dashboard_images_module.sync_dashboard_images(
+            db_session, SINGLE_TENANT_UUID, second.id, config
+        )
     db_session.rollback()
     monkeypatch.undo()
 
@@ -419,9 +425,6 @@ def test_claim_race_loser_is_rejected(db_session, monkeypatch):
 
 def test_check_references_performs_no_writes(db_session):
     """Verify check_dashboard_image_references does not write to database."""
-    from src.repositories.dashboard_images import (
-        DashboardImageReferenceError, check_dashboard_image_references)
-
     config = _config(_image_widget("missing"))
     dashboard_count_before = db_session.query(Dashboard).count()
     image_count_before = db_session.query(DashboardImage).count()
@@ -435,3 +438,36 @@ def test_check_references_performs_no_writes(db_session):
     image_count_after = db_session.query(DashboardImage).count()
     assert dashboard_count_before == dashboard_count_after
     assert image_count_before == image_count_after
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+def test_update_rename_with_bad_reference_keeps_old_name(db_session, client, test_app):
+    image_id = _upload(client).json()["id"]
+    dashboard_id = _create_dashboard(
+        client, "d1", _config(_image_widget(image_id))
+    ).json()["id"]
+    response = _put_dashboard(
+        client, dashboard_id, name="renamed", config=_config(_image_widget("missing"))
+    )
+    assert response.status_code == 400
+    db_session.expire_all()
+    stored = db_session.get(Dashboard, dashboard_id)
+    assert stored.dashboard_name == "d1"
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+def test_image_widget_with_non_dict_image_is_400(db_session, client, test_app):
+    widget = {
+        "i": "w-1",
+        "x": 0,
+        "y": 0,
+        "w": 4,
+        "h": 4,
+        "static": False,
+        "name": "bad widget",
+        "widgetType": "IMAGE",
+        "image": "oops",
+    }
+    response = _create_dashboard(client, "d1", _config(widget))
+    assert response.status_code == 400
+    assert response.json()["invalid_image_ids"] == []

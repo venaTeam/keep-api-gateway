@@ -26,7 +26,7 @@ def referenced_image_ids(dashboard_config: dict | None) -> set[str]:
     """Uploaded-image ids used by IMAGE widgets in `dashboard_config`.
 
     Raises DashboardImageReferenceError([]) for an upload widget without an id,
-    which is a widget whose upload never completed.
+    which is a widget whose upload never completed, or with a non-dict image field.
     """
     ids = set()
     for widget in (dashboard_config or {}).get("widget_data") or []:
@@ -35,7 +35,9 @@ def referenced_image_ids(dashboard_config: dict | None) -> set[str]:
             or widget.get("widgetType") != IMAGE_WIDGET_TYPE
         ):
             continue
-        image = widget.get("image") or {}
+        image = widget.get("image")
+        if not isinstance(image, dict):
+            raise DashboardImageReferenceError([])
         if image.get("source") != UPLOAD_SOURCE:
             continue
         image_id = image.get("imageId")
@@ -84,11 +86,14 @@ def sync_dashboard_images(
 
     Raises DashboardImageReferenceError when a referenced id does not exist for
     this tenant, or belongs to another dashboard, including one that claimed it
-    concurrently. The caller's transaction must then be rolled back.
+    concurrently. The caller's transaction must then be rolled back. On the
+    concurrent-claim path, may raise after partial writes; relies on the caller's
+    transaction being rolled back (session closes without commit).
     """
-    check_dashboard_image_references(session, tenant_id, dashboard_id, dashboard_config)
-    wanted = referenced_image_ids(dashboard_config)
-    owners = _current_owners(session, tenant_id, wanted) if wanted else {}
+    owners = check_dashboard_image_references(
+        session, tenant_id, dashboard_id, dashboard_config
+    )
+    wanted = set(owners.keys()) if owners else set()
 
     pending = sorted(i for i, owner in owners.items() if owner is None)
     if pending:

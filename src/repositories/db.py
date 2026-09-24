@@ -2469,6 +2469,11 @@ def update_dashboard(
         if not dashboard:
             return None
 
+        if dashboard_config:
+            check_dashboard_image_references(
+                session, tenant_id, dashboard.id, dashboard_config
+            )
+
         if dashboard_name:
             dashboard.dashboard_name = dashboard_name
 
