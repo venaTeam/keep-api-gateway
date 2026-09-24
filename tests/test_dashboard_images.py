@@ -415,3 +415,23 @@ def test_claim_race_loser_is_rejected(db_session, monkeypatch):
 
     assert exc.value.invalid_image_ids == [image_id]
     assert _owner(db_session, image_id) == first.id
+
+
+def test_check_references_performs_no_writes(db_session):
+    """Verify check_dashboard_image_references does not write to database."""
+    from src.repositories.dashboard_images import (
+        DashboardImageReferenceError, check_dashboard_image_references)
+
+    config = _config(_image_widget("missing"))
+    dashboard_count_before = db_session.query(Dashboard).count()
+    image_count_before = db_session.query(DashboardImage).count()
+
+    with pytest.raises(DashboardImageReferenceError):
+        check_dashboard_image_references(
+            db_session, SINGLE_TENANT_UUID, "test-id", config
+        )
+
+    dashboard_count_after = db_session.query(Dashboard).count()
+    image_count_after = db_session.query(DashboardImage).count()
+    assert dashboard_count_before == dashboard_count_after
+    assert image_count_before == image_count_after

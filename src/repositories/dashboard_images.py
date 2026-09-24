@@ -55,6 +55,28 @@ def _current_owners(session: Session, tenant_id: str, ids: set[str]) -> dict:
     return {image_id: owner for image_id, owner in rows}
 
 
+def check_dashboard_image_references(
+    session: Session, tenant_id: str, dashboard_id: str, dashboard_config: dict | None
+) -> dict:
+    """Validate dashboard image references without writing.
+
+    Reads image ownership and raises DashboardImageReferenceError if a referenced
+    id does not exist for this tenant or belongs to another dashboard. Returns the
+    owners dict so sync_dashboard_images can avoid re-reading.
+
+    Use this before adding the dashboard to the session to ensure bad references
+    are rejected before any database writes.
+    """
+    wanted = referenced_image_ids(dashboard_config)
+    owners = _current_owners(session, tenant_id, wanted) if wanted else {}
+    invalid = sorted(
+        i for i in wanted if i not in owners or owners[i] not in (None, dashboard_id)
+    )
+    if invalid:
+        raise DashboardImageReferenceError(invalid)
+    return owners
+
+
 def sync_dashboard_images(
     session: Session, tenant_id: str, dashboard_id: str, dashboard_config: dict | None
 ) -> None:
@@ -64,13 +86,9 @@ def sync_dashboard_images(
     this tenant, or belongs to another dashboard, including one that claimed it
     concurrently. The caller's transaction must then be rolled back.
     """
+    check_dashboard_image_references(session, tenant_id, dashboard_id, dashboard_config)
     wanted = referenced_image_ids(dashboard_config)
     owners = _current_owners(session, tenant_id, wanted) if wanted else {}
-    invalid = sorted(
-        i for i in wanted if i not in owners or owners[i] not in (None, dashboard_id)
-    )
-    if invalid:
-        raise DashboardImageReferenceError(invalid)
 
     pending = sorted(i for i, owner in owners.items() if owner is None)
     if pending:
