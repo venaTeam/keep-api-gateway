@@ -12,7 +12,6 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from src.repositories.dashboard_images import DashboardImageReferenceError
-
 from src.repositories.db import (
     calc_incidents_mttr,
     get_incidents_created_distribution,

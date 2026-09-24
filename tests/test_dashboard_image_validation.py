@@ -98,3 +98,54 @@ def test_svg_declared_utf16_prolog_rejected():
     data = payload.encode("utf-16-le")
     with pytest.raises(ImageContentError):
         validate_image_content("image/svg+xml", data)
+
+
+NS = b'xmlns="http://www.w3.org/2000/svg"'
+XLINK = b'xmlns:xlink="http://www.w3.org/1999/xlink"'
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        b"<svg " + NS + b"><script>alert(1)</script></svg>",
+        b"<svg " + NS + b' onload="alert(1)"/>',
+        b"<svg "
+        + NS
+        + b'><foreignObject><div xmlns="http://www.w3.org/1999/xhtml">x'
+        + b"</div></foreignObject></svg>",
+        b"<svg "
+        + NS
+        + b" "
+        + XLINK
+        + b'><a xlink:href="javascript:alert(1)"><rect/></a></svg>',
+        b"<svg " + NS + b'><image href="https://evil.example/x.png"/></svg>',
+        b"<svg " + NS + b'><a href=" JaVaScRiPt:alert(1)"/></svg>',
+        b"<svg " + NS + b'><a href="&#x20;JaVaScRiPt:alert(1)"/></svg>',
+        b"<svg "
+        + NS
+        + b'><animate attributeName="href" values="javascript:alert(1)"/></svg>',
+        b"<svg " + NS + b"><SCRIPT/></svg>",
+        b"<svg " + NS + b"><iframe/></svg>",
+        b"<svg " + NS + b"><embed/></svg>",
+        b"<svg " + NS + b"><object/></svg>",
+        b"<svg " + NS + b'><rect OnClick="x"/></svg>',
+        b"<svg " + NS + b'><image href="data:image/svg+xml;base64,PHN2Zy8+"/></svg>',
+        b"<svg " + NS + b'><set to="java\tscript:alert(1)"/></svg>',
+    ],
+)
+def test_svg_active_content_rejected(data):
+    with pytest.raises(ImageContentError, match="scripts, event handlers"):
+        validate_image_content("image/svg+xml", data)
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        b"<svg " + NS + b'><use href="#a"/><rect id="a"/></svg>',
+        b"<svg " + NS + b" " + XLINK + b'><use xlink:href=" #a"/></svg>',
+        b"<svg " + NS + b'><image href="data:image/png;base64,iVBORw0KGgo="/></svg>',
+        b"<svg " + NS + b'><image href="DATA:IMAGE/JPEG;base64,/9j/"/></svg>',
+    ],
+)
+def test_svg_safe_references_pass(data):
+    validate_image_content("image/svg+xml", data)

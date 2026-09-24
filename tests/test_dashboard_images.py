@@ -164,8 +164,6 @@ def test_claimed_images_do_not_count_toward_pending_cap(
     db_session, client, test_app, monkeypatch
 ):
     monkeypatch.setenv("KEEP_DASHBOARD_IMAGE_MAX_PENDING", "1")
-    from src.models.db.dashboard import Dashboard
-
     dashboard = Dashboard(
         tenant_id=SINGLE_TENANT_UUID, dashboard_name="d", dashboard_config={}
     )

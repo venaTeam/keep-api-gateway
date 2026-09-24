@@ -2447,7 +2447,9 @@ def create_dashboard(
             created_by=created_by,
             is_private=is_private,
         )
-        check_dashboard_image_references(session, tenant_id, dashboard.id, dashboard_config)
+        check_dashboard_image_references(
+            session, tenant_id, dashboard.id, dashboard_config
+        )
         session.add(dashboard)
         session.flush()
         sync_dashboard_images(session, tenant_id, dashboard.id, dashboard_config)

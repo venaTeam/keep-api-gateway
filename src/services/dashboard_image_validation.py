@@ -1,10 +1,15 @@
 """Checks that uploaded bytes really are the image type they claim to be.
 
-SVG gets stricter treatment because it is XML: it must be UTF-8, must not
-declare a DOCTYPE or entities, and must have an <svg> root element. The XML
-is parsed with expat forced to UTF-8 so a payload that is valid UTF-8
-byte-for-byte but is actually unlabeled or falsely-labeled UTF-16 cannot
-smuggle a DOCTYPE/entity past the encoding the parser actually uses.
+Raster types are checked by their magic-byte signature. SVG gets stricter
+treatment because it is active XML that a browser may render: the bytes must
+decode as UTF-8, and a single expat pass over exactly those bytes rejects any
+DOCTYPE or entity declaration, rejects active content (script, foreignObject,
+iframe, embed and object elements; on* event-handler attributes; href or
+xlink:href values other than same-document "#" fragments or raster
+data:image URLs; any attribute value containing "javascript:") and captures
+the root element, which must be <svg>. Doing every check in the one parse that
+also produces the accepted document means there is no second interpretation of
+the bytes that a check could disagree with.
 """
 
 import xml.parsers.expat
@@ -19,6 +24,22 @@ _SIGNATURES = {
     "image/gif": lambda d: d.startswith((b"GIF87a", b"GIF89a")),
     "image/webp": lambda d: d[:4] == b"RIFF" and d[8:12] == b"WEBP",
 }
+
+_FORBIDDEN_ELEMENTS = frozenset(
+    {"script", "foreignobject", "iframe", "embed", "object"}
+)
+
+_ALLOWED_HREF_PREFIXES = (
+    "#",
+    "data:image/png",
+    "data:image/jpeg",
+    "data:image/gif",
+    "data:image/webp",
+)
+
+_ACTIVE_CONTENT_MESSAGE = (
+    "SVG must not contain scripts, event handlers or external references"
+)
 
 
 class ImageContentError(ValueError):
@@ -41,8 +62,21 @@ def _validate_svg(data: bytes) -> None:
     except UnicodeDecodeError as e:
         raise ImageContentError("SVG must be UTF-8") from e
     root_tag = _parse_svg_root(data)
-    if root_tag.rsplit("}", 1)[-1] != "svg":
+    if _local_name(root_tag) != "svg":
         raise ImageContentError("SVG root element must be <svg>")
+
+
+def _local_name(name: str) -> str:
+    return name.rsplit("}", 1)[-1]
+
+
+def _is_active_attribute(name: str, value: str) -> bool:
+    local = _local_name(name).lower()
+    if local.startswith("on"):
+        return True
+    if local == "href" and not value.strip().lower().startswith(_ALLOWED_HREF_PREFIXES):
+        return True
+    return "javascript:" in "".join(value.split()).lower()
 
 
 def _parse_svg_root(data: bytes) -> str:
@@ -51,14 +85,19 @@ def _parse_svg_root(data: bytes) -> str:
     def _reject_doctype_or_entity(*_args):
         raise ImageContentError("SVG must not declare a DOCTYPE or entities")
 
-    def _capture_root(name, _attrs):
+    def _check_element(name, attrs):
         if root["tag"] is None:
             root["tag"] = name
+        if _local_name(name).lower() in _FORBIDDEN_ELEMENTS:
+            raise ImageContentError(_ACTIVE_CONTENT_MESSAGE)
+        for attr_name, attr_value in attrs.items():
+            if _is_active_attribute(attr_name, attr_value):
+                raise ImageContentError(_ACTIVE_CONTENT_MESSAGE)
 
     parser = xml.parsers.expat.ParserCreate(encoding="utf-8", namespace_separator="}")
     parser.StartDoctypeDeclHandler = _reject_doctype_or_entity
     parser.EntityDeclHandler = _reject_doctype_or_entity
-    parser.StartElementHandler = _capture_root
+    parser.StartElementHandler = _check_element
 
     try:
         parser.Parse(data, True)
