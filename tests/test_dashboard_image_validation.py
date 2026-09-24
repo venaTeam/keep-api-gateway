@@ -21,9 +21,15 @@ SVG = b'<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>'
         ("image/png", PNG),
         ("image/jpeg", JPEG),
         ("image/gif", GIF),
+        ("image/gif", b"GIF87a" + b"\x00" * 16),
         ("image/webp", WEBP),
         ("image/svg+xml", SVG),
         ("image/svg+xml", b'<?xml version="1.0"?>' + SVG),
+        ("image/svg+xml", b'<svg width="1" height="1"/>'),
+        (
+            "image/svg+xml",
+            b'<?xml version="1.0" encoding="UTF-8"?>' + SVG,
+        ),
     ],
 )
 def test_valid_images_pass(content_type, data):
@@ -75,3 +81,20 @@ def test_svg_must_be_utf8():
     hidden = '<!DOCTYPE svg [<!ENTITY a "x">]><svg/>'.encode("utf-16")
     with pytest.raises(ImageContentError):
         validate_image_content("image/svg+xml", hidden)
+
+
+def test_svg_utf16le_without_bom_rejected():
+    payload = '<!DOCTYPE svg [<!ENTITY xxe "pwned">]><svg>&xxe;</svg>'
+    data = payload.encode("utf-16-le")
+    with pytest.raises(ImageContentError):
+        validate_image_content("image/svg+xml", data)
+
+
+def test_svg_declared_utf16_prolog_rejected():
+    payload = (
+        '<?xml version="1.0" encoding="UTF-16"?>'
+        '<!DOCTYPE svg [<!ENTITY a "x">]><svg>&a;</svg>'
+    )
+    data = payload.encode("utf-16-le")
+    with pytest.raises(ImageContentError):
+        validate_image_content("image/svg+xml", data)

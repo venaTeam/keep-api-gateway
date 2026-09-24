@@ -1,10 +1,13 @@
 """Checks that uploaded bytes really are the image type they claim to be.
 
 SVG gets stricter treatment because it is XML: it must be UTF-8, must not
-declare a DOCTYPE or entities, and must have an <svg> root element.
+declare a DOCTYPE or entities, and must have an <svg> root element. The XML
+is parsed with expat forced to UTF-8 so a payload that is valid UTF-8
+byte-for-byte but is actually unlabeled or falsely-labeled UTF-16 cannot
+smuggle a DOCTYPE/entity past the encoding the parser actually uses.
 """
 
-import xml.etree.ElementTree as ET
+import xml.parsers.expat
 
 ALLOWED_CONTENT_TYPES = frozenset(
     {"image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"}
@@ -34,14 +37,34 @@ def validate_image_content(content_type: str, data: bytes) -> None:
 
 def _validate_svg(data: bytes) -> None:
     try:
-        text = data.decode("utf-8")
+        data.decode("utf-8")
     except UnicodeDecodeError as e:
         raise ImageContentError("SVG must be UTF-8") from e
-    if "<!DOCTYPE" in text or "<!ENTITY" in text:
-        raise ImageContentError("SVG must not declare a DOCTYPE or entities")
-    try:
-        root = ET.fromstring(data)
-    except ET.ParseError as e:
-        raise ImageContentError("SVG is not well-formed XML") from e
-    if root.tag.rsplit("}", 1)[-1] != "svg":
+    root_tag = _parse_svg_root(data)
+    if root_tag.rsplit("}", 1)[-1] != "svg":
         raise ImageContentError("SVG root element must be <svg>")
+
+
+def _parse_svg_root(data: bytes) -> str:
+    root = {"tag": None}
+
+    def _reject_doctype_or_entity(*_args):
+        raise ImageContentError("SVG must not declare a DOCTYPE or entities")
+
+    def _capture_root(name, _attrs):
+        if root["tag"] is None:
+            root["tag"] = name
+
+    parser = xml.parsers.expat.ParserCreate(encoding="utf-8", namespace_separator="}")
+    parser.StartDoctypeDeclHandler = _reject_doctype_or_entity
+    parser.EntityDeclHandler = _reject_doctype_or_entity
+    parser.StartElementHandler = _capture_root
+
+    try:
+        parser.Parse(data, True)
+    except xml.parsers.expat.ExpatError as e:
+        raise ImageContentError("SVG is not well-formed XML") from e
+
+    if root["tag"] is None:
+        raise ImageContentError("SVG is not well-formed XML")
+    return root["tag"]
