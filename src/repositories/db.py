@@ -57,6 +57,10 @@ from src.repositories.db_utils import (
     get_or_create,
 )
 from src.repositories.dependencies import GENERIC_TENANT_UUID
+from src.repositories.dashboard_images import (
+    delete_dashboard_images,
+    sync_dashboard_images,
+)
 
 # This import is required to create the tables
 from src.models.action_type import ActionType
@@ -2443,6 +2447,8 @@ def create_dashboard(
             is_private=is_private,
         )
         session.add(dashboard)
+        session.flush()
+        sync_dashboard_images(session, tenant_id, dashboard.id, dashboard_config)
         session.commit()
         session.refresh(dashboard)
         return dashboard
@@ -2465,6 +2471,7 @@ def update_dashboard(
             dashboard.dashboard_name = dashboard_name
 
         if dashboard_config:
+            sync_dashboard_images(session, tenant_id, dashboard.id, dashboard_config)
             dashboard.dashboard_config = dashboard_config
 
         dashboard.updated_by = updated_by
@@ -2483,6 +2490,7 @@ def delete_dashboard(tenant_id, dashboard_id):
         ).first()
 
         if dashboard:
+            delete_dashboard_images(session, tenant_id, dashboard_id)
             session.delete(dashboard)
             session.commit()
             return True

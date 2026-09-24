@@ -7,6 +7,7 @@ import pytest
 from fastapi import HTTPException
 
 from src.models.db.all_models import declared_tables
+from src.models.db.dashboard import Dashboard
 from src.models.db.dashboard_image import DashboardImage
 from src.models.db.tenant import Tenant
 from src.repositories.dependencies import SINGLE_TENANT_UUID
@@ -195,3 +196,222 @@ def test_fetch_other_tenants_image_is_404(db_session, client, test_app):
     other = _add_tenant(db_session)
     image_id = _add_image(db_session, tenant_id=other)
     assert client.get(f"/dashboard-images/{image_id}", headers=AUTH).status_code == 404
+
+
+def _image_widget(image_id, i="w-1", widget_type="IMAGE"):
+    return {
+        "i": i,
+        "x": 0,
+        "y": 0,
+        "w": 4,
+        "h": 4,
+        "static": False,
+        "name": f"widget {i}",
+        "widgetType": widget_type,
+        "image": {"source": "upload", "imageId": image_id, "fit": "contain"},
+    }
+
+
+def _config(*widgets):
+    return {"layout": [], "widget_data": list(widgets)}
+
+
+def _create_dashboard(client, name, config):
+    return client.post(
+        "/dashboard",
+        headers=AUTH,
+        json={"dashboard_name": name, "dashboard_config": config},
+    )
+
+
+def _put_dashboard(client, dashboard_id, config=None, name=None):
+    body = {}
+    if config is not None:
+        body["dashboard_config"] = config
+    if name is not None:
+        body["dashboard_name"] = name
+    return client.put(f"/dashboard/{dashboard_id}", headers=AUTH, json=body)
+
+
+def _owner(db_session, image_id):
+    db_session.expire_all()
+    row = db_session.get(DashboardImage, image_id)
+    return "gone" if row is None else row.dashboard_id
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+def test_create_claims_pending_image(db_session, client, test_app):
+    image_id = _upload(client).json()["id"]
+    response = _create_dashboard(client, "d1", _config(_image_widget(image_id)))
+    assert response.status_code == 200
+    assert _owner(db_session, image_id) == response.json()["id"]
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+def test_create_with_unknown_image_is_400_and_writes_nothing(
+    db_session, client, test_app
+):
+    response = _create_dashboard(client, "d1", _config(_image_widget("missing")))
+    assert response.status_code == 400
+    assert response.json() == {
+        "message": "Dashboard references missing or unavailable images",
+        "invalid_image_ids": ["missing"],
+    }
+    assert (
+        db_session.query(Dashboard).filter(Dashboard.dashboard_name == "d1").count()
+        == 0
+    )
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+def test_upload_widget_without_image_id_is_400(db_session, client, test_app):
+    widget = _image_widget(None)
+    response = _create_dashboard(client, "d1", _config(widget))
+    assert response.status_code == 400
+    assert response.json()["invalid_image_ids"] == []
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+def test_other_tenants_image_is_400(db_session, client, test_app):
+    other = _add_tenant(db_session)
+    image_id = _add_image(db_session, tenant_id=other)
+    response = _create_dashboard(client, "d1", _config(_image_widget(image_id)))
+    assert response.status_code == 400
+    assert _owner(db_session, image_id) is None
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+def test_image_owned_by_another_dashboard_is_400(db_session, client, test_app):
+    image_id = _upload(client).json()["id"]
+    first = _create_dashboard(client, "d1", _config(_image_widget(image_id))).json()[
+        "id"
+    ]
+    response = _create_dashboard(client, "d2", _config(_image_widget(image_id)))
+    assert response.status_code == 400
+    assert _owner(db_session, image_id) == first
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+def test_update_removing_widget_deletes_its_image(db_session, client, test_app):
+    image_id = _upload(client).json()["id"]
+    dashboard_id = _create_dashboard(
+        client, "d1", _config(_image_widget(image_id))
+    ).json()["id"]
+    assert _put_dashboard(client, dashboard_id, _config()).status_code == 200
+    assert _owner(db_session, image_id) == "gone"
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+def test_update_replacing_image_swaps_ownership(db_session, client, test_app):
+    old = _upload(client).json()["id"]
+    dashboard_id = _create_dashboard(client, "d1", _config(_image_widget(old))).json()[
+        "id"
+    ]
+    new = _upload(client).json()["id"]
+    assert (
+        _put_dashboard(client, dashboard_id, _config(_image_widget(new))).status_code
+        == 200
+    )
+    assert _owner(db_session, old) == "gone"
+    assert _owner(db_session, new) == dashboard_id
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+def test_update_with_bad_reference_keeps_previous_state(db_session, client, test_app):
+    image_id = _upload(client).json()["id"]
+    dashboard_id = _create_dashboard(
+        client, "d1", _config(_image_widget(image_id))
+    ).json()["id"]
+    response = _put_dashboard(client, dashboard_id, _config(_image_widget("missing")))
+    assert response.status_code == 400
+    assert _owner(db_session, image_id) == dashboard_id
+    db_session.expire_all()
+    stored = db_session.get(Dashboard, dashboard_id).dashboard_config
+    assert stored["widget_data"][0]["image"]["imageId"] == image_id
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+def test_rename_without_config_keeps_images(db_session, client, test_app):
+    image_id = _upload(client).json()["id"]
+    dashboard_id = _create_dashboard(
+        client, "d1", _config(_image_widget(image_id))
+    ).json()["id"]
+    assert _put_dashboard(client, dashboard_id, name="renamed").status_code == 200
+    assert _owner(db_session, image_id) == dashboard_id
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+def test_non_image_widget_with_stale_image_field_releases_it(
+    db_session, client, test_app
+):
+    image_id = _upload(client).json()["id"]
+    dashboard_id = _create_dashboard(
+        client, "d1", _config(_image_widget(image_id))
+    ).json()["id"]
+    switched = _image_widget(image_id, widget_type="METRIC")
+    assert _put_dashboard(client, dashboard_id, _config(switched)).status_code == 200
+    assert _owner(db_session, image_id) == "gone"
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+def test_url_image_widgets_need_no_upload(db_session, client, test_app):
+    widget = _image_widget(None)
+    widget["image"] = {
+        "source": "url",
+        "url": "https://example.com/a.png",
+        "fit": "cover",
+    }
+    assert _create_dashboard(client, "d1", _config(widget)).status_code == 200
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+def test_dashboards_without_image_widgets_unchanged(db_session, client, test_app):
+    config = {
+        "layout": [],
+        "widget_data": [{"i": "w-1", "name": "p", "widgetType": "PRESET"}],
+    }
+    response = _create_dashboard(client, "plain", config)
+    assert response.status_code == 200
+    assert response.json()["dashboard_config"] == config
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+def test_delete_dashboard_deletes_its_images(db_session, client, test_app):
+    image_id = _upload(client).json()["id"]
+    dashboard_id = _create_dashboard(
+        client, "d1", _config(_image_widget(image_id))
+    ).json()["id"]
+    assert client.delete(f"/dashboard/{dashboard_id}", headers=AUTH).status_code == 200
+    assert _owner(db_session, image_id) == "gone"
+
+
+def test_claim_race_loser_is_rejected(db_session, monkeypatch):
+    """Second of two concurrent saves: it read the image as pending, but the guarded UPDATE matches no row."""
+    from src.repositories import dashboard_images as module
+
+    first = Dashboard(
+        tenant_id=SINGLE_TENANT_UUID, dashboard_name="a", dashboard_config={}
+    )
+    second = Dashboard(
+        tenant_id=SINGLE_TENANT_UUID, dashboard_name="b", dashboard_config={}
+    )
+    db_session.add_all([first, second])
+    db_session.commit()
+    image_id = _add_image(db_session)
+    config = _config(_image_widget(image_id))
+
+    module.sync_dashboard_images(db_session, SINGLE_TENANT_UUID, first.id, config)
+    db_session.commit()
+
+    monkeypatch.setattr(
+        module,
+        "_current_owners",
+        lambda session, tenant_id, ids: {i: None for i in ids},
+    )
+    with pytest.raises(module.DashboardImageReferenceError) as exc:
+        module.sync_dashboard_images(db_session, SINGLE_TENANT_UUID, second.id, config)
+    db_session.rollback()
+    monkeypatch.undo()
+
+    assert exc.value.invalid_image_ids == [image_id]
+    assert _owner(db_session, image_id) == first.id
