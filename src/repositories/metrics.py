@@ -1,23 +1,10 @@
-import os
-from prometheus_client import Counter, Gauge, Histogram, Summary
+"""Metric definitions for the gateway.
 
-# This MUST be called before any prometheus_client import
-prom_multiproc_dir = os.environ.get("PROMETHEUS_MULTIPROC_DIR", "/tmp/prometheus")
-os.environ["PROMETHEUS_MULTIPROC_DIR"] = prom_multiproc_dir
-try:
-    os.makedirs(prom_multiproc_dir, exist_ok=True)
-except Exception:
-    # This might fail if we don't have permissions, but we shouldn't crash
-    pass
-
-
-def init_metrics():
-    # Deprecated: logic moved to top level
-    pass
-
-
-# Initialize metrics configuration
-init_metrics()
+prometheus_client is imported via `prometheus_multiproc`, never directly: the
+multiprocess directory has to be settled before that library first loads, and
+that ordering is isolated in the one module whose job it is.
+"""
+from src.repositories.prometheus_multiproc import Counter, Gauge, Histogram, Summary
 
 METRIC_PREFIX = "keep_"
 
@@ -146,6 +133,39 @@ login_failures_total = Counter(
 # Live/concurrent users: incremented on SSE subscribe, decremented on disconnect.
 # Connections are partitioned across workers/replicas, so `livesum` aggregates
 # the per-process counts into the true total.
+# SSE delivery per process: "no_subscriber" is a notification this process dropped.
+sse_notifications_total = Counter(
+    f"{METRIC_PREFIX}sse_notifications_total",
+    "SSE notifications handled by this process, by whether a local subscriber existed",
+    labelnames=["event", "outcome"],
+)
+sse_streams_closed_total = Counter(
+    f"{METRIC_PREFIX}sse_streams_closed_total",
+    "SSE streams closed, by reason",
+    labelnames=["reason"],
+)
+
+# SSE fan-out across processes (Tier 1): what this process published, what it
+# received from others, failures by operation, and whether its subscriber is up.
+sse_fanout_published_total = Counter(
+    f"{METRIC_PREFIX}sse_fanout_published_total",
+    "SSE notifications this process published to the fan-out channel",
+)
+sse_fanout_received_total = Counter(
+    f"{METRIC_PREFIX}sse_fanout_received_total",
+    "SSE notifications this process received from other processes",
+)
+sse_fanout_errors_total = Counter(
+    f"{METRIC_PREFIX}sse_fanout_errors_total",
+    "SSE fan-out failures, by operation",
+    labelnames=["operation"],
+)
+sse_fanout_connected = Gauge(
+    f"{METRIC_PREFIX}sse_fanout_connected",
+    "Processes whose SSE fan-out subscriber is connected",
+    multiprocess_mode="livesum",
+)
+
 connected_users_gauge = Gauge(
     f"{METRIC_PREFIX}connected_users",
     "Currently connected live users (authenticated SSE subscriptions)",

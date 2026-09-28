@@ -104,13 +104,15 @@ def get_facet_options(
 
                 data = session.exec(db_query).all()
             except OperationalError as e:
-                logger.warning(
+                # Empty option lists read as "no matches"; a database failure is
+                # not a result, so it propagates as a failure.
+                logger.exception(
                     f"""Failed to execute query for facet options.
                     Facet options: {json.dumps(facet_options_query.dict())}
                     Error: {e}
                     """
                 )
-                return {facet.id: [] for facet in facets}
+                raise
 
             grouped_by_id_dict = {}
 

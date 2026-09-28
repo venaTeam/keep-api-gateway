@@ -1,4 +1,4 @@
-﻿import json
+import json
 from typing import Optional
 
 from fastapi import Request
@@ -6,7 +6,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from sqlmodel import Session
 
 from src.repositories.db import get_api_key
-from src.repositories.dependencies import SINGLE_TENANT_EMAIL, SINGLE_TENANT_UUID
+from src.repositories.dependencies import GENERIC_TENANT_UUID, SINGLE_TENANT_EMAIL
 from src.services.identity_manager.authenticatedentity import AuthenticatedEntity
 from src.services.identity_manager.authverifierbase import AuthVerifierBase
 from src.services.identity_manager.rbac import Admin as AdminRole
@@ -20,7 +20,7 @@ class NoAuthVerifier(AuthVerifierBase):
             if token.startswith("keepActiveTenant"):
                 active_tenant, token = token.split("&")
                 active_tenant = active_tenant.split("=")[1]
-                tenant_id = active_tenant or SINGLE_TENANT_UUID
+                tenant_id = active_tenant or GENERIC_TENANT_UUID
                 return AuthenticatedEntity(
                     tenant_id=tenant_id,
                     email=SINGLE_TENANT_EMAIL,
@@ -28,7 +28,7 @@ class NoAuthVerifier(AuthVerifierBase):
                 )
             else:
                 token_payload = json.loads(token)
-                tenant_id = token_payload["tenant_id"] or SINGLE_TENANT_UUID
+                tenant_id = token_payload["tenant_id"] or GENERIC_TENANT_UUID
                 email = token_payload["user_id"] or SINGLE_TENANT_EMAIL
                 return AuthenticatedEntity(
                     tenant_id=tenant_id,
@@ -37,7 +37,7 @@ class NoAuthVerifier(AuthVerifierBase):
                 )
         except Exception:
             return AuthenticatedEntity(
-                tenant_id=SINGLE_TENANT_UUID,
+                tenant_id=GENERIC_TENANT_UUID,
                 email=SINGLE_TENANT_EMAIL,
                 role=AdminRole.get_name(),
             )
@@ -53,7 +53,7 @@ class NoAuthVerifier(AuthVerifierBase):
         # this is ok, since we are in noauth mode
         if not tenant_api_key:
             return AuthenticatedEntity(
-                tenant_id=SINGLE_TENANT_UUID,
+                tenant_id=GENERIC_TENANT_UUID,
                 email=SINGLE_TENANT_EMAIL,
                 role=AdminRole.get_name(),
             )

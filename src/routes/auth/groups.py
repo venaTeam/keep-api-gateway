@@ -1,6 +1,7 @@
 ﻿import logging
+from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from src.models.user import Group
@@ -20,8 +21,12 @@ class CreateOrUpdateGroupRequest(BaseModel):
         allow_population_by_field_name = True
 
 
-@router.get("", description="Get all groups")
+@router.get("", description="Get all groups (or search a subset with ?search=)")
 def get_groups(
+    search: Optional[str] = Query(
+        default=None,
+        description="Server-side filter -- returns only matching groups (fast at scale)",
+    ),
     authenticated_entity: AuthenticatedEntity = Depends(
         IdentityManagerFactory.get_auth_verifier(["read:settings"])
     ),
@@ -29,7 +34,7 @@ def get_groups(
     identity_manager = IdentityManagerFactory.get_identity_manager(
         authenticated_entity.tenant_id
     )
-    groups = identity_manager.get_groups()
+    groups = identity_manager.get_groups(search=search)
     return groups
 
 

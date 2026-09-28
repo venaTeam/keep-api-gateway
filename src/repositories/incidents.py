@@ -30,6 +30,7 @@ from src.models.db.alert import (
     LastAlertToIncident,
 )
 from src.models.db.facet import FacetType
+from src.models.db.incident import IncidentStatus
 from src.models.facet import FacetDto, FacetOptionDto, FacetOptionsQueryDto
 from src.models.incident import IncidentSorting
 from src.models.query import SortOptionsDto
@@ -64,6 +65,9 @@ incident_field_configurations = [
         map_from_pattern="status",
         map_to=["JSON(incidentenrichment.enrichments).*", "incident.status"],
         data_type=DataType.STRING,
+        enum_values=list(
+            reversed([item.value for _, item in enumerate(IncidentStatus)])
+        ),
     ),
     FieldMappingConfiguration(
         map_from_pattern="creation_time",

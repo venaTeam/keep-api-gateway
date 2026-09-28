@@ -8,20 +8,22 @@ no-auth modes.
 
 import logging
 import os
+import secrets
 from typing import List, Optional, Union
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlmodel import Session
 
 from src.repositories.db import engine
-from src.services.sse import sse_broadcaster
+from src.config.config import SSE_NOTIFY_TOKEN
+from src.services.sse import broadcast, sse_broadcaster
 from src.services.identity_manager.authenticatedentity import AuthenticatedEntity
 from src.services.identity_manager.identitymanagerfactory import IdentityManagerFactory
 
-# Import single tenant constants for noauth mode
-from src.repositories.dependencies import SINGLE_TENANT_UUID, SINGLE_TENANT_EMAIL
+# Import generic tenant constants for noauth mode
+from src.repositories.dependencies import GENERIC_TENANT_UUID, SINGLE_TENANT_EMAIL
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -35,7 +37,7 @@ def get_sse_authenticated_entity(
     Get authenticated entity for SSE connections.
 
     This dependency supports both authenticated and no-auth modes:
-    - In noauth mode: Returns a default single-tenant entity if no token provided
+    - In noauth mode: Returns a default generic-tenant entity if no token provided
     - In authenticated mode: Validates the token and returns the authenticated entity
 
     Args:
@@ -49,9 +51,9 @@ def get_sse_authenticated_entity(
     
     # Check if we're in noauth mode and no token provided
     if auth_type == "noauth" and not token:
-        logger.debug("SSE connection in noauth mode without token, using single tenant")
+        logger.debug("SSE connection in noauth mode without token, using generic tenant")
         return AuthenticatedEntity(
-            tenant_id=SINGLE_TENANT_UUID,
+            tenant_id=GENERIC_TENANT_UUID,
             email=SINGLE_TENANT_EMAIL,
         )
     
@@ -86,11 +88,11 @@ def get_sse_authenticated_entity(
                 session=session,
             )
     except Exception as e:
-        # If authentication fails in noauth mode, fall back to single tenant
+        # If authentication fails in noauth mode, fall back to generic tenant
         if auth_type == "noauth":
-            logger.debug(f"SSE auth failed in noauth mode, using single tenant: {e}")
+            logger.debug(f"SSE auth failed in noauth mode, using generic tenant: {e}")
             return AuthenticatedEntity(
-                tenant_id=SINGLE_TENANT_UUID,
+                tenant_id=GENERIC_TENANT_UUID,
                 email=SINGLE_TENANT_EMAIL,
             )
         raise
@@ -110,7 +112,6 @@ async def sse_subscribe(
     - connected: Initial connection confirmation
     - poll-alerts: Alerts have been updated
     - incident-change: Incidents have been updated
-    - poll-presets: Presets have been updated
     - topology-update: Topology has been updated
     - ai-logs-change: AI logs have been updated
     - incident-comment: New comment on incident
@@ -153,10 +154,6 @@ class AlertNotifyData(BaseModel):
     alerts: list
 
 
-class PresetNotifyData(BaseModel):
-    """Data payload for poll-presets events."""
-    preset_names: List[str]
-
 
 class IncidentNotifyData(BaseModel):
     """Data payload for incident-change events."""
@@ -166,10 +163,28 @@ class IncidentNotifyData(BaseModel):
 class SSENotification(BaseModel):
     tenant_id: str
     event: str
-    data: Union[PresetNotifyData, IncidentNotifyData, AlertNotifyData, dict] = {}
+    data: Union[IncidentNotifyData, AlertNotifyData, dict] = {}
 
 
-@router.post("/notify", status_code=204)
+def require_notify_token(
+    token: Optional[str] = Header(None, alias="X-Keep-Notify-Token"),
+) -> None:
+    """
+    Guard the notify route with the shared token when `SSE_NOTIFY_TOKEN` is
+    set. The route is how the event handler and workflows reach the browsers,
+    and with the fan-out enabled a request to it reaches every gateway
+    process, so on a network that exposes it the token is what keeps it
+    internal. Unset leaves the route open, as before the setting existed.
+    """
+    if SSE_NOTIFY_TOKEN and not secrets.compare_digest(
+        (token or "").encode(), SSE_NOTIFY_TOKEN.encode()
+    ):
+        raise HTTPException(status_code=401, detail="Invalid notify token")
+
+
+@router.post(
+    "/notify", status_code=204, dependencies=[Depends(require_notify_token)]
+)
 async def sse_notify(
     notification: SSENotification,
     # authenticated_entity: AuthenticatedEntity = Depends(get_sse_authenticated_entity),
@@ -186,9 +201,5 @@ async def sse_notify(
     )
     # Convert pydantic model instances to dicts for JSON serialization
     data = notification.data.dict() if isinstance(notification.data, BaseModel) else notification.data
-    await sse_broadcaster.notify(
-        notification.tenant_id,
-        notification.event,
-        data
-    )
+    await broadcast(notification.tenant_id, notification.event, data)
     

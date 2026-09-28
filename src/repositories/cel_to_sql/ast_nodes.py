@@ -319,3 +319,44 @@ class PropertyAccessNode(MemberAccessNode):
             return f"{self.member_name}.{self.value}"
 
         return self.member_name
+
+
+def is_boolean_filter_node(node) -> bool:
+    """Whether `node` yields a true/false result usable as a filter.
+
+    Runs on the *parsed* tree, before property mapping. Bare field references
+    count: the converter turns them into a truthiness test, which is a valid
+    filter. A bare non-boolean literal does not - a quoted string or a number is
+    a value, not a filter, and putting one where SQL expects a predicate is what
+    used to reach the database as a syntax error.
+    """
+    if isinstance(node, ParenthesisNode):
+        return is_boolean_filter_node(node.expression)
+
+    if isinstance(node, LogicalNode):
+        # Both operands must themselves be filters, otherwise the generated SQL
+        # puts a bare value where a predicate belongs.
+        return is_boolean_filter_node(node.left) and is_boolean_filter_node(
+            node.right
+        )
+
+    if isinstance(node, UnaryNode):
+        if node.operator == UnaryNodeOperator.NOT:
+            return is_boolean_filter_node(node.operand)
+        if node.operator == UnaryNodeOperator.HAS:
+            return True
+        # Arithmetic negation yields a number.
+        return False
+
+    if isinstance(node, ComparisonNode):
+        return True
+
+    if isinstance(node, ConstantNode):
+        return isinstance(node.value, bool)
+
+    if isinstance(node, MemberAccessNode):
+        return True
+
+    # Anything else (arithmetic, ternaries, ...) is rejected by the converter
+    # before it reaches here; treat it as non-boolean if it ever does.
+    return False

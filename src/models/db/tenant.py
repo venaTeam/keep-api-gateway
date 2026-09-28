@@ -12,6 +12,10 @@ class Tenant(SQLModel, table=True):
     configuration: dict | None = Field(sa_column=Column(JSON), default=None)
     installations: List["TenantInstallation"] = Relationship(back_populates="tenant")
 
+    # Tenant names are unique -- enforced at the DB level so concurrent creates
+    # race on the constraint rather than a check-then-insert (VENA-5596).
+    __table_args__ = (UniqueConstraint("name", name="uq_tenant_name"),)
+
 
 class TenantApiKey(SQLModel, table=True):
     tenant_id: str = Field(foreign_key="tenant.id")

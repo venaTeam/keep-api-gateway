@@ -369,9 +369,11 @@ def test_batch_enrich_cel_invalid_expression(
         },
     )
 
-    # Should return a 400 error
+    # Should return the structured invalid-CEL 400
     assert response.status_code == 400
-    assert "Error parsing CEL expression" in response.json()["detail"]
+    detail = response.json()["detail"]
+    assert detail["code"] == "INVALID_CEL"
+    assert detail["diagnostics"]
 
     # Verify no alerts were changed
     response = client.get(

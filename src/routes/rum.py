@@ -1,6 +1,9 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
-from prometheus_client import Histogram, REGISTRY
+
+# Via prometheus_multiproc, not prometheus_client: this module defines metrics,
+# so it is subject to the multiprocess-dir ordering (see that module's docstring).
+from src.repositories.prometheus_multiproc import REGISTRY, Histogram
 
 def get_or_create_histogram(name, documentation, labelnames, buckets):
     try:

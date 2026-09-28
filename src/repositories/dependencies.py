@@ -6,8 +6,9 @@ from fastapi.datastructures import FormData
 logger = logging.getLogger(__name__)
 
 
-# Just a fake random tenant id
-SINGLE_TENANT_UUID = "keep"
+# Generic default tenant id
+GENERIC_TENANT_UUID = "keep"
+SINGLE_TENANT_UUID = GENERIC_TENANT_UUID
 SINGLE_TENANT_EMAIL = "admin@keephq"
 
 

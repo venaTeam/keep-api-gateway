@@ -1,0 +1,75 @@
+# Minimal Valkey (Redis-compatible) for the SSE fan-out, for dev/integration.
+#
+# The fan-out is pub/sub ONLY: nothing is ever read back, no key is persisted, and a
+# dropped message costs at most one refetch on the client. So this runs with
+# persistence off and needs no PVC. Do not reuse it as an application cache.
+#
+#   oc apply -n <namespace> -f valkey-dev.yaml
+#
+# For production, point the gateway at your managed/enterprise Redis instead and set
+# REDIS_KEY_PREFIX (see ../README.md) -- do not ship this Deployment there.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keep-sse-redis
+  labels:
+    app: keep-sse-redis
+    app.kubernetes.io/part-of: keep
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: keep-sse-redis
+  template:
+    metadata:
+      labels:
+        app: keep-sse-redis
+    spec:
+      containers:
+        - name: valkey
+          image: docker.io/valkey/valkey:8
+          args:
+            - valkey-server
+            - --save
+            - ""                     # no RDB snapshots
+            - --appendonly
+            - "no"                   # no AOF
+            - --maxmemory
+            - "128mb"
+            - --maxmemory-policy
+            - allkeys-lru            # pub/sub holds no keys; this is a safety net
+          ports:
+            - containerPort: 6379
+              name: redis
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          readinessProbe:
+            exec:
+              command: ["valkey-cli", "ping"]
+            periodSeconds: 5
+            timeoutSeconds: 2
+          livenessProbe:
+            exec:
+              command: ["valkey-cli", "ping"]
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keep-sse-redis
+  labels:
+    app: keep-sse-redis
+spec:
+  selector:
+    app: keep-sse-redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379

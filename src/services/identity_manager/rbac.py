@@ -19,8 +19,11 @@ from fastapi import HTTPException
 
 
 class Roles(enum.Enum):
+    SUPERADMIN = "superadmin"
     ADMIN = "admin"
     NOC = "noc"
+    EDITOR = "editor"
+    VIEWER = "viewer"
     WEBHOOK = "webhook"
 
 
@@ -57,10 +60,37 @@ class Noc(Role):
     DESCRIPTION = "read permissions and assign itself to alert"
 
 
+# Viewer is read-only within the tenants it has access to (VENA-5596 §3.5).
+class Viewer(Role):
+    SCOPES = ["read:*"]
+    DESCRIPTION = "read-only within a tenant"
+
+
+# Editor operates fully within a tenant, minus tenant permission management
+# (VENA-5596 §3.5 -- formerly `noc`).
+class Editor(Role):
+    SCOPES = ["read:*", "write:*", "delete:*", "update:*", "execute:*"]
+    DESCRIPTION = "full operate within a tenant, minus permission management"
+
+
 # Admin has all permissions
 class Admin(Role):
     SCOPES = ["read:*", "write:*", "delete:*", "update:*", "execute:*"]
     DESCRIPTION = "do everything"
+
+
+# Superadmin is a global admin across all tenants and is the only role that may
+# create a tenant (VENA-5596 §3.5 / §3.7).
+class SuperAdmin(Role):
+    SCOPES = [
+        "read:*",
+        "write:*",
+        "delete:*",
+        "update:*",
+        "execute:*",
+        "create:*",
+    ]
+    DESCRIPTION = "global admin across all tenants; can create tenants"
 
 
 # Webhook has write:alert permission to write alerts
@@ -72,10 +102,16 @@ class Webhook(Role):
 
 
 def get_role_by_role_name(role_name: str) -> list[str]:
-    if role_name == Roles.ADMIN.value:
+    if role_name == Roles.SUPERADMIN.value:
+        return SuperAdmin
+    elif role_name == Roles.ADMIN.value:
         return Admin
     elif role_name == Roles.NOC.value:
         return Noc
+    elif role_name == Roles.EDITOR.value:
+        return Editor
+    elif role_name == Roles.VIEWER.value:
+        return Viewer
     elif role_name == Roles.WEBHOOK.value:
         return Webhook
 

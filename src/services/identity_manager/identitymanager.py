@@ -61,7 +61,7 @@ class BaseIdentityManager(metaclass=abc.ABCMeta):
         )
 
     @abc.abstractmethod
-    def get_users(self) -> list[User]:
+    def get_users(self, search: str | None = None) -> list[User]:
         """
         Get users
 
@@ -72,7 +72,7 @@ class BaseIdentityManager(metaclass=abc.ABCMeta):
             "get_users() method not implemented for {}".format(self.__class__.__name__)
         )
 
-    def get_groups(self) -> str | dict:
+    def get_groups(self, search: str | None = None) -> str | dict:
         """
         Get groups
 

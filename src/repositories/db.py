@@ -56,7 +56,7 @@ from src.repositories.db_utils import (
     get_json_extract_field,
     get_or_create,
 )
-from src.repositories.dependencies import SINGLE_TENANT_UUID
+from src.repositories.dependencies import GENERIC_TENANT_UUID
 
 # This import is required to create the tables
 from src.models.action_type import ActionType
@@ -80,7 +80,15 @@ from src.models.db.provider_image import *  # pylint: disable=unused-wildcard-im
 from src.models.db.rule import *  # pylint: disable=unused-wildcard-import
 from src.models.db.system import *  # pylint: disable=unused-wildcard-import
 from src.models.db.tenant import *  # pylint: disable=unused-wildcard-import
+from src.models.db.operator import Operator
+from src.models.db.tenant_role_grant import TenantRoleGrant
 
+from src.exceptions.tenant_exceptions import (
+    OperatorGroupTaken,
+    OperatorNameTaken,
+    TenantNameConflict,
+    TenantNotFound,
+)
 from src.models.incident import IncidentDto, IncidentDtoIn, IncidentSorting
 from src.models.time_stamp import TimeStampFilter
 from src.repositories.metrics import incidents_opened_total
@@ -1265,18 +1273,19 @@ def get_api_key(
 
 
 
-# this is only for single tenant
-def get_user(username, password, update_sign_in=True):
+def get_user(username, password, tenant_id=None, update_sign_in=True):
     from src.models.db.user import User
 
     password_hash = hashlib.sha256(password.encode()).hexdigest()
     with Session(engine, expire_on_commit=False) as session:
-        user = session.exec(
+        query = (
             select(User)
-            .where(User.tenant_id == SINGLE_TENANT_UUID)
             .where(User.username == username)
             .where(User.password_hash == password_hash)
-        ).first()
+        )
+        if tenant_id:
+            query = query.where(User.tenant_id == tenant_id)
+        user = session.exec(query).first()
         if user and update_sign_in:
             user.last_sign_in = datetime.utcnow()
             session.add(user)
@@ -1287,25 +1296,26 @@ def get_user(username, password, update_sign_in=True):
 def get_users(tenant_id=None):
     from src.models.db.user import User
 
-    tenant_id = tenant_id or SINGLE_TENANT_UUID
-
     with Session(engine) as session:
-        users = session.exec(select(User).where(User.tenant_id == tenant_id)).all()
+        query = select(User)
+        if tenant_id:
+            query = query.where(User.tenant_id == tenant_id)
+        users = session.exec(query).all()
     return users
 
 
-def delete_user(username):
+def delete_user(username, tenant_id=None):
     from src.models.db.user import User
 
     with Session(engine) as session:
-        user = session.exec(
-            select(User)
-            .where(User.tenant_id == SINGLE_TENANT_UUID)
-            .where(User.username == username)
-        ).first()
+        query = select(User).where(User.username == username)
+        if tenant_id:
+            query = query.where(User.tenant_id == tenant_id)
+        user = session.exec(query).first()
         if user:
             session.delete(user)
             session.commit()
+
 
 
 def user_exists(tenant_id, username, session: Optional[Session] = None):
@@ -4722,6 +4732,228 @@ def create_tenant(tenant_name: str) -> str:
         except Exception:
             logger.exception("Failed to create tenant")
             pass
+
+
+# --- VENA-5596 tenant + operator management -------------------------------
+
+_ROLE_STRENGTH = {"admin": 3, "editor": 2, "viewer": 1}
+
+
+def create_tenant_atomic(
+    name: str,
+    role_mappings: list | None = None,
+    created_by: str | None = None,
+) -> Tenant:
+    """Create a tenant and persist its role grants in a single transaction
+    (VENA-5596). Operators are created afterwards, for the existing tenant, via
+    create_operator -- they are never linked at tenant creation.
+
+    Name uniqueness is enforced by the DB constraint (race-safe): a duplicate
+    surfaces as IntegrityError and is re-raised as TenantNameConflict. Callers
+    must pass role_mappings with distinct `subject` values (the grant PK is
+    (tenant_id, subject)); the route validates that up front.
+
+    Raises TenantNameConflict.
+    """
+    role_mappings = role_mappings or []
+    with Session(engine) as session:
+        try:
+            tenant = Tenant(id=str(uuid4()), name=name)
+            session.add(tenant)
+            # Flush so a duplicate name fails now, before we touch grants.
+            session.flush()
+
+            for mapping in role_mappings:
+                session.add(
+                    TenantRoleGrant(
+                        tenant_id=tenant.id,
+                        subject=mapping.subject,
+                        subject_type=mapping.subject_type,
+                        role=mapping.role,
+                    )
+                )
+
+            session.commit()
+            session.refresh(tenant)
+            logger.info(
+                "Tenant created",
+                extra={
+                    "tenant_id": tenant.id,
+                    "tenant_name": name,
+                    "created_by": created_by,
+                    "grants": len(role_mappings),
+                },
+            )
+            return tenant
+        except IntegrityError as exc:
+            session.rollback()
+            raise TenantNameConflict(name) from exc
+
+
+def get_tenant(tenant_id: str) -> Tenant | None:
+    with Session(engine) as session:
+        return session.exec(select(Tenant).where(Tenant.id == tenant_id)).first()
+
+
+def get_tenants_for_subjects(subjects: list[str]) -> list[Tenant]:
+    """All tenants where any of `subjects` (the caller's email + group paths)
+    holds a role grant."""
+    if not subjects:
+        return []
+    with Session(engine) as session:
+        tenant_ids = session.exec(
+            select(TenantRoleGrant.tenant_id).where(
+                TenantRoleGrant.subject.in_(subjects)
+            )
+        ).all()
+        if not tenant_ids:
+            return []
+        return session.exec(
+            select(Tenant).where(Tenant.id.in_(set(tenant_ids)))
+        ).all()
+
+
+def update_tenant(tenant_id: str, name: str | None = None) -> Tenant:
+    with Session(engine) as session:
+        tenant = session.exec(
+            select(Tenant).where(Tenant.id == tenant_id)
+        ).first()
+        if tenant is None:
+            raise TenantNotFound(tenant_id)
+        if name is not None:
+            tenant.name = name
+        session.add(tenant)
+        try:
+            session.commit()
+        except IntegrityError as exc:
+            session.rollback()
+            raise TenantNameConflict(name) from exc
+        session.refresh(tenant)
+        return tenant
+
+
+def get_tenant_role_for_subjects(tenant_id: str, subjects: list[str]) -> str | None:
+    """The strongest role (admin > editor > viewer) any of `subjects` holds on
+    `tenant_id`, or None."""
+    if not subjects:
+        return None
+    with Session(engine) as session:
+        roles = session.exec(
+            select(TenantRoleGrant.role).where(
+                TenantRoleGrant.tenant_id == tenant_id,
+                TenantRoleGrant.subject.in_(subjects),
+            )
+        ).all()
+    if not roles:
+        return None
+    return max(roles, key=lambda role: _ROLE_STRENGTH.get(role, 0))
+
+
+def list_grants(tenant_id: str) -> list[TenantRoleGrant]:
+    with Session(engine) as session:
+        return session.exec(
+            select(TenantRoleGrant).where(TenantRoleGrant.tenant_id == tenant_id)
+        ).all()
+
+
+def add_grant(
+    tenant_id: str, subject: str, subject_type: str, role: str
+) -> TenantRoleGrant:
+    """Add or update a role grant (idempotent per (tenant_id, subject))."""
+    with Session(engine) as session:
+        grant = session.exec(
+            select(TenantRoleGrant).where(
+                TenantRoleGrant.tenant_id == tenant_id,
+                TenantRoleGrant.subject == subject,
+            )
+        ).first()
+        if grant is None:
+            grant = TenantRoleGrant(
+                tenant_id=tenant_id,
+                subject=subject,
+                subject_type=subject_type,
+                role=role,
+            )
+        else:
+            grant.subject_type = subject_type
+            grant.role = role
+        session.add(grant)
+        session.commit()
+        session.refresh(grant)
+        return grant
+
+
+def remove_grant(tenant_id: str, subject: str) -> bool:
+    with Session(engine) as session:
+        grant = session.exec(
+            select(TenantRoleGrant).where(
+                TenantRoleGrant.tenant_id == tenant_id,
+                TenantRoleGrant.subject == subject,
+            )
+        ).first()
+        if grant is None:
+            return False
+        session.delete(grant)
+        session.commit()
+        return True
+
+
+def create_operator(group: str, tenant_id: str, name: str | None = None) -> Operator:
+    """Create an operator for `group` (globally unique) linked to `tenant_id`.
+    `name` (the routing key) defaults to the group; `apikey` is model-generated.
+
+    Both `name` and `group` are globally unique, so raise the SPECIFIC conflict:
+    OperatorNameTaken vs OperatorGroupTaken (don't report a name clash as a group
+    clash)."""
+    from src.services.operator_provisoioning import provision_operator
+    op_name = name or group
+    return provision_operator(
+        operator_name=op_name,
+        mail_group=group,
+        tenant_id=tenant_id,
+    )
+
+
+
+def get_operators(tenant_id: str | None = None) -> list[Operator]:
+    with Session(engine) as session:
+        stmt = select(Operator)
+        if tenant_id is not None:
+            stmt = stmt.where(Operator.tenant_id == tenant_id)
+        return session.exec(stmt).all()
+
+
+def get_operator(operator_id: str) -> Operator | None:
+    with Session(engine) as session:
+        return session.exec(
+            select(Operator).where(Operator.id == operator_id)
+        ).first()
+
+
+def delete_operator(operator_id: str) -> bool:
+    """Delete an operator by id. Returns False if it didn't exist."""
+    with Session(engine) as session:
+        operator = session.exec(
+            select(Operator).where(Operator.id == operator_id)
+        ).first()
+        if operator is None:
+            return False
+        session.delete(operator)
+        session.commit()
+        return True
+
+
+def operator_groups_in_use() -> set[str]:
+    """Groups that already back an operator (any tenant)."""
+    with Session(engine) as session:
+        return set(session.exec(select(Operator.group)).all())
+
+
+def get_operator_by_name(name: str) -> Operator | None:
+    """Resolve an operator by its routing-key name (unique). Used at ingestion
+    to route an alert to the operator's tenant (VENA-5596 Epic 5)."""
+    with Session(engine) as session:
+        return session.exec(select(Operator).where(Operator.name == name)).first()
 
 
 def create_single_tenant_for_e2e(tenant_id: str) -> None:
