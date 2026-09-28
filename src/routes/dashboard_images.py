@@ -36,6 +36,8 @@ IMAGE_RESPONSE_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "Content-Security-Policy": "sandbox",
     "Cache-Control": "private, max-age=31536000, immutable",
+    "Content-Disposition": "attachment",
+    "Cross-Origin-Resource-Policy": "same-origin",
 }
 
 

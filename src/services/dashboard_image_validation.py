@@ -3,15 +3,21 @@
 Raster types are checked by their magic-byte signature. SVG gets stricter
 treatment because it is active XML that a browser may render: the bytes must
 decode as UTF-8, and a single expat pass over exactly those bytes rejects any
-DOCTYPE or entity declaration, rejects active content (script, foreignObject,
-iframe, embed and object elements; on* event-handler attributes; href or
+DOCTYPE or entity declaration, rejects processing instructions (e.g.
+<?xml-stylesheet?>), rejects active or externally-referencing content
+(script, foreignObject, iframe, embed and object elements; the SMIL animation
+elements animate/animateMotion/animateTransform/animateColor/set, which can
+mutate attributes at runtime; on* event-handler attributes; href or
 xlink:href values other than same-document "#" fragments or raster
-data:image URLs; any attribute value containing "javascript:") and captures
-the root element, which must be <svg>. Doing every check in the one parse that
-also produces the accepted document means there is no second interpretation of
-the bytes that a check could disagree with.
+data:image URLs; any attribute value with an external CSS url(...) reference,
+i.e. one whose target is not a same-document "#" fragment; any attribute value
+containing "javascript:") and captures the root element, which must be <svg>.
+Doing every check in the one parse that also produces the accepted document
+means there is no second interpretation of the bytes that a check could
+disagree with.
 """
 
+import re
 import xml.parsers.expat
 
 ALLOWED_CONTENT_TYPES = frozenset(
@@ -26,8 +32,21 @@ _SIGNATURES = {
 }
 
 _FORBIDDEN_ELEMENTS = frozenset(
-    {"script", "foreignobject", "iframe", "embed", "object"}
+    {
+        "script",
+        "foreignobject",
+        "iframe",
+        "embed",
+        "object",
+        "animate",
+        "animatemotion",
+        "animatetransform",
+        "animatecolor",
+        "set",
+    }
 )
+
+_EXTERNAL_URL_REF = re.compile(r"url\(\s*['\"]?\s*(?!#)", re.IGNORECASE)
 
 _ALLOWED_HREF_PREFIXES = (
     "#",
@@ -76,6 +95,8 @@ def _is_active_attribute(name: str, value: str) -> bool:
         return True
     if local == "href" and not value.strip().lower().startswith(_ALLOWED_HREF_PREFIXES):
         return True
+    if _EXTERNAL_URL_REF.search(value):
+        return True
     return "javascript:" in "".join(value.split()).lower()
 
 
@@ -84,6 +105,9 @@ def _parse_svg_root(data: bytes) -> str:
 
     def _reject_doctype_or_entity(*_args):
         raise ImageContentError("SVG must not declare a DOCTYPE or entities")
+
+    def _reject_processing_instruction(*_args):
+        raise ImageContentError(_ACTIVE_CONTENT_MESSAGE)
 
     def _check_element(name, attrs):
         if root["tag"] is None:
@@ -97,6 +121,7 @@ def _parse_svg_root(data: bytes) -> str:
     parser = xml.parsers.expat.ParserCreate(encoding="utf-8", namespace_separator="}")
     parser.StartDoctypeDeclHandler = _reject_doctype_or_entity
     parser.EntityDeclHandler = _reject_doctype_or_entity
+    parser.ProcessingInstructionHandler = _reject_processing_instruction
     parser.StartElementHandler = _check_element
 
     try:

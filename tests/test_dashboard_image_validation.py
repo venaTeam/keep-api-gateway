@@ -131,6 +131,19 @@ XLINK = b'xmlns:xlink="http://www.w3.org/1999/xlink"'
         b"<svg " + NS + b'><rect OnClick="x"/></svg>',
         b"<svg " + NS + b'><image href="data:image/svg+xml;base64,PHN2Zy8+"/></svg>',
         b"<svg " + NS + b'><set to="java\tscript:alert(1)"/></svg>',
+        b"<svg "
+        + NS
+        + b'><animate attributeName="href" values="https://evil.example/x"/></svg>',
+        b"<svg "
+        + NS
+        + b'><set attributeName="href" to="https://evil.example/x"/></svg>',
+        b"<svg " + NS + b"><animateTransform/></svg>",
+        b"<svg " + NS + b'><rect style="fill:url(https://evil.example/x)"/></svg>',
+        b"<svg " + NS + b'><rect fill="url(http://evil.example/x)"/></svg>',
+        b"<svg " + NS + b"><rect fill=\"url('//evil.example/x')\"/></svg>",
+        b'<?xml-stylesheet type="text/css" href="https://evil.example/x.css"?><svg '
+        + NS
+        + b"/>",
     ],
 )
 def test_svg_active_content_rejected(data):
@@ -145,6 +158,8 @@ def test_svg_active_content_rejected(data):
         b"<svg " + NS + b" " + XLINK + b'><use xlink:href=" #a"/></svg>',
         b"<svg " + NS + b'><image href="data:image/png;base64,iVBORw0KGgo="/></svg>',
         b"<svg " + NS + b'><image href="DATA:IMAGE/JPEG;base64,/9j/"/></svg>',
+        b"<svg " + NS + b'><rect fill="url(#grad)"/><linearGradient id="grad"/></svg>',
+        b"<svg " + NS + b'><rect style="fill:url(#grad)"/></svg>',
     ],
 )
 def test_svg_safe_references_pass(data):

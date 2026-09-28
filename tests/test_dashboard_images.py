@@ -88,6 +88,8 @@ def test_upload_then_fetch_round_trip(db_session, client, test_app, data, conten
     assert fetched.headers["x-content-type-options"] == "nosniff"
     assert fetched.headers["content-security-policy"] == "sandbox"
     assert fetched.headers["cache-control"] == "private, max-age=31536000, immutable"
+    assert fetched.headers["content-disposition"] == "attachment"
+    assert fetched.headers["cross-origin-resource-policy"] == "same-origin"
 
     row = db_session.get(DashboardImage, body["id"])
     assert row.dashboard_id is None
