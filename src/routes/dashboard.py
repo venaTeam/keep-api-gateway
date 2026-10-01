@@ -8,8 +8,10 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from src.repositories.dashboard_images import DashboardImageReferenceError
 from src.repositories.db import (
     calc_incidents_mttr,
     get_incidents_created_distribution,
@@ -90,6 +92,17 @@ def provision_dashboards(tenant_id: str):
     )
 
 
+def _invalid_images_response(error: DashboardImageReferenceError) -> JSONResponse:
+    """400 body the UI uses to name the widgets whose images are unavailable."""
+    return JSONResponse(
+        status_code=400,
+        content={
+            "message": "Dashboard references missing or unavailable images",
+            "invalid_image_ids": error.invalid_image_ids,
+        },
+    )
+
+
 @router.get("", response_model=List[DashboardResponseDTO])
 def read_dashboards(
     authenticated_entity: AuthenticatedEntity = Depends(
@@ -108,12 +121,15 @@ def create_dashboard(
     ),
 ):
     email = authenticated_entity.email
-    dashboard = create_dashboard_db(
-        tenant_id=authenticated_entity.tenant_id,
-        dashboard_name=dashboard_dto.dashboard_name,
-        dashboard_config=dashboard_dto.dashboard_config,
-        created_by=email,
-    )
+    try:
+        dashboard = create_dashboard_db(
+            tenant_id=authenticated_entity.tenant_id,
+            dashboard_name=dashboard_dto.dashboard_name,
+            dashboard_config=dashboard_dto.dashboard_config,
+            created_by=email,
+        )
+    except DashboardImageReferenceError as e:
+        return _invalid_images_response(e)
     return dashboard
 
 
@@ -125,14 +141,16 @@ def update_dashboard(
         IdentityManagerFactory.get_auth_verifier(["write:dashboards"])
     ),
 ):
-    # update the dashboard in the database
-    dashboard = update_dashboard_db(
-        tenant_id=authenticated_entity.tenant_id,
-        dashboard_id=dashboard_id,
-        dashboard_name=dashboard_dto.dashboard_name,
-        dashboard_config=dashboard_dto.dashboard_config,
-        updated_by=authenticated_entity.email,
-    )
+    try:
+        dashboard = update_dashboard_db(
+            tenant_id=authenticated_entity.tenant_id,
+            dashboard_id=dashboard_id,
+            dashboard_name=dashboard_dto.dashboard_name,
+            dashboard_config=dashboard_dto.dashboard_config,
+            updated_by=authenticated_entity.email,
+        )
+    except DashboardImageReferenceError as e:
+        return _invalid_images_response(e)
     return dashboard
 
 
