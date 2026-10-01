@@ -166,3 +166,25 @@ async def test_exhausted_main_topic_still_falls_back_to_the_dlq():
     task_name = await producer.produce(event={"a": 1}, trace_id="t-1")
 
     assert task_name == DLQ_TASK_NAME
+
+
+@pytest.mark.asyncio
+async def test_receipt_time_is_serialized_once_and_provider_time_is_preserved():
+    import json
+    from src.models.alert import AlertDto
+
+    producer = _producer()
+    producer._produce_with_retry = AsyncMock(return_value=MAIN_TASK_NAME)
+    event = AlertDto(name="test", time_created="2026-01-01T12:00:00+02:00")
+    await producer.produce(event, tenant_id="tenant", trace_id="trace")
+    payload = json.loads(producer._produce_with_retry.call_args.args[0])
+    assert payload["received_at"]
+    assert payload["event"]["time_created"] == "2026-01-01T12:00:00+02:00"
+    assert "time_created" in AlertDto.__fields__
+
+
+def test_missing_firing_time_is_left_for_event_handler_normalization():
+    from src.models.alert import AlertDto
+
+    assert AlertDto(name="test").time_created is None
+    assert AlertDto(name="test", time_created=None).time_created is None
