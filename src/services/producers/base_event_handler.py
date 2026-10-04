@@ -18,17 +18,9 @@ class ProduceResult(str, Enum):
 
 
 # Task names returned by `produce()`. The `-dlq` suffix is the per-request signal
-# that an event was diverted; `result_from_task_name` is the only reader.
+# that an event was diverted.
 MAIN_TASK_NAME = "kafka-async-task"
 DLQ_TASK_NAME = "kafka-async-task-dlq"
-
-
-def result_from_task_name(task_name) -> ProduceResult:
-    """Classify a `produce()` return value. Per-request, unlike
-    `last_produce_result()`, which is racy shared state on the producer."""
-    if isinstance(task_name, str) and task_name.endswith("-dlq"):
-        return ProduceResult.DLQ
-    return ProduceResult.MAIN
 
 
 class EventProducer(abc.ABC):

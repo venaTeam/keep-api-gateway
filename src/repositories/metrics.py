@@ -42,18 +42,6 @@ running_tasks_by_process_gauge = Gauge(
 ### ALERTS
 ALERT_METRIC_PREFIX = "keep_alert_"
 
-alert_ingestion_total = Counter(
-    f"{ALERT_METRIC_PREFIX}ingestion_total",
-    "Total number of alerts received",
-    labelnames=["source", "status"],
-)
-
-alert_ingestion_error_total = Counter(
-    f"{ALERT_METRIC_PREFIX}ingestion_error_total",
-    "Total number of alerts received with error",
-    labelnames=["source", "error_type"],
-)
-
 alert_enrichment_duration_seconds = Histogram(
     f"{ALERT_METRIC_PREFIX}enrichment_duration_seconds",
     "Time spent enriching alerts",

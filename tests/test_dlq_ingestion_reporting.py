@@ -1,91 +1,21 @@
 """
-Tests that an alert diverted to the dead-letter topic is not reported as a
-successful ingestion.
+Tests that the producer marks an event diverted to the dead-letter topic.
 
 Only the main topic is consumed, so an event on the DLQ topic is never processed.
-Reporting it as `202` + `status="success"` would hide real alert loss.
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.routes import alerts
-from src.services.producers.base_event_handler import (
-    DLQ_TASK_NAME,
-    MAIN_TASK_NAME,
-    ProduceResult,
-    result_from_task_name,
-)
+from src.services.producers.base_event_handler import DLQ_TASK_NAME, ProduceResult
 from src.services.producers.kafka_producer import KafkaEventProducer
-
-
-def test_result_from_task_name_classifies_the_sink():
-    assert result_from_task_name(MAIN_TASK_NAME) is ProduceResult.MAIN
-    assert result_from_task_name(DLQ_TASK_NAME) is ProduceResult.DLQ
-    assert result_from_task_name(None) is ProduceResult.MAIN
-    assert result_from_task_name("async-task") is ProduceResult.MAIN
-
-
-def test_main_topic_reports_202_and_success_metric():
-    with patch.object(alerts, "alert_ingestion_total") as metric:
-        response = alerts._ingestion_response(MAIN_TASK_NAME, source="grafana")
-
-    assert response.status_code == 202
-    metric.labels.assert_called_once_with(source="grafana", status="success")
-    metric.labels.return_value.inc.assert_called_once()
-
-
-def test_dlq_reports_503_and_dlq_metric():
-    with patch.object(alerts, "alert_ingestion_total") as metric:
-        response = alerts._ingestion_response(DLQ_TASK_NAME, source="grafana")
-
-    assert response.status_code == 503
-    assert response.headers["Retry-After"]
-    metric.labels.assert_called_once_with(source="grafana", status="dlq")
-    metric.labels.return_value.inc.assert_called_once()
-
-
-def test_dlq_can_be_accepted_when_explicitly_configured(monkeypatch):
-    """Opt-out for senders that must never see an error; the metric still says
-    `dlq`, so the loss stays visible."""
-    monkeypatch.setattr(alerts, "KEEP_ALERT_DLQ_ACCEPT", True)
-
-    with patch.object(alerts, "alert_ingestion_total") as metric:
-        response = alerts._ingestion_response(DLQ_TASK_NAME, source="generic")
-
-    assert response.status_code == 202
-    metric.labels.assert_called_once_with(source="generic", status="dlq")
-
-
-def test_missing_task_name_falls_back_to_async_task():
-    with patch.object(alerts, "alert_ingestion_total"):
-        response = alerts._ingestion_response(None, source="generic")
-
-    assert response.status_code == 202
-    assert b"async-task" in response.body
-
-
-def test_publish_failure_answers_503_not_500():
-    """Neither topic accepted the event, but the sender must still get a
-    retryable status — unhandled, this is a 500, which senders don't retry."""
-    with patch.object(alerts, "alert_ingestion_error_total") as metric:
-        response = alerts._publish_failed_response(
-            RuntimeError("no brokers"), source="grafana", trace_id="t-1"
-        )
-
-    assert response.status_code == 503
-    assert response.headers["Retry-After"]
-    # Carried so a sender reporting a 503 gives us something to grep for.
-    assert b"t-1" in response.body
-    metric.labels.assert_called_once_with(source="grafana", error_type="RuntimeError")
-    metric.labels.return_value.inc.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_produce_raises_when_both_topics_are_unreachable():
-    """Why the route needs its own 503: KAFKA_DLQ_BOOTSTRAP_SERVERS defaults to
-    the *main* brokers, so an outage usually takes the fallback with it."""
+    """KAFKA_DLQ_BOOTSTRAP_SERVERS defaults to the *main* brokers, so an outage
+    usually takes the fallback with it."""
     with patch("src.services.producers.kafka_producer.AIOKafkaProducer"):
         producer = KafkaEventProducer()
 
@@ -104,8 +34,7 @@ async def test_produce_raises_when_both_topics_are_unreachable():
 
 @pytest.mark.asyncio
 async def test_kafka_producer_marks_the_dlq_sink():
-    """The producer's return value carries the DLQ marker, which is what makes
-    the route's per-request classification possible."""
+    """The producer's return value carries the DLQ marker."""
     from src.services.producers.kafka_producer import KafkaEventProducer
 
     with patch("src.services.producers.kafka_producer.AIOKafkaProducer"):
@@ -121,7 +50,6 @@ async def test_kafka_producer_marks_the_dlq_sink():
     task_name = await producer.produce(event={"a": 1}, trace_id="t-1")
 
     assert task_name == DLQ_TASK_NAME
-    assert result_from_task_name(task_name) is ProduceResult.DLQ
     assert producer.last_produce_result() is ProduceResult.DLQ
 
 

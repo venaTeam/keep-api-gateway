@@ -69,8 +69,7 @@ class KafkaEventProducer(EventProducer):
     module-level singleton and a Lock reused across loops raises.
 
     **The DLQ fallback is retained but is not a delivery.** Nothing consumes that
-    topic, so `produce()` marks a diverted event via `DLQ_TASK_NAME` and the
-    route answers 503 rather than reporting success.
+    topic, so `produce()` marks a diverted event via `DLQ_TASK_NAME`.
     """
 
     def __init__(self):

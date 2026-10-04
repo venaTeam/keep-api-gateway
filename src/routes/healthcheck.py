@@ -26,8 +26,8 @@ Because it gates startup, a false negative kills the container, so the producer
 judgement is levered:
 
 * `KEEP_READYZ_REQUIRE_PRODUCER` — set false during a Kafka incident, or with
-  the brokers down no pod can finish starting, rather than starting and
-  answering the retryable 503 the ingestion route exists to give senders.
+  the brokers down no pod can finish starting, even though most of the API
+  never publishes.
 * `KEEP_READYZ_CHECK_TIMEOUT` — per-check bound, so a sick dependency makes the
   probe answer "not ready" rather than hang and tie up a worker slot. The checks
   run in sequence, so the endpoint's worst case is twice this; keep it under the

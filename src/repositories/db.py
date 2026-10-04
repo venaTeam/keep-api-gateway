@@ -4966,13 +4966,6 @@ def operator_groups_in_use() -> set[str]:
         return set(session.exec(select(Operator.group)).all())
 
 
-def get_operator_by_name(name: str) -> Operator | None:
-    """Resolve an operator by its routing-key name (unique). Used at ingestion
-    to route an alert to the operator's tenant (VENA-5596 Epic 5)."""
-    with Session(engine) as session:
-        return session.exec(select(Operator).where(Operator.name == name)).first()
-
-
 def create_single_tenant_for_e2e(tenant_id: str) -> None:
     """
     Creates the single tenant and the default user if they don't exist.

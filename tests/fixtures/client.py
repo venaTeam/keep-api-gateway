@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import importlib
 import sys
@@ -261,24 +262,6 @@ def client(test_app, db_session, monkeypatch):
     monkeypatch.setenv("KEEP_DEBUG_TASKS", "true")
     monkeypatch.setenv("LOGGING_LEVEL", "DEBUG")
     monkeypatch.setenv("SQLALCHEMY_WARN_20", "1")
-    # Force defaults to ensure we hit the producer path logic
-    monkeypatch.setenv("MESSAGING_TYPE", "REDIS")
-    monkeypatch.setenv("REDIS", "false") # Logic in alerts.py: if REDIS or ... we want to HIT the producer path? 
-    # Wait, the logic in alerts.py is:
-    # messaging_type = config("MESSAGING_TYPE", default="REDIS").upper()
-    # if REDIS or messaging_type == "KAFKA": use producer
-    # else: use local threadpool creation directly.
-    
-    # We want to USE the producer, so get_event_producer is called, so our override works.
-    # So we need conditions to satisfy `if REDIS or messaging_type == "KAFKA"`.
-    # Since mocked producer is nice, let's force REDIS=true so it enters the block.
-    # But wait, we don't want it to actually connect to Redis.
-    # dependency override happens BEFORE the block.
-    # So if we override get_event_producer, app will use MockEventProducer.
-    # AND we need to enter the `if` block.
-    # So we set REDIS="true" via monkeypatch.
-    monkeypatch.setenv("REDIS", "true")
-
     # Override the dependency
     mock_producer = MockEventProducer(db_session=db_session)
     test_app.dependency_overrides[get_event_producer] = lambda: mock_producer
@@ -289,6 +272,20 @@ def client(test_app, db_session, monkeypatch):
     
     # Clean up overrides
     test_app.dependency_overrides = {}
+
+
+def send_alert(client, event, provider_type=None, provider_id=None):
+    """Seed an alert as if it had been ingested. Alert intake lives in
+    keep-ingestion, so tests drive the mock producer (which stands in for
+    keep-event-handler) directly instead of posting to the gateway."""
+    asyncio.run(
+        client.mock_producer.produce(
+            event,
+            tenant_id=GENERIC_TENANT_UUID,
+            provider_type=provider_type,
+            provider_id=provider_id,
+        )
+    )
 
 
 # Common setup for tests

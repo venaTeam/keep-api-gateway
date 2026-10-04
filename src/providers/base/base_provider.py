@@ -811,6 +811,9 @@ class BaseProvider(metaclass=abc.ABCMeta):
             provider_id=self.provider_id,
         )
         # push the alert to the provider
+        # NOTE: alert intake moved to keep-ingestion; the gateway no longer serves
+        # /alerts/event*. This URL only works if KEEP_API_URL (or the ingress) routes
+        # that path to keep-ingestion. Revisit before relying on it.
         url = f"{os.environ['KEEP_API_URL']}/alerts/event"
         headers = {
             "Content-Type": "application/json",

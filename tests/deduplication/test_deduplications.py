@@ -17,6 +17,7 @@ from src.models.db.alert import (
 )
 from src.utils.enrichment_helpers import convert_db_alerts_to_dto_alerts
 from src.providers.providers_factory import ProvidersFactory
+from tests.fixtures.client import send_alert
 
 # Set the log level to DEBUG
 logging.basicConfig(level=logging.DEBUG)
@@ -57,11 +58,7 @@ def test_default_deduplication_rule(db_session, client, test_app):
     provider_class = ProvidersFactory.get_provider_class(provider_type)
     alert = provider_class.simulate_alert()
     
-    client.post(
-        f"/alerts/event/{provider_type}?",
-        json=alert,
-        headers={"x-api-key": "some-api-key"},
-    )
+    send_alert(client, alert, provider_type="prometheus")
     time.sleep(0.1)
 
     wait_for_alerts(client, 1)
@@ -106,17 +103,11 @@ def test_deduplication_sanity(db_session, client, test_app):
     fingerprint = alert.get("fingerprint")
     
     # 1st posting: should create 1 alert
-    response = client.post(
-        "/alerts/event/prometheus", json=alert, headers={"x-api-key": "some-api-key"}
-    )
-    assert response.status_code == 202
+    send_alert(client, alert, provider_type="prometheus")
     wait_for_alerts(client, 1, fingerprint=fingerprint)
 
     # 2nd posting: should be deduplicated (1 alert total)
-    response = client.post(
-        "/alerts/event/prometheus", json=alert, headers={"x-api-key": "some-api-key"}
-    )
-    assert response.status_code == 202
+    send_alert(client, alert, provider_type="prometheus")
     wait_for_alerts(client, 1, fingerprint=fingerprint)
 
     # loop for up to 30 seconds until the deduplication ratio is 50.0
@@ -172,11 +163,7 @@ def test_deduplication_sanity_2(db_session, client, test_app):
 
     for alert in [alert1, alert2]:
         for _ in range(2):
-            client.post(
-                "/alerts/event/prometheus",
-                json=alert,
-                headers={"x-api-key": "some-api-key"},
-            )
+            send_alert(client, alert, provider_type="prometheus")
             time.sleep(0.1)
 
     wait_for_alerts(client, 2)
@@ -223,9 +210,7 @@ def test_deduplication_sanity_3(db_session, client, test_app):
         while alert["fingerprint"] in alert_fps:
             alert["fingerprint"] = str(random.randint(0, 10**10))
         alert_fps.add(alert["fingerprint"])
-        client.post(
-            "/alerts/event/prometheus", json=alert, headers={"x-api-key": "some-api-key"}
-        )
+        send_alert(client, alert, provider_type="prometheus")
         time.sleep(0.1)
 
     wait_for_alerts(client, 10)
@@ -255,9 +240,7 @@ def test_deduplication_sanity_3(db_session, client, test_app):
 def test_custom_deduplication_rule(db_session, client, test_app):
     provider = ProvidersFactory.get_provider_class("prometheus")
     alert1 = provider.simulate_alert()
-    client.post(
-        "/alerts/event/prometheus", json=alert1, headers={"x-api-key": "some-api-key"}
-    )
+    send_alert(client, alert1, provider_type="prometheus")
 
     # wait for the background tasks to finish
     wait_for_alerts(client, 1)
@@ -289,9 +272,7 @@ def test_custom_deduplication_rule(db_session, client, test_app):
 
     for _ in range(2):
         # shoot two alerts with the same title and message, dedup should be 50%
-        client.post(
-            "/alerts/event/prometheus", json=alert, headers={"x-api-key": "some-api-key"}
-        )
+        send_alert(client, alert, provider_type="prometheus")
         time.sleep(0.3)
 
     deduplication_rules = client.get(
@@ -330,9 +311,7 @@ def test_custom_deduplication_rule_behaviour(db_session, client, test_app):
     # create a custom deduplication rule and insert alerts that should be deduplicated by this
     provider = ProvidersFactory.get_provider_class("prometheus")
     alert1 = provider.simulate_alert()
-    client.post(
-        "/alerts/event/prometheus", json=alert1, headers={"x-api-key": "some-api-key"}
-    )
+    send_alert(client, alert1, provider_type="prometheus")
 
     # wait for the background tasks to finish
     wait_for_alerts(client, 1)
@@ -359,9 +338,7 @@ def test_custom_deduplication_rule_behaviour(db_session, client, test_app):
         # the default rule should deduplicate the alert by monitor_id so let's randomize it -
         # if the custom rule is working, the alert should be deduplicated by title and message
         alert["fingerprint"] = str(random.randint(0, 10**10))
-        client.post(
-            "/alerts/event/prometheus", json=alert, headers={"x-api-key": "some-api-key"}
-        )
+        send_alert(client, alert, provider_type="prometheus")
         time.sleep(0.3)
 
     deduplication_rules = client.get(
@@ -427,19 +404,11 @@ def test_custom_deduplication_rule_2(db_session, client, test_app):
     provider = ProvidersFactory.get_provider_class("prometheus")
     alert1 = provider.simulate_alert()
 
-    client.post(
-        f"/alerts/event/prometheus?provider_id={datadog_provider_id}",
-        json=alert1,
-        headers={"x-api-key": "some-api-key"},
-    )
+    send_alert(client, alert1, provider_type="prometheus", provider_id=datadog_provider_id)
     alert1["title"] = "Different title"
     # we need to change the alertname to make sure it is not deduplicated
     alert1["labels"]["alertname"] = "DifferentAlertName"
-    client.post(
-        f"/alerts/event/prometheus?provider_id={datadog_provider_id}",
-        json=alert1,
-        headers={"x-api-key": "some-api-key"},
-    )
+    send_alert(client, alert1, provider_type="prometheus", provider_id=datadog_provider_id)
 
     # wait for the background tasks to finish
     alerts = client.get("/alerts", headers={"x-api-key": "some-api-key"}).json()
@@ -575,9 +544,7 @@ def test_update_deduplication_rule_non_exist_provider(db_session, client, test_a
 def test_update_deduplication_rule_linked_provider(db_session, client, test_app):
     provider = ProvidersFactory.get_provider_class("prometheus")
     alert1 = provider.simulate_alert()
-    response = client.post(
-        "/alerts/event/prometheus", json=alert1, headers={"x-api-key": "some-api-key"}
-    )
+    send_alert(client, alert1, provider_type="prometheus")
 
     time.sleep(2)
     custom_rule = {
@@ -679,9 +646,7 @@ def test_delete_deduplication_rule_default(db_session, client, test_app):
     # shoot an alert to create a default deduplication rule
     provider = ProvidersFactory.get_provider_class("prometheus")
     alert = provider.simulate_alert()
-    client.post(
-        "/alerts/event/prometheus", json=alert, headers={"x-api-key": "some-api-key"}
-    )
+    send_alert(client, alert, provider_type="prometheus")
 
     alerts = client.get("/alerts", headers={"x-api-key": "some-api-key"}).json()
     while len(alerts) != 1:
@@ -721,9 +686,7 @@ def test_full_deduplication(db_session, client, test_app):
     provider = ProvidersFactory.get_provider_class("prometheus")
     alert = provider.simulate_alert()
     # send the alert so a linked provider is created
-    response = client.post(
-        "/alerts/event/prometheus", json=alert, headers={"x-api-key": "some-api-key"}
-    )
+    send_alert(client, alert, provider_type="prometheus")
     custom_rule = {
         "name": "Full Deduplication Rule",
         "description": "Full Deduplication Rule",
@@ -739,9 +702,7 @@ def test_full_deduplication(db_session, client, test_app):
     assert response.status_code == 200
 
     for _ in range(3):
-        client.post(
-            "/alerts/event/prometheus", json=alert, headers={"x-api-key": "some-api-key"}
-        )
+        send_alert(client, alert, provider_type="prometheus")
 
     deduplication_rules = client.get(
         "/deduplications", headers={"x-api-key": "some-api-key"}
@@ -779,9 +740,7 @@ def test_partial_deduplication(db_session, client, test_app):
     ]
 
     for alert in alerts:
-        client.post(
-            "/alerts/event/prometheus", json=alert, headers={"x-api-key": "some-api-key"}
-        )
+        send_alert(client, alert, provider_type="prometheus")
         time.sleep(0.2)
 
     wait_for_alerts(client, 1)
@@ -826,9 +785,7 @@ def test_ingesting_alert_without_fingerprint_fields(db_session, client, test_app
     alert.pop("group", None)
     alert["title"] = str(random.randint(0, 10**10))
 
-    client.post(
-        "/alerts/event/prometheus", json=alert, headers={"x-api-key": "some-api-key"}
-    )
+    send_alert(client, alert, provider_type="prometheus")
 
     wait_for_alerts(client, 1)
 
@@ -868,9 +825,7 @@ def test_deduplication_fields(db_session, client, test_app):
     ]
 
     for alert in alerts:
-        client.post(
-            "/alerts/event/prometheus", json=alert, headers={"x-api-key": "some-api-key"}
-        )
+        send_alert(client, alert, provider_type="prometheus")
 
     wait_for_alerts(client, 1)
 
@@ -1024,18 +979,10 @@ def test_sort_keys_deduplication_fix(db_session, client, test_app):
     }
 
     # Send both alerts to prometheus provider
-    client.post(
-        "/alerts/event/prometheus",
-        json=base_alert,
-        headers={"x-api-key": "some-api-key"},
-    )
+    send_alert(client, base_alert, provider_type="prometheus")
     time.sleep(0.1)
 
-    client.post(
-        "/alerts/event/prometheus",
-        json=reordered_alert,
-        headers={"x-api-key": "some-api-key"},
-    )
+    send_alert(client, reordered_alert, provider_type="prometheus")
     time.sleep(0.1)
 
     # Should only have 1 alert because they should be deduplicated

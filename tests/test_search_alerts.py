@@ -23,7 +23,7 @@ from src.repositories.alerts import static_facets as alert_static_facets
 from src.routes.alerts import query_alerts
 from src.services.identity_manager.authenticatedentity import AuthenticatedEntity
 from src.services.search_engine import SearchEngine
-from tests.fixtures.client import client, setup_api_key, test_app  # noqa
+from tests.fixtures.client import client, send_alert, setup_api_key, test_app  # noqa
 
 # Shahar: If you are struggling - you can play with https://playcel.undistro.io/ to see how the CEL expressions work
 
@@ -1458,17 +1458,9 @@ def test_alerts_enrichment_in_search(db_session, client, test_app, elastic_clien
     )
 
     # Create alert without enrichment rules
-    client.post(
-        "/alerts/event",
-        headers={"x-api-key": "some-key"},
-        json=alert_low_dto.dict(),
-    )
+    send_alert(client, alert_low_dto)
     # And another with them
-    client.post(
-        "/alerts/event",
-        headers={"x-api-key": "some-key"},
-        json=alert_high_dto.dict(),
-    )
+    send_alert(client, alert_high_dto)
 
     while len(client.get("/alerts", headers={"x-api-key": "some-key"}).json()) != 2:
         time.sleep(0.1)
