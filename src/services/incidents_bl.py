@@ -81,6 +81,12 @@ class IncidentBl:
         self.logger = logging.getLogger(__name__)
         self.ee_enabled = os.environ.get("EE_ENABLED", "false").lower() == "true"
         self.redis = os.environ.get("REDIS", "false") == "true"
+        self._deferred_publishes: list = []
+
+    async def _flush_deferred_publishes(self):
+        while self._deferred_publishes:
+            publish = self._deferred_publishes.pop(0)
+            await publish()
 
     def create_incident(
         self,
@@ -558,6 +564,8 @@ class IncidentBl:
 
         self.session.commit()
 
+        await self._flush_deferred_publishes()
+
         return self.__postprocess_incident_change(incident)
 
     @staticmethod
@@ -708,8 +716,7 @@ class IncidentBl:
             commit=False,
         )
 
-        if commit:
-            self.session.commit()
+        async def publish():
             if bl.event_producer is not None:
                 await bl.publish_enrichment_event(
                     fingerprint=affected,
@@ -719,6 +726,12 @@ class IncidentBl:
                     action_description=action_description,
                     event_type=EventType.BATCH_ENRICH,
                 )
+
+        if commit:
+            self.session.commit()
+            await publish()
+        else:
+            self._deferred_publishes.append(publish)
 
         return affected
 
@@ -856,6 +869,8 @@ class IncidentBl:
                 action_description=f"Incident enriched by {change_by.email}",
                 force=force,
             )
+
+        await self._flush_deferred_publishes()
 
         self.update_client_on_incident_change(
             incident_id if isinstance(incident_id, UUID) else None
