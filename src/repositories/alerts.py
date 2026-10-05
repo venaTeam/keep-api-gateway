@@ -30,7 +30,11 @@ from src.models.db.alert import (
     LastAlertToIncident,
 )
 from src.models.db.facet import FacetType
-from src.models.db.helpers import DismissMode, suppressed_if_dismiss_active_sql
+from src.models.db.helpers import (
+    UTC_NOW_SQL,
+    DismissMode,
+    suppressed_if_dismiss_active_sql,
+)
 from src.models.db.incident import IncidentStatus
 from src.models.facet import FacetDto, FacetOptionDto, FacetOptionsQueryDto
 from src.models.query import QueryDto, SortOptionsDto
@@ -153,7 +157,7 @@ _SUPPRESSED_IF_DISMISS_ACTIVE_SQL = suppressed_if_dismiss_active_sql("lastalert"
 _DISMISS_ACTIVE_PREDICATE_SQL = (
     f"lastalert.dismiss_mode = '{DismissMode.PERMANENT.value}'"
     f" OR (lastalert.dismiss_mode = '{DismissMode.DISMISS_UNTIL.value}'"
-    " AND lastalert.dismissed_until > CURRENT_TIMESTAMP)"
+    f" AND lastalert.dismissed_until > {UTC_NOW_SQL})"
 )
 
 # === strict schema ===

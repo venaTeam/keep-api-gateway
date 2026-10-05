@@ -3,10 +3,9 @@ from unittest.mock import AsyncMock
 import uuid
 import pytest
 
-from src.models.alert import AlertStatus
 from src.models.action_type import ActionType
 from src.models.db.alert import Alert, LastAlert, LastAlertToIncident
-from src.models.db.incident import Incident, IncidentDismissMode, IncidentStatus
+from src.models.db.incident import Incident, IncidentStatus
 from src.models.incident import IncidentStatusChangeDto
 from src.repositories.dependencies import SINGLE_TENANT_UUID
 from src.services.identity_manager.authenticatedentity import AuthenticatedEntity

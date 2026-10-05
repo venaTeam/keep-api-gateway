@@ -29,7 +29,6 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from src.models.alert import AlertStatus
 from src.models.db.alert import Alert, LastAlert, LastAlertToIncident
 from src.models.db.incident import Incident, IncidentDismissMode, IncidentStatus
 from src.repositories.dependencies import SINGLE_TENANT_UUID

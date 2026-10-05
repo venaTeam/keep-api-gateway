@@ -29,7 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sqlmodel import Session, select  # noqa: E402
 
-from src.models.db.alert import Alert, LastAlert, LastAlertToIncident  # noqa: E402
+from src.models.db.alert import Alert, LastAlert  # noqa: E402
 from src.models.db.incident import (  # noqa: E402
     Incident,
     IncidentDismissMode,

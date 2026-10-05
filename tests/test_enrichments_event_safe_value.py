@@ -1,5 +1,4 @@
 import datetime
-from enum import Enum
 import json
 from unittest.mock import AsyncMock
 import uuid
@@ -10,7 +9,7 @@ from pydantic import BaseModel
 from src.models.action_type import ActionType
 from src.models.db.incident import IncidentDismissMode, IncidentStatus
 from src.services.enrichments_bl import EnrichmentsBl, _event_safe_value
-from src.services.producers.base_event_handler import EventProducer, EventType
+from src.services.producers.base_event_handler import EventProducer
 
 
 def test_event_safe_value_primitives():

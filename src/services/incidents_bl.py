@@ -846,7 +846,7 @@ class IncidentBl:
             )
 
         if change is not None:
-            incident_dto = await self.change_status(
+            await self.change_status(
                 incident_id,
                 change.status,
                 change_by,
