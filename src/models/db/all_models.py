@@ -27,6 +27,7 @@ from src.models.db.ai_external import *  # noqa: F401,F403
 from src.models.db.ai_suggestion import *  # noqa: F401,F403
 from src.models.db.alert import *  # noqa: F401,F403
 from src.models.db.dashboard import *  # noqa: F401,F403
+from src.models.db.dashboard_image import *  # noqa: F401,F403
 from src.models.db.enrichment_event import *  # noqa: F401,F403
 from src.models.db.extraction import *  # noqa: F401,F403
 from src.models.db.facet import *  # noqa: F401,F403
@@ -61,6 +62,7 @@ MODELS = (
     AlertToIncident,  # noqa: F405
     CommentMention,  # noqa: F405
     Dashboard,  # noqa: F405
+    DashboardImage,  # noqa: F405
     EnrichmentEvent,  # noqa: F405
     EnrichmentLog,  # noqa: F405
     ExternalAIConfigAndMetadata,  # noqa: F405
