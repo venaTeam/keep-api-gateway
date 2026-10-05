@@ -29,6 +29,7 @@ from sqlalchemy import (
     and_,
     case,
     cast,
+    delete,
     desc,
     func,
     literal,
@@ -844,6 +845,42 @@ def enrich_entity(
             strict=strict,
             entity_type=entity_type,
         )
+
+
+def delete_alert(tenant_id: str, fingerprint: UUID | str, session=None):
+    """Hard-delete an alert: every row for the fingerprint, scoped to the tenant."""
+    with existed_or_new_session(session) as session:
+        session.execute(
+            delete(LastAlertToIncident)
+            .where(LastAlertToIncident.tenant_id == tenant_id)
+            .where(LastAlertToIncident.fingerprint == fingerprint)
+        )
+        session.execute(
+            delete(LastAlert)
+            .where(LastAlert.tenant_id == tenant_id)
+            .where(LastAlert.fingerprint == fingerprint)
+        )
+        session.execute(
+            delete(CommentMention).where(
+                CommentMention.comment_id.in_(
+                    select(AlertAudit.id)
+                    .where(AlertAudit.tenant_id == tenant_id)
+                    .where(AlertAudit.fingerprint == fingerprint)
+                )
+            ),
+            execution_options={"synchronize_session": False},
+        )
+        session.execute(
+            delete(AlertAudit)
+            .where(AlertAudit.tenant_id == tenant_id)
+            .where(AlertAudit.fingerprint == fingerprint)
+        )
+        session.execute(
+            delete(Alert)
+            .where(Alert.tenant_id == tenant_id)
+            .where(Alert.fingerprint == fingerprint)
+        )
+        session.commit()
 
 
 def count_alerts(
@@ -4438,7 +4475,9 @@ def get_last_alert_by_fingerprint(
             )
         )
         if for_update:
-            query = query.with_for_update()
+            # populate_existing: the lock alone would still hand back a copy the
+            # session already holds, with its stale attribute values.
+            query = query.with_for_update().execution_options(populate_existing=True)
         return session.exec(query).first()
 
 

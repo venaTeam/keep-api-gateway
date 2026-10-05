@@ -4,7 +4,14 @@ from datetime import datetime
 import pytest
 
 from src.models.alert import AlertStatus
+from src.models.db.alert import LastAlert
 from tests.fixtures.client import client, setup_api_key, test_app  # noqa
+
+
+def _last_alerts(db_session) -> dict:
+    """LastAlert rows by fingerprint, re-read from the DB."""
+    db_session.expire_all()
+    return {la.fingerprint: la for la in db_session.query(LastAlert).all()}
 
 
 @pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
@@ -50,20 +57,13 @@ def test_batch_enrich_cel_basic(
     result = response.json()
     assert result["status"] == "ok"
 
-    # Verify event was sent
-    assert len(client.mock_producer.produced_events) == 1
-    event_data = client.mock_producer.produced_events[0]
-    assert event_data["event_type"].value == "batch_enrich"
-    
-    # Verify the fingerprint of the CPU alert was used
-    # Find the CPU alert fingerprint from DB
-    response = client.get("/preset/feed/alerts", headers={"x-api-key": "some-key"})
-    alerts = response.json()
-    cpu_alert = next(a for a in alerts if a["name"] == "CPU Overload Alert")
-    
-    assert event_data["fingerprint"] == [cpu_alert["fingerprint"]]
-    assert event_data["event"]["status"] == "acknowledged"
-    assert event_data["event"]["note"] == "CPU issue being investigated"
+    # Only the CPU alert was written
+    rows = _last_alerts(db_session)
+    assert rows["alert-cpu-1"].status == "acknowledged"
+    assert rows["alert-cpu-1"].note == "CPU issue being investigated"
+    for fingerprint in ("alert-memory-1", "alert-disk-1"):
+        assert rows[fingerprint].status is None
+        assert rows[fingerprint].note is None
 
 
 @pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
@@ -109,23 +109,13 @@ def test_batch_enrich_cel_severity(
     result = response.json()
     assert result["status"] == "ok"
 
-    # Verify event was sent
-    assert len(client.mock_producer.produced_events) == 1
-    event_data = client.mock_producer.produced_events[0]
-    assert event_data["event_type"].value == "batch_enrich"
-    
-    # Verify the fingerprint of the warning alerts were used
-    response = client.get("/preset/feed/alerts", headers={"x-api-key": "some-key"})
-    alerts = response.json()
-    warning_alerts = [a for a in alerts if a["severity"] == "warning"]
-    
-    # order of fingerprints might vary depending on DB fetch
-    expected_fingerprints = sorted([a["fingerprint"] for a in warning_alerts])
-    actual_fingerprints = sorted(event_data["fingerprint"])
-    
-    assert expected_fingerprints == actual_fingerprints
-    assert event_data["event"]["status"] == "suppressed"
-    assert event_data["event"]["note"] == "Low priority alerts suppressed"
+    # Only the warning alerts were written
+    rows = _last_alerts(db_session)
+    for fingerprint in ("alert-warning-1", "alert-warning-2"):
+        assert rows[fingerprint].status == "suppressed"
+        assert rows[fingerprint].note == "Low priority alerts suppressed"
+    assert rows["alert-critical-1"].status is None
+    assert rows["alert-critical-1"].note is None
 
 
 @pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
@@ -185,21 +175,13 @@ def test_batch_enrich_cel_labels(
     result = response.json()
     assert result["status"] == "ok"
 
-    # Verify event was sent
-    assert len(client.mock_producer.produced_events) == 1
-    event_data = client.mock_producer.produced_events[0]
-    assert event_data["event_type"].value == "batch_enrich"
-
-    response = client.get("/preset/feed/alerts", headers={"x-api-key": "some-key"})
-    alerts = response.json()
-    critical_alerts = [a for a in alerts if a.get("severity") == "critical"]
-
-    expected_fingerprints = sorted([a["fingerprint"] for a in critical_alerts])
-    actual_fingerprints = sorted(event_data["fingerprint"])
-
-    assert expected_fingerprints == actual_fingerprints
-    assert event_data["event"]["status"] == "acknowledged"
-    assert event_data["event"]["assignee"] == "east-team@example.com"
+    # Only the critical alerts were written
+    rows = _last_alerts(db_session)
+    for fingerprint in ("alert-region1-1", "alert-region2-1"):
+        assert rows[fingerprint].status == "acknowledged"
+        assert rows[fingerprint].assignee == "east-team@example.com"
+    assert rows["alert-region1-2"].status is None
+    assert rows["alert-region1-2"].assignee is None
 
 
 @pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
@@ -274,24 +256,15 @@ def test_batch_enrich_cel_complex_expression(
     result = response.json()
     assert result["status"] == "ok"
 
-    # Verify event was sent
-    assert len(client.mock_producer.produced_events) == 1
-    event_data = client.mock_producer.produced_events[0]
-    assert event_data["event_type"].value == "batch_enrich"
-
-    response = client.get("/preset/feed/alerts", headers={"x-api-key": "some-key"})
-    alerts = response.json()
-    critical_api = [
-        a
-        for a in alerts
-        if a["severity"] == "critical" and a["service"] == "api"
-    ]
-
-    expected_fingerprints = sorted(a["fingerprint"] for a in critical_api)
-    assert sorted(event_data["fingerprint"]) == expected_fingerprints
-    assert event_data["event"]["status"] == "acknowledged"
-    assert event_data["event"]["note"] == "Critical API issue - investigating"
-    assert event_data["event"]["assignee"] == "api-team@example.com"
+    # Only the critical api alerts were written
+    rows = _last_alerts(db_session)
+    for fingerprint in ("alert-prod-critical-1", "alert-staging-critical-1"):
+        assert rows[fingerprint].status == "acknowledged"
+        assert rows[fingerprint].note == "Critical API issue - investigating"
+        assert rows[fingerprint].assignee == "api-team@example.com"
+    for fingerprint in ("alert-prod-warning-1", "alert-prod-critical-2"):
+        assert rows[fingerprint].status is None
+        assert rows[fingerprint].assignee is None
 
 
 @pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
@@ -417,14 +390,9 @@ def test_batch_enrich_cel_dispose_on_new_alert(
     result = response.json()
     assert result["status"] == "ok"
 
-    # Verify the events were sent
-    assert len(client.mock_producer.produced_events) == 1
-    
-    event_data_1 = client.mock_producer.produced_events[0]
-    assert event_data_1["event_type"].value == "batch_enrich"
-    # "dispose on new alert" is now the typed status_disposable flag
-    # (cleared on the next non-resolved re-fire in set_last_alert) — no more
-    # disposable_* JSONB wrappers.
-    assert event_data_1["event"]["status"] == "resolved"
-    assert event_data_1["event"]["note"] == "Temporary resolution note"
-    assert event_data_1["event"]["status_disposable"] is True
+    # "dispose on new alert" is the typed status_disposable flag (cleared on the
+    # next non-resolved re-fire in set_last_alert).
+    row = _last_alerts(db_session)["alert-test-1"]
+    assert row.status == "resolved"
+    assert row.note == "Temporary resolution note"
+    assert row.status_disposable is True

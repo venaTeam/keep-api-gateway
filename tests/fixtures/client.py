@@ -8,22 +8,19 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.repositories.dependencies import GENERIC_TENANT_UUID
-from src.services.producers.factory import get_event_producer
-from src.services.producers.base_event_handler import EventProducer
 from src.models.db.tenant import TenantApiKey
 from src.models.db.alert import Alert, LastAlert, AlertDeduplicationEvent, AlertDeduplicationRule
 from datetime import datetime
 
 
-class MockEventProducer(EventProducer):
-    """Mock event producer for tests - stores events instead of processing them.
+class AlertSeeder:
+    """Writes alerts straight to the DB, standing in for keep-event-handler.
 
-    Note: process_event belongs to keep-event-handler, not api-gateway.
-    In tests that need alert processing, use the create_alert fixture instead.
+    Alert intake and processing live in keep-ingestion / keep-event-handler, not
+    api-gateway, so tests that need ingested alerts seed them through this.
     """
 
     def __init__(self, db_session=None):
-        self.produced_events = []
         self.db_session = db_session
         self.fingerprint_history = {}
 
@@ -57,9 +54,7 @@ class MockEventProducer(EventProducer):
         # Fallback to deterministic default UUID
         return self._generate_rule_uuid(provider_id, provider_type)
 
-    async def produce(self, event: dict, **kwargs):
-        self.produced_events.append({"event": event, **kwargs})
-        
+    async def seed(self, event: dict, **kwargs):
         # If we have a db_session, simulate the event-handler by saving to DB
         if self.db_session:
             tenant_id = kwargs.get("tenant_id", GENERIC_TENANT_UUID)
@@ -262,12 +257,8 @@ def client(test_app, db_session, monkeypatch):
     monkeypatch.setenv("KEEP_DEBUG_TASKS", "true")
     monkeypatch.setenv("LOGGING_LEVEL", "DEBUG")
     monkeypatch.setenv("SQLALCHEMY_WARN_20", "1")
-    # Override the dependency
-    mock_producer = MockEventProducer(db_session=db_session)
-    test_app.dependency_overrides[get_event_producer] = lambda: mock_producer
-
     with TestClient(test_app) as test_client:
-        test_client.mock_producer = mock_producer
+        test_client.alert_seeder = AlertSeeder(db_session=db_session)
         yield test_client
     
     # Clean up overrides
@@ -276,10 +267,10 @@ def client(test_app, db_session, monkeypatch):
 
 def send_alert(client, event, provider_type=None, provider_id=None):
     """Seed an alert as if it had been ingested. Alert intake lives in
-    keep-ingestion, so tests drive the mock producer (which stands in for
-    keep-event-handler) directly instead of posting to the gateway."""
+    keep-ingestion, so tests write through the seeder (which stands in for
+    keep-event-handler) instead of posting to the gateway."""
     asyncio.run(
-        client.mock_producer.produce(
+        client.alert_seeder.seed(
             event,
             tenant_id=GENERIC_TENANT_UUID,
             provider_type=provider_type,

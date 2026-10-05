@@ -5,12 +5,12 @@ Tests for the gateway probe endpoints.
 if an HTTP server replies at all it can serve, and checking dependencies there
 would restart every replica at once on a Postgres blip — but useless as
 readiness: it stays green with the DB unreachable, the schema missing a table
-this image's models declare, or the producer cold. `/readyz` is the probe target that means
+this image's models declare. `/readyz` is the probe target that means
 something.
 """
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -26,12 +26,6 @@ def probe_client():
     return TestClient(app)
 
 
-def _producer(healthy=True, detail=None):
-    producer = MagicMock()
-    producer.health = AsyncMock(return_value=(healthy, detail or {"started": healthy}))
-    return producer
-
-
 def test_healthcheck_is_liveness_and_dependency_free(probe_client):
     """A liveness probe that fails on a Postgres blip restarts every replica."""
     with patch.object(healthcheck, "_check_db", side_effect=AssertionError("no DB")):
@@ -41,15 +35,11 @@ def test_healthcheck_is_liveness_and_dependency_free(probe_client):
     assert response.json() == {}  # unchanged contract; existing probes keep working
 
 
-def test_readyz_ok_when_schema_satisfied_and_producer_connected(probe_client):
+def test_readyz_ok_when_schema_satisfied(probe_client):
     with patch.object(
         healthcheck, "_check_db", return_value=(True, {"reachable": True, "satisfied": True})
     ):
-        with patch(
-            "src.services.producers.factory.get_producer_instance",
-            return_value=_producer(True),
-        ):
-            response = probe_client.get("/readyz")
+        response = probe_client.get("/readyz")
 
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
@@ -64,114 +54,21 @@ def test_readyz_503_when_schema_does_not_satisfy_this_image(probe_client):
         "_check_db",
         return_value=(False, {"reachable": True, "satisfied": False}),
     ):
-        with patch(
-            "src.services.producers.factory.get_producer_instance",
-            return_value=_producer(True),
-        ):
-            response = probe_client.get("/readyz")
+        response = probe_client.get("/readyz")
 
     assert response.status_code == 503
     assert response.json()["checks"]["database"]["satisfied"] is False
 
 
-def test_readyz_ignores_a_cold_producer_when_not_required(probe_client, monkeypatch):
-    """`/readyz` backs the startupProbe, so a failing check kills the container:
-    with the brokers down, no pod could finish starting. This is the lever out."""
-    monkeypatch.setattr(healthcheck, "REQUIRE_PRODUCER", False)
-
-    with patch.object(
-        healthcheck, "_check_db", return_value=(True, {"reachable": True, "satisfied": True})
-    ):
-        with patch(
-            "src.services.producers.factory.get_producer_instance",
-            return_value=_producer(False),
-        ):
-            response = probe_client.get("/readyz")
-
-    assert response.status_code == 200
-    # Still reported, just not gating — the operator can see it is cold.
-    assert response.json()["checks"]["producer"]["required"] is False
-
-
-def test_readyz_still_fails_on_the_database_when_producer_not_required(
-    probe_client, monkeypatch
-):
-    """The lever must not turn `/readyz` into an unconditional 200."""
-    monkeypatch.setattr(healthcheck, "REQUIRE_PRODUCER", False)
-
+def test_readyz_503_when_database_unreachable(probe_client):
     with patch.object(
         healthcheck,
         "_check_db",
         return_value=(False, {"reachable": False}),
     ):
-        with patch(
-            "src.services.producers.factory.get_producer_instance",
-            return_value=_producer(True),
-        ):
-            response = probe_client.get("/readyz")
+        response = probe_client.get("/readyz")
 
     assert response.status_code == 503
-
-
-def test_readyz_503_when_producer_is_cold(probe_client):
-    """A cold producer means the next alert goes to the DLQ topic and is never
-    ingested, so the pod is not ready to receive traffic."""
-    with patch.object(
-        healthcheck, "_check_db", return_value=(True, {"reachable": True, "satisfied": True})
-    ):
-        with patch(
-            "src.services.producers.factory.get_producer_instance",
-            return_value=_producer(False, {"started": False}),
-        ):
-            response = probe_client.get("/readyz")
-
-    assert response.status_code == 503
-    assert response.json()["checks"]["producer"]["started"] is False
-
-
-def test_readyz_503_before_the_producer_exists(probe_client):
-    with patch.object(
-        healthcheck, "_check_db", return_value=(True, {"reachable": True, "satisfied": True})
-    ):
-        with patch(
-            "src.services.producers.factory.get_producer_instance", return_value=None
-        ):
-            response = probe_client.get("/readyz")
-
-    assert response.status_code == 503
-    assert response.json()["checks"]["producer"]["created"] is False
-
-
-def test_readyz_asks_the_producer_to_reconnect(probe_client):
-    """The probe doubles as a reconnect trigger, so a pod that lost the brokers
-    keeps retrying instead of quietly DLQ-ing whatever arrives."""
-    producer = _producer(True)
-    with patch.object(
-        healthcheck, "_check_db", return_value=(True, {"reachable": True, "satisfied": True})
-    ):
-        with patch(
-            "src.services.producers.factory.get_producer_instance",
-            return_value=producer,
-        ):
-            probe_client.get("/readyz")
-
-    producer.health.assert_awaited_once_with(attempt_reconnect=True)
-
-
-def test_readyz_survives_a_raising_producer(probe_client):
-    producer = MagicMock()
-    producer.health = AsyncMock(side_effect=RuntimeError("boom"))
-    with patch.object(
-        healthcheck, "_check_db", return_value=(True, {"reachable": True, "satisfied": True})
-    ):
-        with patch(
-            "src.services.producers.factory.get_producer_instance",
-            return_value=producer,
-        ):
-            response = probe_client.get("/readyz")
-
-    assert response.status_code == 503
-    assert "RuntimeError" in response.json()["checks"]["producer"]["error"]
 
 
 def test_readyz_does_not_block_the_event_loop_on_a_slow_db(probe_client):
@@ -187,11 +84,7 @@ def test_readyz_does_not_block_the_event_loop_on_a_slow_db(probe_client):
         return True, {"reachable": True, "satisfied": True}
 
     with patch.object(healthcheck, "_check_db", side_effect=slow_check):
-        with patch(
-            "src.services.producers.factory.get_producer_instance",
-            return_value=_producer(True),
-        ):
-            response = probe_client.get("/readyz")
+        response = probe_client.get("/readyz")
 
     assert response.status_code == 200
     # It ran on a worker thread, not the thread running the event loop.
@@ -219,40 +112,13 @@ async def test_readyz_reports_a_timeout_instead_of_hanging(monkeypatch):
         return True, {}
 
     with patch.object(healthcheck, "_check_db", side_effect=hanging_check):
-        with patch(
-            "src.services.producers.factory.get_producer_instance",
-            return_value=_producer(True),
-        ):
-            started = time.monotonic()
-            body = await healthcheck.readyz(Response())
-            elapsed = time.monotonic() - started
+        started = time.monotonic()
+        body = await healthcheck.readyz(Response())
+        elapsed = time.monotonic() - started
 
     assert elapsed < 1
     assert body["status"] == "unavailable"
     assert "timed out" in body["checks"]["database"]["error"]
-
-
-def test_readyz_bounds_a_hanging_producer_reconnect(probe_client, monkeypatch):
-    """`attempt_reconnect` must not let a broker bootstrap hold the probe open."""
-    monkeypatch.setattr(healthcheck, "READYZ_CHECK_TIMEOUT", 0.1)
-
-    async def never_returns(**kwargs):
-        await asyncio.sleep(5)
-
-    producer = MagicMock()
-    producer.health = never_returns
-
-    with patch.object(
-        healthcheck, "_check_db", return_value=(True, {"reachable": True, "satisfied": True})
-    ):
-        with patch(
-            "src.services.producers.factory.get_producer_instance",
-            return_value=producer,
-        ):
-            response = probe_client.get("/readyz")
-
-    assert response.status_code == 503
-    assert "timed out" in response.json()["checks"]["producer"]["error"]
 
 
 def test_check_db_reports_unreachable_database():

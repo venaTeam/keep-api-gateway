@@ -34,7 +34,6 @@ from src.utils.logging import CONFIG as logging_config, setup_logging
 from src.middlewares import LoggingMiddleware
 from src.routes.router_setup import setup_routers
 from src.services.producers.event_subscriber import EventSubscriber
-from src.services.producers.factory import start_event_producer, stop_event_producer
 from src.services.identity_manager.identitymanagerfactory import (
     IdentityManagerFactory,
     IdentityManagerTypes,
@@ -105,11 +104,6 @@ async def startup():
     This runs for every worker on startup.
     Read more about lifespan here: https://fastapi.tiangolo.com/advanced/events/#lifespan
 
-    The producer is connected **eagerly**: a cold producer makes the first alert
-    on a fresh pod pay the bootstrap cost, and diverts it to the DLQ if the
-    brokers aren't up yet. It never raises — /readyz keeps the pod NotReady until
-    the producer connects.
-
     The EventSubscriber start is deferred to a task, whose reference is kept
     module-level because the loop only holds a weak one — and so `shutdown()` can
     cancel a start that hasn't happened yet.
@@ -125,8 +119,6 @@ async def startup():
     dispose_session()
 
     logger.info("Starting the services")
-
-    await start_event_producer()
 
     if CONSUMER:
         global _event_subscriber_task
@@ -207,7 +199,7 @@ async def shutdown():
     This runs for every worker on shutdown.
     Read more about lifespan here: https://fastapi.tiangolo.com/advanced/events/#lifespan
 
-    The producer and consumer stops run concurrently: they release unrelated
+    The fan-out and consumer stops run concurrently: they release unrelated
     resources, and in series their bounds would add to 30 s rather than 20 s.
     That matters because a UvicornWorker drains in-flight requests *before*
     running this handler, so the drain and this shutdown add rather than overlap,
@@ -219,7 +211,7 @@ async def shutdown():
     from src.services.sse import stop_fanout
 
     logger.info("Shutting down Keep")
-    stops = [stop_event_producer(), stop_fanout()]
+    stops = [stop_fanout()]
     if CONSUMER:
         stops.append(_stop_event_subscriber())
     await asyncio.gather(*stops, return_exceptions=True)
