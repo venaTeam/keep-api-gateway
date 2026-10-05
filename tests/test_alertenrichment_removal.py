@@ -84,22 +84,26 @@ def _audit_count(db_session, fingerprint):
 # --------------------------------------------------------------------------- #
 def test_normalize_dismissed_true_permanent():
     out = normalize_enrichments({"dismissed": True})
-    assert out["status"] == "suppressed"
     assert out["dismiss_mode"] == "permanent"
+    # Dismiss does NOT write status: suppression is derived from the dismiss
+    # columns on read, leaving `status` holding what the alert reverts to.
+    assert "status" not in out
 
 
 def test_normalize_dismissed_true_with_until():
     out = normalize_enrichments({"dismissed": True, "dismissed_until": "2026-01-01T00:00:00Z"})
-    assert out["status"] == "suppressed"
     assert out["dismiss_mode"] == "dismiss_until"
     assert out["dismissed_until"] == "2026-01-01T00:00:00Z"
+    assert "status" not in out
 
 
 def test_normalize_dismissed_false_clears():
     out = normalize_enrichments({"dismissed": False})
-    assert out["status"] is None
     assert out["dismiss_mode"] is None
     assert out["dismissed_until"] is None
+    # Clearing the dismissal is what un-suppresses; the status override is not
+    # touched, so an unrelated override survives an undismiss.
+    assert "status" not in out
 
 
 def test_normalize_dismissed_false_preserves_explicit_status():
