@@ -11,6 +11,9 @@ import fs from "node:fs";
 
 const UI = (process.env.UI_ROUTE || "").replace(/\/$/, "");
 const GW = (process.env.GATEWAY_ROUTE || "").replace(/\/$/, "");
+// Alert intake lives in keep-ingestion; defaults to the gateway route for
+// environments where the ingress sends /alerts/event* there by path.
+const INGEST = (process.env.INGESTION_ROUTE || "").replace(/\/$/, "") || GW;
 const KC = (process.env.KC_URL || "").replace(/\/$/, "");
 const REALM = process.env.KC_REALM || "keep";
 const TENANT = process.env.TENANT_ID || "keep";
@@ -86,7 +89,7 @@ try {
   const ingest = async (n) => {
     for (let i = 0; i < n; i++) {
       const fp = `${RUN}-${i}`;
-      const r = await fetch(`${GW}/alerts/event`, { method: "POST", headers, body: JSON.stringify({
+      const r = await fetch(`${INGEST}/alerts/event`, { method: "POST", headers, body: JSON.stringify({
         name: fp, fingerprint: fp, status: "firing", severity: "critical",
         source: ["sse-acceptance"], lastReceived: new Date().toISOString() }) });
       posted.push({ fp, posted: rel(), status: r.status });

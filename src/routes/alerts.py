@@ -1,9 +1,4 @@
-import base64
-import hashlib
-import hmac
-import json
 import logging
-import os
 from copy import deepcopy
 from typing import List, Optional
 
@@ -21,12 +16,9 @@ from src.repositories.alerts import (
     query_last_alerts,
     query_total_alerts_count
 )
-from src.repositories.metrics import (
-    alert_ingestion_error_total,
-    alert_ingestion_total,
-)
 from src.repositories.cel_to_sql.sql_providers.base import CelToSqlException
 from src.services.cel_validation import http_exception_from_converter_error
+from src.repositories.db import delete_alert as delete_alert_db
 from src.repositories.db import dismiss_error_alerts as dismiss_error_alerts_db
 from src.repositories.db import (
     enrich_alerts_with_incidents,
@@ -35,7 +27,6 @@ from src.repositories.db import (
     get_alerts_metrics_by_provider,
     get_last_alerts,
     get_last_alerts_by_fingerprints,
-    get_operator_by_name,
     get_session,
     is_all_alerts_resolved,
 )
@@ -44,17 +35,6 @@ from src.services.sse import notify_sse
 
 from src.repositories.db import get_alert_audit as get_alert_audit_db
 from src.repositories.db import get_error_alerts as get_error_alerts_db
-from src.repositories.dependencies import (
-    GENERIC_TENANT_UUID,
-    extract_generic_body,
-)
-from src.services.producers.factory import get_event_producer
-from src.services.producers.base_event_handler import (
-    EventProducer,
-    EventType,
-    ProduceResult,
-    result_from_task_name,
-)
 from src.repositories.elastic import ElasticClient
 from src.models.action_type import ActionType
 from src.services.search_engine import SearchEngine
@@ -85,119 +65,6 @@ from src.services.search_engine import SearchEngine
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-
-REDIS = os.environ.get("REDIS", "false") == "true"
-
-KEEP_ALERT_DLQ_ACCEPT = os.environ.get("KEEP_ALERT_DLQ_ACCEPT", "false") == "true"
-KEEP_ALERT_RETRY_AFTER = os.environ.get(
-    "KEEP_ALERT_RETRY_AFTER", os.environ.get("KEEP_ALERT_DLQ_RETRY_AFTER", "5")
-)
-
-
-def _retry_later(detail: str, **body) -> JSONResponse:
-    """The single "this alert was not ingested, send it again" answer.
-
-    Both rejection paths go through here so the retry contract cannot drift
-    between them — senders were asked to key off 503 plus `Retry-After`.
-
-    `KEEP_ALERT_RETRY_AFTER` sets that header. It is not DLQ-specific: it applies
-    to every rejected publish, diverted or not. The old `KEEP_ALERT_DLQ_RETRY_AFTER`
-    is still read as a fallback so a chart that sets it keeps working.
-
-    `KEEP_ALERT_DLQ_ACCEPT=true` restores the old "202 accepted" contract for
-    senders that must not see an error. The DLQ topic exists, but nothing
-    consumes it, so an alert that lands there is retained and never ingested —
-    which is why the default is to answer 503 and make the sender retry.
-    """
-    return JSONResponse(
-        content={**body, "detail": detail},
-        status_code=503,
-        headers={"Retry-After": KEEP_ALERT_RETRY_AFTER},
-    )
-
-
-def _ingestion_response(task_name, source: str) -> JSONResponse:
-    """Build the ingestion response, labelling the metric by where the event
-    actually landed rather than reporting success unconditionally."""
-    result = result_from_task_name(task_name)
-    body = {"task_name": task_name or "async-task", "sink": result.value}
-
-    if result is not ProduceResult.DLQ:
-        alert_ingestion_total.labels(source=source, status="success").inc()
-        return JSONResponse(content=body, status_code=202)
-
-    alert_ingestion_total.labels(source=source, status="dlq").inc()
-    logger.error(
-        "Alert diverted to the DLQ topic and will not be ingested", extra=body
-    )
-
-    if KEEP_ALERT_DLQ_ACCEPT:
-        return JSONResponse(content=body, status_code=202)
-
-    return _retry_later(
-        "Alert could not be published to the ingestion topic and was written to "
-        "the dead-letter topic; it will not be processed. Please retry.",
-        **body,
-    )
-
-
-def _publish_failed_response(
-    exc: Exception, source: str, trace_id: str
-) -> JSONResponse:
-    """Answer a publish that reached no topic at all.
-
-    Both the main send and the DLQ fallback failed — the ordinary shape of a
-    Kafka outage, since `KAFKA_DLQ_BOOTSTRAP_SERVERS` defaults to the main
-    brokers. Unhandled, this reaches the catch-all in `main.py` as a 500, which
-    carries no "retry me" semantics; senders were asked to retry on 503.
-    """
-    alert_ingestion_error_total.labels(
-        source=source, error_type=type(exc).__name__
-    ).inc()
-    logger.exception(
-        "Failed to publish alert to any topic; rejecting so the sender retries",
-        extra={"trace_id": trace_id, "source": source},
-    )
-    # trace_id travels in the body so a sender reporting a 503 gives us something
-    # to grep for.
-    return _retry_later(
-        "Alert could not be published to the ingestion topic. Please retry.",
-        trace_id=trace_id,
-    )
-
-
-def _extract_operator(event) -> str | None:
-    """Best-effort read of the alert's `operator` routing key from an incoming
-    event, which may be a single AlertDto, a list, or a raw dict. For a batch we
-    use the first alert's operator (VENA-5596 Epic 5)."""
-    item = event[0] if isinstance(event, list) and event else event
-    if item is None:
-        return None
-    if isinstance(item, dict):
-        return item.get("operator")
-    return getattr(item, "operator", None)
-
-
-def _resolve_ingestion_tenant(event) -> str:
-    """Route an alert to the tenant that owns its `operator`. An alert with no
-    operator, or an operator that maps to no tenant, goes to the GENERAL tenant --
-    NOT the ingesting key's tenant -- so a specific tenant only ever receives its
-    own operators' alerts (VENA-5596 Epic 5)."""
-    operator_name = _extract_operator(event)
-    if not operator_name:
-        return GENERIC_TENANT_UUID
-    operator = get_operator_by_name(operator_name)
-    if operator is None:
-        logger.info(
-            "Alert operator matched no tenant; routing to general",
-            extra={"operator": operator_name, "tenant_id": GENERIC_TENANT_UUID},
-        )
-        return GENERIC_TENANT_UUID
-    logger.info(
-        "Routing alert by operator",
-        extra={"operator": operator_name, "tenant_id": operator.tenant_id},
-    )
-    return operator.tenant_id
 
 
 class AlertHistoryResponse(BaseModel):
@@ -517,8 +384,6 @@ async def delete_alert(
     authenticated_entity: AuthenticatedEntity = Depends(
         IdentityManagerFactory.get_auth_verifier(["delete:alert"])
     ),
-    event_producer: EventProducer = Depends(get_event_producer),
-
 ) -> dict[str, str]:
     tenant_id = authenticated_entity.tenant_id
     user_email = authenticated_entity.email
@@ -541,15 +406,17 @@ async def delete_alert(
     deleted = not bool(delete_alert.restore)
     enrichments = {"deleted": deleted, "assignee": user_email}
 
-    enrichment_bl = EnrichmentsBl(tenant_id, event_producer=event_producer)
+    enrichment_bl = EnrichmentsBl(tenant_id)
     await enrichment_bl.enrich_entity(
         fingerprint=delete_alert.fingerprint,
         enrichments=enrichments,
         action_type=ActionType.DELETE_ALERT,
         action_description=f"Alert deleted by {user_email}",
         action_callee=user_email,
-        event_type = EventType.ENRICH if delete_alert.soft_delete else EventType.DELETE
     )
+
+    if not delete_alert.soft_delete:
+        delete_alert_db(tenant_id, delete_alert.fingerprint)
 
     logger.info(
         "Deleted alert successfully",
@@ -576,8 +443,6 @@ async def assign_alert(
         IdentityManagerFactory.get_auth_verifier(["write:alert"])
     ),
     session: Session = Depends(get_session),
-    event_producer: EventProducer = Depends(get_event_producer),
-
 ) -> dict[str, str]:
     tenant_id = authenticated_entity.tenant_id
     user_email = authenticated_entity.email
@@ -624,7 +489,7 @@ async def assign_alert(
     if note:
         enrichments["note"] = note
 
-    enrichments_bl = EnrichmentsBl(tenant_id, session, event_producer=event_producer)
+    enrichments_bl = EnrichmentsBl(tenant_id, session)
     await enrichments_bl.enrich_entity(
         fingerprint=fingerprint,
         enrichments=enrichments,
@@ -634,130 +499,6 @@ async def assign_alert(
         dispose_on_new_alert=dispose_on_new_alert,
     )
     return {"status": "ok"}
-
-
-
-
-
-@router.post(
-    "/event",
-    description="Receive a generic alert event",
-    response_model=AlertDto | list[AlertDto],
-    status_code=202,
-)
-async def receive_generic_event(
-    event: AlertDto | list[AlertDto] | dict,
-    request: Request,
-    provider_id: str | None = None,
-    fingerprint: str | None = None,
-    authenticated_entity: AuthenticatedEntity = Depends(
-        IdentityManagerFactory.get_auth_verifier(["write:alert"])
-    ),
-    event_producer: EventProducer = Depends(get_event_producer),
-):
-    """
-    A generic webhook endpoint that can be used by any provider to send alerts to Keep.
-
-    Args:
-        alert (AlertDto | list[AlertDto]): The alert(s) to be sent to Keep.
-        bg_tasks (BackgroundTasks): Background tasks handler.
-        tenant_id (str, optional): Defaults to Depends(verify_api_key).
-    """
-    # Route by operator: an alert whose operator maps to a tenant goes there,
-    # else it goes to the GENERAL tenant (never the API-key's tenant), so a
-    # specific tenant only receives its own operators' alerts (VENA-5596 Epic 5).
-    tenant_id = _resolve_ingestion_tenant(event)
-    # Use the abstract event producer (Redis or Kafka)
-    try:
-        task_name = await event_producer.produce(
-            event=event,
-            tenant_id=tenant_id,
-            provider_type=None,  # Generic event
-            provider_id=provider_id,
-            fingerprint=fingerprint,
-            api_key_name=authenticated_entity.api_key_name,
-            trace_id=request.state.trace_id,
-            provider_name=None,
-        )
-    except Exception as e:
-        return _publish_failed_response(
-            e, source="generic", trace_id=request.state.trace_id
-        )
-
-    return _ingestion_response(task_name, source="generic")
-
-
-# https://learn.netdata.cloud/docs/alerts-&-notifications/notifications/centralized-cloud-notifications/webhook#challenge-secret
-@router.get(
-    "/event/netdata",
-    description="Helper function to complete Netdata webhook challenge",
-)
-async def webhook_challenge():
-    try:
-        token = Request.query_params.get("token").encode("ascii")
-    except Exception as e:
-        logger.exception("Failed to get token", extra={"error": str(e)})
-        raise HTTPException(status_code=400, detail="Bad request: failed to get token")
-    KEY = "keep-netdata-webhook-integration"
-
-    # creates HMAC SHA-256 hash from incomming token and your consumer secret
-    sha256_hash_digest = hmac.new(
-        KEY.encode(), msg=token, digestmod=hashlib.sha256
-    ).digest()
-
-    # construct response data with base64 encoded hash
-    response = {
-        "response_token": "sha256="
-        + base64.b64encode(sha256_hash_digest).decode("ascii")
-    }
-
-    return json.dumps(response)
-
-
-@router.post(
-    "/event/{provider_type}",
-    description="Receive an alert event from a provider",
-    status_code=202,
-)
-async def receive_event(
-    provider_type: str,
-    request: Request,
-    provider_id: str | None = None,
-    provider_name: str | None = None,
-    fingerprint: str | None = None,
-    event=Depends(extract_generic_body),
-    authenticated_entity: AuthenticatedEntity = Depends(
-        IdentityManagerFactory.get_auth_verifier(["write:alert"])
-    ),
-    event_producer: EventProducer = Depends(get_event_producer),
-) -> dict[str, str]:
-    trace_id = request.state.trace_id
-    # If provider_name is provided, we pass it to the worker to resolve it
-    # We do NOT parse the event here anymore, we pass the raw body (event) to the worker
-    # We do NOT resolve the provider here anymore, we pass the provider_name to the worker
-
-    # Route by operator: an alert whose operator maps to a tenant goes there,
-    # else it goes to the GENERAL tenant (never the API-key's tenant), so a
-    # specific tenant only receives its own operators' alerts (VENA-5596 Epic 5).
-    tenant_id = _resolve_ingestion_tenant(event)
-    # Use the abstract event producer (Redis or Kafka)
-    task_name = await event_producer.produce(
-        event=event,
-        tenant_id=tenant_id,
-        provider_type=provider_type,
-        provider_id=provider_id,
-        fingerprint=fingerprint,
-        api_key_name=authenticated_entity.api_key_name,
-        trace_id=trace_id,
-        provider_name=provider_name,
-    )
-    alert_ingestion_total.labels(source=provider_type, status="success").inc()
-
-
-    if not task_name:
-        task_name = "async-task"
-
-    return _ingestion_response(task_name, source=provider_type)
 
 
 @router.get(
@@ -798,8 +539,6 @@ async def enrich_alert_note(
         IdentityManagerFactory.get_auth_verifier(["write:alert"])
     ),
     session: Session = Depends(get_session),
-    event_producer: EventProducer = Depends(get_event_producer),
-
 ) -> dict[str, str]:
     logger.info("Enriching alert note", extra={"fingerprint": enrich_data.fingerprint})
     enriched_data = EnrichAlertRequestBody(
@@ -811,7 +550,6 @@ async def enrich_alert_note(
         authenticated_entity=authenticated_entity,
         dispose_on_new_alert=False,
         session=session,
-        event_producer=event_producer
     )
 
 
@@ -828,8 +566,6 @@ async def batch_enrich_alerts(
         False, description="Dispose on new alert"
     ),
     session: Session = Depends(get_session),
-    event_producer: EventProducer = Depends(get_event_producer),
-
 ):
     tenant_id = authenticated_entity.tenant_id
     logger.info(
@@ -907,7 +643,7 @@ async def batch_enrich_alerts(
 
     # Common enrichment processing
     try:
-        enrichment_bl = EnrichmentsBl(tenant_id, db=session, event_producer=event_producer)
+        enrichment_bl = EnrichmentsBl(tenant_id, db=session)
         (
             action_type,
             action_description,
@@ -1002,8 +738,6 @@ async def enrich_alert(
         False, description="Dispose on new alert"
     ),
     session: Session = Depends(get_session),
-    event_producer: EventProducer = Depends(get_event_producer),
-
 ) -> dict[str, str]:
     _translate_dismiss_enrichments(enrich_data.enrichments)
 
@@ -1021,7 +755,6 @@ async def enrich_alert(
         authenticated_entity=authenticated_entity,
         dispose_on_new_alert=dispose_on_new_alert,
         session=session,
-        event_producer=event_producer
     )
 
 
@@ -1030,8 +763,6 @@ async def _enrich_alert(
     authenticated_entity: AuthenticatedEntity,
     session: Session,
     dispose_on_new_alert: bool = False,
-    event_producer: EventProducer = None,
-
 ) -> dict[str, str]:
     tenant_id = authenticated_entity.tenant_id
     logger.info(
@@ -1043,7 +774,7 @@ async def _enrich_alert(
     )
 
     try:
-        enrichement_bl = EnrichmentsBl(tenant_id, db=session, event_producer=event_producer)
+        enrichement_bl = EnrichmentsBl(tenant_id, db=session)
         (
             action_type,
             action_description,
@@ -1131,8 +862,6 @@ async def unenrich_alert(
     authenticated_entity: AuthenticatedEntity = Depends(
         IdentityManagerFactory.get_auth_verifier(["write:alert"])
     ),
-    event_producer: EventProducer = Depends(get_event_producer),
-
 ) -> dict[str, str]:
     tenant_id = authenticated_entity.tenant_id
     logger.info(
@@ -1156,7 +885,7 @@ async def unenrich_alert(
         return {"status": "failed"}
 
     try:
-        enrichement_bl = EnrichmentsBl(tenant_id, event_producer=event_producer)
+        enrichement_bl = EnrichmentsBl(tenant_id)
         if "status" in enrich_data.enrichments:
             action_type = ActionType.STATUS_UNENRICH
             action_description = (

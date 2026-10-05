@@ -15,9 +15,6 @@ from fastapi import (
 )
 from sqlmodel import Session
 
-from src.services.producers.base_event_handler import EventProducer
-from src.services.producers.factory import get_event_producer
-
 from src.services.ai_suggestion_bl import AISuggestionBl
 from src.services.enrichments_bl import EnrichmentsBl
 from src.services.incident_reports import IncidentReportsBl
@@ -1026,8 +1023,6 @@ async def enrich_incident(
         IdentityManagerFactory.get_auth_verifier(["write:incident"])
     ),
     db_session: Session = Depends(get_session),
-    event_producer: EventProducer = Depends(get_event_producer),
-
 ) -> Response:
     """Enrich incident with additional data."""
     tenant_id = authenticated_entity.tenant_id
@@ -1038,7 +1033,7 @@ async def enrich_incident(
         raise HTTPException(status_code=404, detail="Incident not found")
 
     # Use the existing enrichment infrastructure
-    enrichment_bl = EnrichmentsBl(tenant_id, db_session, event_producer=event_producer)
+    enrichment_bl = EnrichmentsBl(tenant_id, db_session)
 
     await enrichment_bl.enrich_entity(
         fingerprint=incident_id,
@@ -1073,8 +1068,6 @@ async def unenrich_incident(
     authenticated_entity: AuthenticatedEntity = Depends(
         IdentityManagerFactory.get_auth_verifier(["write:incident"])
     ),
-    event_producer: EventProducer = Depends(get_event_producer),
-
 ) -> Response:
     """Unenrich incident additional data."""
     tenant_id = authenticated_entity.tenant_id
@@ -1096,7 +1089,7 @@ async def unenrich_incident(
     }
 
     # Use the existing enrichment infrastructure
-    enrichment_bl = EnrichmentsBl(tenant_id, event_producer=event_producer)
+    enrichment_bl = EnrichmentsBl(tenant_id)
     await enrichment_bl.enrich_entity(
         fingerprint=enrichment.fingerprint,
         enrichments=new_enrichments,

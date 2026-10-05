@@ -11,7 +11,6 @@ from fastapi import HTTPException
 from sqlalchemy.orm.exc import StaleDataError
 from sqlmodel import Session
 
-from src.services.producers.base_event_handler import EventType
 
 from src.services.enrichments_bl import EnrichmentsBl
 from src.repositories.db import (

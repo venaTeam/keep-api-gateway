@@ -59,7 +59,7 @@ below is meaningful.
 
 ```bash
 cd docs/sse/acceptance-kit
-cp config.env.example config.env    # fill in namespace, route, tenant, auth, notify token
+cp config.env.example config.env    # fill in namespace, gateway + ingestion routes, tenant, auth, notify token
 set -a; . ./config.env; set +a
 ./run_acceptance.py --only config
 ```
@@ -170,7 +170,8 @@ Attach the `--json` outputs.
 | Symptom | Reality |
 |---|---|
 | A user without a Keycloak org group (`keep_admin`, `carol`) hits an infinite redirect loop on the alerts feed | `/backend/workflows/query` 401s on the UI's `keepActiveTenant=` token, the client signs out and reloads. Pre-existing; use a user with an org group. |
-| Every delivery check reads 0 | On some realms `POST /alerts/event` resolves to the generic tenant `keep` while reads and streams resolve to the caller's org tenant. If `TENANT_ID` is not the tenant ingestion lands in, nothing is ever delivered. Verify: POST an alert, then GET `/alerts/<fingerprint>` with the same auth header. |
+| Every ingest returns 404 | Alerts are being POSTed to the gateway, which no longer serves `/alerts/event`. Set `INGESTION_ROUTE` to the keep-ingestion route. |
+| Every delivery check reads 0 | keep-ingestion puts every alert in `KEEP_INGESTION_TENANT_ID` (default: the generic tenant `keep`) while reads and streams resolve to the caller's org tenant. If `TENANT_ID` is not the tenant ingestion lands in, nothing is ever delivered. Verify: POST an alert to `INGESTION_ROUTE`, then GET `/alerts/<fingerprint>` from the gateway with the same auth header. |
 | Fresh environment, services up but everything 500s on missing tables | The gateway no longer owns the schema; the `keep-migrations` image must run before the services start. |
 | `keep_events_in_total` counts twice per alert | Pre-existing double increment in the event handler. Cosmetic. |
 
