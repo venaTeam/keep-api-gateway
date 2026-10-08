@@ -62,6 +62,9 @@ def seed_incident(
     status=IncidentStatus.FIRING,
     tenant_id=SINGLE_TENANT_UUID,
     enrichment_status=None,
+    *,
+    is_visible=True,
+    is_candidate=False,
 ):
     incident = Incident(
         tenant_id=tenant_id,
@@ -69,6 +72,8 @@ def seed_incident(
         user_summary=name,
         generated_summary=name,
         status=status.value,
+        is_visible=is_visible,
+        is_candidate=is_candidate,
     )
     session.add(incident)
     session.commit()

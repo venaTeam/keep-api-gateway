@@ -165,6 +165,55 @@ def test_incident_status_follows_the_enrichment_override(db_session):
     assert count(group_by="incident", incident_status="firing") == 1
 
 
+@pytest.mark.parametrize(
+    "incident_status, seeded_status",
+    [
+        ("active", IncidentStatus.FIRING),
+        ("firing", IncidentStatus.FIRING),
+        ("acknowledged", IncidentStatus.ACKNOWLEDGED),
+    ],
+)
+def test_a_hidden_incident_is_not_counted(db_session, incident_status, seeded_status):
+    hidden = seed_incident(db_session, "hidden", seeded_status, is_visible=False)
+    seed_alert(db_session, "fp-1")
+    link(db_session, "fp-1", hidden)
+
+    assert count(group_by="incident", incident_status=incident_status) == 0
+
+
+@pytest.mark.parametrize(
+    "incident_status, seeded_status",
+    [
+        ("active", IncidentStatus.FIRING),
+        ("firing", IncidentStatus.FIRING),
+        ("acknowledged", IncidentStatus.ACKNOWLEDGED),
+    ],
+)
+def test_a_candidate_incident_is_not_counted(
+    db_session, incident_status, seeded_status
+):
+    candidate = seed_incident(db_session, "candidate", seeded_status, is_candidate=True)
+    seed_alert(db_session, "fp-1")
+    link(db_session, "fp-1", candidate)
+
+    assert count(group_by="incident", incident_status=incident_status) == 0
+
+
+def test_a_visible_incident_is_still_counted_beside_hidden_and_candidate_ones(
+    db_session,
+):
+    visible = seed_incident(db_session, "visible")
+    hidden = seed_incident(db_session, "hidden", is_visible=False)
+    candidate = seed_incident(db_session, "candidate", is_candidate=True)
+    seed_alert(db_session, "fp-1")
+    link(db_session, "fp-1", visible)
+    link(db_session, "fp-1", hidden)
+    link(db_session, "fp-1", candidate)
+
+    assert count(group_by="incident") == 1
+    assert count(group_by="incident", incident_status="firing") == 1
+
+
 def test_alerts_without_an_incident_contribute_nothing(db_session):
     seed_alert(db_session, "fp-1")
 
