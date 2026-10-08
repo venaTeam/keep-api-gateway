@@ -1,12 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from src.models.query import (
-    CountGroupBy,
-    CountIncidentStatus,
-    CountQueryDto,
-    QueryDto,
-)
+from src.models.query import CountGroupBy, CountIncidentStatus, CountQueryDto, QueryDto
 
 
 def test_ungrouped_query_has_no_group_by_or_status():

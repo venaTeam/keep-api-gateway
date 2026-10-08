@@ -83,7 +83,9 @@ def graph(db_session):
     seed_alert(db_session, "fp-override-firing", name="n2")
     link(db_session, "fp-override-firing", override_firing)
 
-    acknowledged = seed_incident(db_session, "acknowledged", IncidentStatus.ACKNOWLEDGED)
+    acknowledged = seed_incident(
+        db_session, "acknowledged", IncidentStatus.ACKNOWLEDGED
+    )
     seed_alert(db_session, "fp-ack", name="n2")
     link(db_session, "fp-ack", acknowledged)
 
@@ -253,9 +255,7 @@ def test_nothing_to_count_is_zero(db_session):
 
 def test_other_tenants_are_not_counted(graph, db_session):
     foreign = seed_incident(db_session, "foreign", tenant_id=OTHER_TENANT)
-    seed_alert(
-        db_session, "fp-foreign", service="s9", tenant_id=OTHER_TENANT
-    )
+    seed_alert(db_session, "fp-foreign", service="s9", tenant_id=OTHER_TENANT)
     link(db_session, "fp-foreign", foreign, tenant_id=OTHER_TENANT)
 
     assert count(group_by="incident") == 7

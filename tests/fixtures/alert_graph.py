@@ -89,7 +89,9 @@ def seed_incident(
     return incident
 
 
-def link(session, fingerprint, incident, *, tenant_id=SINGLE_TENANT_UUID, deleted_at=None):
+def link(
+    session, fingerprint, incident, *, tenant_id=SINGLE_TENANT_UUID, deleted_at=None
+):
     kwargs = {} if deleted_at is None else {"deleted_at": deleted_at}
     session.add(
         LastAlertToIncident(
