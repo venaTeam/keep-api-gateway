@@ -21,7 +21,7 @@ from src.repositories.db import engine
 
 # This import is required to create the tables
 from src.repositories.facets import get_facet_options, get_facets
-from src.models.alert import AlertEnvironment, AlertSeverity, AlertStatus
+from src.models.alert import AlertDto, AlertEnvironment, AlertSeverity, AlertStatus
 from src.models.db.alert import (
     Alert,
     AlertField,
@@ -587,6 +587,13 @@ def get_alert_facets(
 
 
 def get_alert_potential_facet_fields(tenant_id: str) -> list[str]:
+    """Return the fields the tenant's alerts can be faceted on.
+
+    The declared AlertDto fields are always included, so the list does not
+    depend on the alertfield table being populated (it is only written while
+    KEEP_ALERT_FIELDS_ENABLED is on). Fields observed on the tenant's alerts
+    follow, without duplicates.
+    """
     with Session(engine) as session:
         query = (
             select(AlertField.field_name)
@@ -595,5 +602,6 @@ def get_alert_potential_facet_fields(tenant_id: str) -> list[str]:
             .distinct(AlertField.field_name)
         )
         result = session.exec(query).all()
-        return [row[0] for row in result]
+        observed_fields = [row[0] for row in result]
+    return list(dict.fromkeys([*AlertDto.__fields__, *observed_fields]))
 
