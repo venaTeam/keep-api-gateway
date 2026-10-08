@@ -3051,3 +3051,17 @@ Report to the user: both branch names and commit lists, the Task 12 numbers and 
 ```bash
 bash /Users/yarin/.claude/plugins/cache/claude-plugins-official/superpowers/6.4.1/skills/brainstorming/scripts/stop-server.sh /Users/yarin/keep-namespace/.superpowers/brainstorm/20006-1791465603
 ```
+
+## Deviations from this plan (decided during execution)
+
+The code snippets above were the starting point; the shipped code differs in the places below. Where this plan and the spec (`docs/superpowers/specs/2026-10-08-alert-count-group-by-design.md`) differ, the spec is the source of truth.
+
+- **Visibility filters.** Grouped-by-incident also requires `is_visible` true and `is_candidate` false, like the Incidents page list; join conditions and tests were added after the Task 2 review.
+- **Hook result.** The hook returns `totalCount` (possibly the last good value after a failed refresh) plus `isError`; for a grouped request that has an error `isLoading` is false, so the error state is stable while SWR retries.
+- **Unknown saved values.** `getCountUnitLabel` never throws for an unknown saved field or status (it falls back to the raw field string or a generic "Incidents"; inherited object names are ignored), with regression tests in both panels; the browser check found that a saved field outside the allowlist crashed the dashboard.
+- **Extra tests.** Added beyond the plan: a stale number plus `isError` shows the dash in the tile and the table; the table's whole alerts-count line is grey when grouped.
+- **Tile height.** New grouped counter tiles default to and require 4 rows (`h: 4`, `minH: 4`) because a grouped tile needs about 104 px; a tighter-spacing attempt at 3 rows was tried and reverted (it clipped descenders and did not fit). Editing an existing count tile into a grouped count grows it to at least 4 rows: `getLayoutValues()` returns `{ h: 4, minH: 4 }` for that edit and `handleSaveEdit` syncs them into the grid layout through the pure helper `applyEditedItemToLayout` (new file `src/app/(keep)/dashboard/widget-layout.ts`).
+- **Query builder.** Field counts ignore empty strings (`NULLIF(col, '')`); `build_distinct_count_query` raises `ValueError("group_by is required")` without a `group_by`.
+- **Test and lint process.** The new test files are formatted with isort `--profile black`; the full-suite run had no `-x`.
+- **Count control.** The segmented Count control is a small custom component, not Tremor's `TabList`; a few mock details differ (chevron on "Other field", "Also:" hints omitted), see the spec's follow-ups.
+- **End-to-end verification.** Run on a live local stack with a namespaced demo dataset and a demo dashboard (see the spec's "Verified in a browser").
