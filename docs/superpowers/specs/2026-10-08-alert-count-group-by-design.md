@@ -34,7 +34,7 @@ This came out of a design discussion on dashboard widgets: the main user story i
 7. `POST /alerts/query/count` accepts two optional body fields, `group_by` and `incident_status`, and still returns a bare integer.
 8. `group_by` is a closed enum: `incident`, `name`, `service`, `node_name`, `application`, `site`, `assignee`. Any other value is rejected with a 422.
 9. `incident_status` is `active` | `firing` | `acknowledged`, defaults to `active`, and is only valid with `group_by=incident`; otherwise 422.
-10. With `group_by=incident` the result is the number of distinct incidents that (a) have a status in the selected set, evaluated with the same expression the Incidents page uses (a status written through `IncidentEnrichment` overrides the `incident.status` column), and (b) are linked, through a link that is not soft-deleted, to at least one alert matching the request's CEL. Alerts with no such incident contribute nothing. An alert linked to two qualifying incidents contributes to both.
+10. With `group_by=incident` the result is the number of distinct incidents that (a) are ones the Incidents page shows, i.e. `is_visible` is true and `is_candidate` is false (unconfirmed AI-suggested incidents are created as candidates and some incidents are held back as invisible), (b) have a status in the selected set, evaluated with the same expression the Incidents page uses (a status written through `IncidentEnrichment` overrides the `incident.status` column), and (c) are linked, through a link that is not soft-deleted, to at least one alert matching the request's CEL. Alerts with no such incident contribute nothing. An alert linked to two qualifying incidents contributes to both.
 11. With any other `group_by` the result is the number of distinct non-null values of that field among the alerts matching the CEL.
 12. The request CEL is built by the UI exactly as today (preset CEL, dashboard time range, and `status == 'firing'` when "Show Firing Alerts Only" is on), so those filters restrict the matching alerts before distinct-counting.
 13. Without `group_by` the endpoint behaves exactly as today.
@@ -49,7 +49,7 @@ This came out of a design discussion on dashboard widgets: the main user story i
 ### Non-functional requirements
 
 - **Backward compatibility.** Both new fields are optional; ungrouped requests, ungrouped widgets and the sidebar preset counters are unchanged. An *old* gateway silently ignores `group_by` and returns the alert count, so the gateway must be deployed before keep-ui.
-- **Performance.** One `COUNT(DISTINCT …)` per grouped widget per 30 s refresh, over the same bounded alert window plain counts use (`ALERTS_HARD_LIMIT`). Ungrouped widgets add zero requests; a grouped Alert Table widget adds one. No new indexes are expected; this is unmeasured, see "Verify before implementation".
+- **Performance.** One `COUNT(DISTINCT …)` per grouped widget per 30 s refresh, over the same bounded alert window plain counts use (`ALERTS_HARD_LIMIT`). Ungrouped widgets add zero requests; a grouped Alert Table widget adds one. No new indexes are expected; this is unmeasured, see "Still to verify" in the Summary.
 - **Security.** `group_by` is a closed server-side enum mapped to server-owned SQL expressions; no client-supplied identifier reaches SQL. Auth stays `read:alert`; tenant scoping comes from the existing query builder.
 - **Observability.** The existing request log lines gain `group_by` and `incident_status` in `extra`.
 - **Schema.** No migrations. Widget config lives in the opaque `dashboard_config` JSON; the query is a read-only `SELECT` over existing tables.
@@ -97,7 +97,7 @@ sequenceDiagram
 | `incident` | Incidents | `incident.id` | the headline use case |
 | `name` | Alert name | `alert.name` | distinct alert rules matching |
 | `service` | Service | `alert.service` | blast radius |
-| `node_name` | Host | `alert.node_name` | infrastructure dimension |
+| `node_name` | Host | `alert.node_name` | the node the service is hosted on |
 | `application` | Application | `alert.application` | infrastructure dimension |
 | `site` | Site | `alert.site` | infrastructure dimension |
 | `assignee` | Assignee | `lastalert.assignee` | workload view |
@@ -116,7 +116,7 @@ The shared alert-query join (`__build_query_for_filtering`) is not safe to reuse
 - it outer-joins `Incident` on `fingerprint IN (fingerprints having some firing incident)` rather than on the joined incident's own status, so an alert linked to both a resolved and a firing incident attaches both;
 - it does not exclude soft-deleted `LastAlertToIncident` links, while the rest of the gateway filters them with `deleted_at == NULL_FOR_DELETED_AT`.
 
-For the alert list that is harmless (rows are de-duplicated per alert); for `COUNT(DISTINCT incident.id)` it would over-count.
+For the alert list that is harmless (rows are de-duplicated per alert); for `COUNT(DISTINCT incident.id)` it would over-count. Separately, a live-incident number should only count incidents the Incidents page shows, and that page always filters `Incident.is_visible == True` and `Incident.is_candidate == False`.
 
 **Option A: Reuse the shared join, firing only.** Zero new join code; acknowledged incidents vanish from the number when acked; inherits both defects above.
 **Option B: Add a status parameter to the shared join.** Still inherits the defects, and risks changing the alert list.
@@ -132,6 +132,8 @@ JOIN lastalerttoincident lai
 JOIN incident
   ON incident.tenant_id = lai.tenant_id
  AND incident.id = lai.incident_id
+ AND incident.is_visible
+ AND NOT incident.is_candidate
 LEFT JOIN incidentenrichment
   ON incidentenrichment.tenant_id = incident.tenant_id
  AND incidentenrichment.incident_id = incident.id
@@ -141,7 +143,7 @@ WHERE lastalert.tenant_id = :tenant
   AND (<request CEL>)
 ```
 
-`active` = `IncidentStatus.get_active(return_values=True)` (firing + acknowledged); `firing` and `acknowledged` are single-element sets. The status expression is taken from the incidents repository's own field mapping (`get_field_expression("status")` on a provider built from `src.repositories.incidents.properties_metadata`), i.e. the override-aware `coalesce(enrichment status, incident.status)` the Incidents page filters on, so the tile and the Incidents page cannot disagree. It is imported lazily because `incidents.py` already imports `alerts.py`. With `incident_statuses=None` (every existing caller) the builder is unchanged apart from `if` becoming `elif` on the existing incident-join branch. Preset CEL that references `incident.*` fields while grouped by incident sees the same filtered join, so filter and count agree. For any other `group_by` the existing join is used as is.
+`active` = `IncidentStatus.get_active(return_values=True)` (firing + acknowledged); `firing` and `acknowledged` are single-element sets. The `incident` join also requires `is_visible` and not `is_candidate`, the same two conditions the Incidents page list always applies, so hidden incidents and unconfirmed AI-suggested (candidate) incidents never reach the number. The status expression is taken from the incidents repository's own field mapping (`get_field_expression("status")` on a provider built from `src.repositories.incidents.properties_metadata`), i.e. the override-aware `coalesce(enrichment status, incident.status)` the Incidents page filters on, so the tile and the Incidents page cannot disagree. It is imported lazily because `incidents.py` already imports `alerts.py`. With `incident_statuses=None` (every existing caller) the builder is unchanged apart from `if` becoming `elif` on the existing incident-join branch. Preset CEL that references `incident.*` fields while grouped by incident sees the same filtered join, so filter and count agree. For any other `group_by` the existing join is used as is.
 
 **Recommendation: C.** Correct by construction and invisible to existing callers. The two shared-join defects are logged as a follow-up, not fixed here.
 
@@ -181,7 +183,7 @@ A bordered chip between title and number was tried and rejected (it competed wit
 The gateway already treats a database failure as a failure: `query_total_alerts_count` logs and re-raises `OperationalError` (the client sees a 5xx), and `tests/test_cel_validation_routes.py::TestDatabaseFailuresStayFailures` pins that. The grouped path follows the same rule and must not catch it. The remaining silent zero is in the UI: `usePresetAlertCount` returns `data ?? 0`, so any failed request renders as `0`. For a "live incidents" tile, a silent `0` reads as "all clear".
 
 **Option A: Keep `data ?? 0` in the hook.** No change; wrong for this use case.
-**Option B: Grouped requests surface the error in the UI.** The hook exposes an error flag and returns no number when a grouped request fails; the tile shows `—` / "Couldn't load count". Ungrouped callers (including the sidebar counters) keep today's behaviour.
+**Option B: Grouped requests surface the error in the UI.** The hook exposes an `isError` flag when a grouped request fails (`totalCount` stays `0`); the panels render `—` / "Couldn't load count" instead of the number. The ungrouped counter tile keeps today's behaviour.
 
 **Recommendation: B**, scoped to grouped requests so nothing existing changes.
 
@@ -192,6 +194,7 @@ Gateway (pytest, run with `PYTHONPATH=.` from the worktree; conftest only patche
 - Each status mode, including a fingerprint linked to one resolved and one firing incident (firing mode counts only the firing one).
 - An incident whose column status is `firing` but whose `IncidentEnrichment` override is `resolved` is not counted as active (and the reverse), matching the Incidents page.
 - A soft-deleted link is excluded.
+- A hidden incident (`is_visible=false`) and a candidate incident (`is_candidate=true`), each linked and in a counting status, are not counted.
 - Non-incident fields: NULLs not counted; per-field correctness.
 - Validation: unknown `group_by` and `incident_status` without `group_by=incident` both 422.
 - Ungrouped count is unchanged; a CEL error is still a 400; a DB `OperationalError` on the grouped path surfaces as an error, not `0`.
@@ -215,9 +218,10 @@ Rollout: branches from `origin/dev` (local `dev` is stale in both repos); merge 
   - `labels.*`, `source`, `severity`, `status`, `environment` as group-by fields.
   - Fixing the shared alert-query incident join (resolved incidents attached via the firing-fingerprint condition; soft-deleted links not excluded). Separate bug, separate PR.
   - Adding a status-aware join or a `deleted_at` filter to the ungrouped `incident.*` CEL path.
-- **Verify before implementation:**
-  1. `get_field_expression` returns the expected SQL for each allowlisted field on PostgreSQL, MySQL and SQLite.
-  2. Tremor's installed version provides a solid `TabList` usable as a segmented control.
-  3. The two shared-join defects are real: pin them with a failing test before relying on them.
-  4. `EXPLAIN` the grouped query on a large tenant; any needed index would be a `keep-migrations` PR.
-  5. `COUNT(DISTINCT incident.id)` behaves on MySQL's UUID column type.
+  - Accessibility of the Count segmented control: it declares radio roles without roving tabindex or arrow-key handling.
+  - Existing grouped tiles saved at 2 rows keep their saved layout; only new grouped tiles get a 3-row minimum.
+  - The form omits the mock's "Also: …" hints under the status and field selects (the selects list the options) and the chevron on the "Other field" segment.
+  - The Field select preselects "Alert name"; the tile title is 20px and the tint alpha is .15, as in the existing tile (the mock used 18px / .13).
+- **Verified in a browser:** a demo dashboard covering every case (Count: Alerts, Incidents in each status, each other field, singular, zero and threshold colours, the grey error state, the Alert Table grouped by incident and by service, the Count control in its three states, and editing back to Alerts dropping `countBy`) was checked against live data, and the numbers matched an independent SQL computation. The check found and fixed two defects: a saved field the UI does not know crashed the whole dashboard, and a 3-row tile clipped its caption.
+- **Resolved during planning:** the Tremor control question: a small custom segmented control was built (Tremor's `TabList` was not used); the shared-join defects (reproduced on the SQLite test DB against `origin/dev`: it attaches resolved incidents on a shared fingerprint, soft-deleted links and the wrong status, and misses acknowledged and overridden incidents); the allowlisted field expressions and the override-aware status expression (printed for SQLite, PostgreSQL and MySQL; the queries themselves ran on SQLite only).
+- **Still to verify:** (1) the grouped query on PostgreSQL and MySQL, not only SQLite; (2) `EXPLAIN` the grouped query on a large tenant, where any needed index would be a `keep-migrations` PR; (3) `COUNT(DISTINCT incident.id)` on MySQL's UUID column type.
