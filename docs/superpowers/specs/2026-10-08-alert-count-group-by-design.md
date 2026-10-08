@@ -34,10 +34,10 @@ This came out of a design discussion on dashboard widgets: the main user story i
 7. `POST /alerts/query/count` accepts two optional body fields, `group_by` and `incident_status`, and still returns a bare integer.
 8. `group_by` is a closed enum: `incident`, `name`, `service`, `node_name`, `application`, `site`, `assignee`. Any other value is rejected with a 422.
 9. `incident_status` is `active` | `firing` | `acknowledged`, defaults to `active`, and is only valid with `group_by=incident`; otherwise 422.
-10. With `group_by=incident` the result is the number of distinct incidents that (a) have status in the selected set and (b) are linked, through a link that is not soft-deleted, to at least one alert matching the request's CEL. Alerts with no such incident contribute nothing. An alert linked to two qualifying incidents contributes to both.
+10. With `group_by=incident` the result is the number of distinct incidents that (a) have a status in the selected set, evaluated with the same expression the Incidents page uses (a status written through `IncidentEnrichment` overrides the `incident.status` column), and (b) are linked, through a link that is not soft-deleted, to at least one alert matching the request's CEL. Alerts with no such incident contribute nothing. An alert linked to two qualifying incidents contributes to both.
 11. With any other `group_by` the result is the number of distinct non-null values of that field among the alerts matching the CEL.
 12. The request CEL is built by the UI exactly as today (preset CEL, dashboard time range, and `status == 'firing'` when "Show Firing Alerts Only" is on), so those filters restrict the matching alerts before distinct-counting.
-13. Without `group_by` the endpoint behaves exactly as today, including its current error handling.
+13. Without `group_by` the endpoint behaves exactly as today.
 
 **Rendering (keep-ui)**
 
@@ -132,13 +132,16 @@ JOIN lastalerttoincident lai
 JOIN incident
   ON incident.tenant_id = lai.tenant_id
  AND incident.id = lai.incident_id
- AND incident.status IN (:statuses)
+LEFT JOIN incidentenrichment
+  ON incidentenrichment.tenant_id = incident.tenant_id
+ AND incidentenrichment.incident_id = incident.id
 WHERE lastalert.tenant_id = :tenant
   AND lastalert.timestamp >= :threshold
+  AND (<incident status expression>) IN (:statuses)
   AND (<request CEL>)
 ```
 
-`active` = `IncidentStatus.get_active()` (firing + acknowledged); `firing` and `acknowledged` are single-element sets. With `incident_statuses=None` (every existing caller) the builder is unchanged byte for byte. Preset CEL that references `incident.*` fields while grouped by incident sees the same filtered join, so filter and count agree. For any other `group_by` the existing join is used as is.
+`active` = `IncidentStatus.get_active(return_values=True)` (firing + acknowledged); `firing` and `acknowledged` are single-element sets. The status expression is taken from the incidents repository's own field mapping (`get_field_expression("status")` on a provider built from `src.repositories.incidents.properties_metadata`), i.e. the override-aware `coalesce(enrichment status, incident.status)` the Incidents page filters on, so the tile and the Incidents page cannot disagree. It is imported lazily because `incidents.py` already imports `alerts.py`. With `incident_statuses=None` (every existing caller) the builder is unchanged apart from `if` becoming `elif` on the existing incident-join branch. Preset CEL that references `incident.*` fields while grouped by incident sees the same filtered join, so filter and count agree. For any other `group_by` the existing join is used as is.
 
 **Recommendation: C.** Correct by construction and invisible to existing callers. The two shared-join defects are logged as a follow-up, not fixed here.
 
@@ -175,18 +178,19 @@ A bordered chip between title and number was tried and rejected (it competed wit
 
 ### 8. Failure behaviour
 
-Today `query_total_alerts_count` catches `OperationalError` and returns `0`, and the UI hook turns any failure into `0`. For a "live incidents" tile, a silent `0` reads as "all clear".
+The gateway already treats a database failure as a failure: `query_total_alerts_count` logs and re-raises `OperationalError` (the client sees a 5xx), and `tests/test_cel_validation_routes.py::TestDatabaseFailuresStayFailures` pins that. The grouped path follows the same rule and must not catch it. The remaining silent zero is in the UI: `usePresetAlertCount` returns `data ?? 0`, so any failed request renders as `0`. For a "live incidents" tile, a silent `0` reads as "all clear".
 
-**Option A: Keep returning 0.** No change; wrong for this use case.
-**Option B: Grouped requests fail loudly.** The grouped path does not catch `OperationalError` (the client sees a 5xx); the hook exposes an error flag and returns no number; the tile shows `—` / "Couldn't load count". Ungrouped behaviour is untouched.
+**Option A: Keep `data ?? 0` in the hook.** No change; wrong for this use case.
+**Option B: Grouped requests surface the error in the UI.** The hook exposes an error flag and returns no number when a grouped request fails; the tile shows `—` / "Couldn't load count". Ungrouped callers (including the sidebar counters) keep today's behaviour.
 
-**Recommendation: B**, scoped to the grouped path so nothing existing changes.
+**Recommendation: B**, scoped to grouped requests so nothing existing changes.
 
 ### 9. Testing and rollout
 
 Gateway (pytest, run with `PYTHONPATH=.` from the worktree; conftest only patches the db / db_utils / alerts engines):
 - 40 alerts in one incident count as 1; an alert in two qualifying incidents counts both.
 - Each status mode, including a fingerprint linked to one resolved and one firing incident (firing mode counts only the firing one).
+- An incident whose column status is `firing` but whose `IncidentEnrichment` override is `resolved` is not counted as active (and the reverse), matching the Incidents page.
 - A soft-deleted link is excluded.
 - Non-incident fields: NULLs not counted; per-field correctness.
 - Validation: unknown `group_by` and `incident_status` without `group_by=incident` both 422.
