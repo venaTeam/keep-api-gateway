@@ -6,7 +6,10 @@ from sqlalchemy.exc import OperationalError
 
 from src.models.db.incident import IncidentStatus
 from src.models.query import CountQueryDto
-from src.repositories.alerts import query_distinct_alerts_count
+from src.repositories.alerts import (
+    build_distinct_count_query,
+    query_distinct_alerts_count,
+)
 from src.repositories.dependencies import SINGLE_TENANT_UUID
 from tests.fixtures.alert_graph import link, seed_alert, seed_incident
 
@@ -246,6 +249,33 @@ def test_cel_may_reference_incident_fields_while_grouped_by_incident(graph):
 )
 def test_distinct_values_ignore_nulls(graph, group_by, expected):
     assert count(group_by=group_by) == expected
+
+
+@pytest.mark.parametrize(
+    "group_by",
+    ["name", "service", "node_name", "application", "site", "assignee"],
+)
+def test_empty_strings_are_not_distinct_values(db_session, group_by):
+    seed_alert(db_session, "fp-real", **{group_by: "v1"})
+    seed_alert(db_session, "fp-empty", **{group_by: ""})
+    seed_alert(db_session, "fp-null", **{group_by: None})
+
+    assert count(group_by=group_by) == 1
+
+
+@pytest.mark.parametrize(
+    "group_by",
+    ["name", "service", "node_name", "application", "site", "assignee"],
+)
+def test_only_empty_strings_count_as_zero(db_session, group_by):
+    seed_alert(db_session, "fp-empty", **{group_by: ""})
+
+    assert count(group_by=group_by) == 0
+
+
+def test_building_a_distinct_count_requires_a_group_by():
+    with pytest.raises(ValueError, match="group_by is required"):
+        build_distinct_count_query(SINGLE_TENANT_UUID, CountQueryDto())
 
 
 def test_nothing_to_count_is_zero(db_session):

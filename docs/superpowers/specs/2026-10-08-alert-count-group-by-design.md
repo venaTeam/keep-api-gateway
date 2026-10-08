@@ -35,7 +35,7 @@ This came out of a design discussion on dashboard widgets: the main user story i
 8. `group_by` is a closed enum: `incident`, `name`, `service`, `node_name`, `application`, `site`, `assignee`. Any other value is rejected with a 422.
 9. `incident_status` is `active` | `firing` | `acknowledged`, defaults to `active`, and is only valid with `group_by=incident`; otherwise 422.
 10. With `group_by=incident` the result is the number of distinct incidents that (a) are ones the Incidents page shows by default, i.e. `is_visible` is true and `is_candidate` is false (the list route's `candidate` parameter defaults to false; unconfirmed AI-suggested incidents are created as candidates and some incidents are held back as invisible), (b) have a status in the selected set, evaluated with the same expression the Incidents page uses (a status written through `IncidentEnrichment` overrides the `incident.status` column), and (c) are linked, through a link that is not soft-deleted, to at least one alert matching the request's CEL. Alerts with no such incident contribute nothing. An alert linked to two qualifying incidents contributes to both.
-11. With any other `group_by` the result is the number of distinct non-null values of that field among the alerts matching the CEL.
+11. With any other `group_by` the result is the number of distinct non-null, non-empty values of that field among the alerts matching the CEL.
 12. The request CEL is built by the UI exactly as today (preset CEL, dashboard time range, and `status == 'firing'` when "Show Firing Alerts Only" is on), so those filters restrict the matching alerts before distinct-counting.
 13. Without `group_by` the endpoint behaves exactly as today.
 
@@ -197,7 +197,7 @@ Gateway (pytest, run with `PYTHONPATH=.` from the worktree; conftest only patche
 - An incident whose column status is `firing` but whose `IncidentEnrichment` override is `resolved` is not counted as active (and the reverse), matching the Incidents page.
 - A soft-deleted link is excluded.
 - A hidden incident (`is_visible=false`) and a candidate incident (`is_candidate=true`), each linked and in a counting status, are not counted.
-- Non-incident fields: NULLs not counted; per-field correctness.
+- Non-incident fields: NULLs and empty strings not counted; per-field correctness.
 - Validation: unknown `group_by` and `incident_status` without `group_by=incident` both 422.
 - Ungrouped count is unchanged; a CEL error is still a 400; a DB `OperationalError` on the grouped path surfaces as an error, not `0`.
 

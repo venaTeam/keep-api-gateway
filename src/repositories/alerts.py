@@ -550,6 +550,9 @@ def query_total_alerts_count(tenant_id, query: QueryDto) -> int:
 
 
 def build_distinct_count_query(tenant_id: str, query: CountQueryDto):
+    if query.group_by is None:
+        raise ValueError("group_by is required")
+
     if query.group_by == CountGroupBy.INCIDENT:
         count_expression = func.count(func.distinct(Incident.id))
         incident_statuses = _COUNT_INCIDENT_STATUSES[query.incident_status]
@@ -557,7 +560,9 @@ def build_distinct_count_query(tenant_id: str, query: CountQueryDto):
         field_expression = get_cel_to_sql_provider(
             properties_metadata
         ).get_field_expression(query.group_by.value)
-        count_expression = func.count(func.distinct(text(field_expression)))
+        count_expression = func.count(
+            func.distinct(func.nullif(text(field_expression), ""))
+        )
         incident_statuses = None
 
     built_query_result = __build_query_for_filtering(
