@@ -249,7 +249,9 @@ def query_alerts_count(
                 "total_count": total_count,
             },
         )
-        return total_count
+        if query.group_by is None:
+            return total_count
+        return {"count": total_count, "group_by": query.group_by.value}
 
     except CelToSqlException as e:
         logger.exception(f'Error parsing CEL expression "{query.cel}". {str(e)}')

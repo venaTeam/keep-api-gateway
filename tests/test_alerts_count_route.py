@@ -33,6 +33,7 @@ def test_ungrouped_count_still_counts_alerts(
 
     assert response.status_code == 200
     assert response.json() == 5
+    assert type(response.json()) is int
 
 
 @pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
@@ -46,13 +47,13 @@ def test_ungrouped_count_still_counts_alerts(
         ({"group_by": "service", "cel": "service == 'search'"}, 1),
     ],
 )
-def test_grouped_count_returns_a_bare_integer(
+def test_grouped_count_confirms_the_grouping(
     db_session, client, test_app, two_incidents, body, expected
 ):
     response = client.post(COUNT_URL, headers=AUTH, json={"cel": "", **body})
 
     assert response.status_code == 200
-    assert response.json() == expected
+    assert response.json() == {"count": expected, "group_by": body["group_by"]}
 
 
 @pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
