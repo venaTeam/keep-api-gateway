@@ -199,6 +199,8 @@ Gateway (pytest, run with `PYTHONPATH=.` from the worktree; conftest only patche
 - Non-incident fields: NULLs and empty strings not counted; per-field correctness.
 - Validation: unknown `group_by` and `incident_status` without `group_by=incident` both 422.
 - Ungrouped count is unchanged; a CEL error is still a 400; a DB `OperationalError` on the grouped path surfaces as an error, not `0`.
+- A grouped response carries `{count, group_by}`; an ungrouped one is a bare integer.
+- Incident statuses are bound parameters: the status literal is absent from the compiled SQL.
 
 keep-ui (Jest): form state to `countBy` and back; `getCountUnitLabel` incl. singular; hook request payload and SWR key; tile caption, loading, zero and error states; table widget extra line and neutral alerts line; `stripForeignTypeFields` drops `countBy`.
 

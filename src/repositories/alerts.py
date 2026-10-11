@@ -344,10 +344,9 @@ def get_threeshold_query(tenant_id: str):
 def _join_incidents_with_status(sql_query, statuses: list[str]):
     """Inner-join live incident links and keep visible, non-candidate incidents whose status is in ``statuses``.
 
-    The status expression comes from the incidents repository so that an
-    ``IncidentEnrichment`` override wins over ``incident.status`` exactly as it does
-    on the Incidents page. The import is local because ``incidents`` already
-    imports this module.
+    The status expression comes from the incidents repository, so the count filters
+    on the same status the Incidents page does. The import is local because
+    ``incidents`` already imports this module.
     """
     from src.repositories.incidents import (
         properties_metadata as incident_properties_metadata,
