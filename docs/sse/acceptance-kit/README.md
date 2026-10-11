@@ -178,11 +178,14 @@ so one environment's alerts can be pushed into the other's browsers. A distinct
   cross-pod behaviour will be identical to before.
 - `fanout` passes but `e2e` fails → fan-out works, so look at the pipeline
   (event handler lag, Kafka, or the tenant mismatch below), not at SSE.
-- Everything reads 0 → check the tenant. On some realms `POST /alerts/event` resolves to
-  the generic tenant `keep` while reads and streams resolve to the caller's org tenant; if
-  `TENANT_ID` is not the one ingestion lands in, nothing is ever delivered and it looks
-  like total loss. Verify by POSTing an alert and GETting `/alerts/<fingerprint>` with the
-  same auth header.
+- Every ingest returns 404 → alerts are being POSTed to the gateway, which no longer
+  serves `/alerts/event`. Set `INGESTION_ROUTE` to the keep-ingestion route.
+- Everything reads 0 → check the tenant. keep-ingestion puts every alert in
+  `KEEP_INGESTION_TENANT_ID` (default: the generic tenant `keep`) while reads and streams
+  resolve to the caller's org tenant; if `TENANT_ID` is not the one ingestion lands in,
+  nothing is ever delivered and it looks like total loss. Verify by POSTing an alert to
+  `INGESTION_ROUTE` and GETting `/alerts/<fingerprint>` from the gateway with the same
+  auth header.
 - `rolling` lands between 80–95 % → raw subscribers have no catch-up refetch; the browser
   recovers those. Judge the user impact with `browser_check.mjs rollout`.
 

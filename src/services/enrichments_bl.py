@@ -43,7 +43,6 @@ from src.models.db.incident import IncidentStatus
 from src.models.db.mapping import MappingRule
 from src.models.db.rule import ResolveOn
 from src.services.identity_manager.authenticatedentity import AuthenticatedEntity
-from src.services.producers.base_event_handler import EventProducer, EventType
 
 
 def is_valid_uuid(uuid_str):
@@ -91,12 +90,11 @@ def get_nested_attribute(obj: AlertDto, attr_path: str):
 class EnrichmentsBl:
     ENRICHMENT_DISABLED = config("KEEP_ENRICHMENT_DISABLED", default="false", cast=bool)
 
-    def __init__(self, tenant_id: str, db: Session | None = None, event_producer: EventProducer | None = None):
+    def __init__(self, tenant_id: str, db: Session | None = None):
         self.logger = logging.getLogger(__name__)
         self.tenant_id = tenant_id
         self.__logs: list[EnrichmentLog] = []
         self.enrichment_event_id: UUID | None = None
-        self.event_producer = event_producer
         # Only close the session in __exit__/close if we created it here; a
         # caller-provided session stays owned (and closed) by the caller.
         self._owns_session = db is None
@@ -672,7 +670,6 @@ class EnrichmentsBl:
         action_description: str,
         dispose_on_new_alert=False,
         audit_enabled=True,
-        produce_event=True,
         strict=True,
         entity_type: str = "alert",
     ):
@@ -689,43 +686,9 @@ class EnrichmentsBl:
                 action_description=action_description,
                 dispose_on_new_alert=dispose_on_new_alert,
                 audit_enabled=audit_enabled,
-                produce_event=False,  # Don't produce individual ENRICH events
                 strict=strict,
                 entity_type=entity_type,
             )
-
-        if produce_event:
-            # Produce a single BATCH_ENRICH event for the entire batch.
-            # Propagate the typed status_disposable flag (from dispose_on_new_alert)
-            # so the event-handler consumer writes the same typed columns. Also
-            # normalize legacy keys (dismissed -> status/dismiss_mode) so the
-            # consumer sees the same translated payload the DB stored — incident
-            # writes keep arbitrary keys verbatim.
-            safe_event = self._apply_dispose_on_new_alert(
-                enrichments, dispose_on_new_alert
-            ).copy()
-            if entity_type != "incident":
-                try:
-                    safe_event = normalize_enrichments(safe_event, strict=strict)
-                except ValueError:
-                    # Per-fingerprint enrich_entity above already validated the
-                    # payload; this branch is defensive only.
-                    raise
-            safe_event.update({
-                "action_type": action_type.value,
-                "action_callee": action_callee,
-                "action_description": action_description,
-                "audit_enabled": False,  # Audit already created locally by API Gateway
-            })
-            await self.event_producer.produce(
-                event=safe_event,
-                event_type=EventType.BATCH_ENRICH,
-                tenant_id=self.tenant_id,
-                provider_type="keep",
-                provider_id="keep",
-                fingerprint=fingerprints,  # List of fingerprints
-            )
-
 
     async def disposable_enrich_entity(
         self,
@@ -753,7 +716,6 @@ class EnrichmentsBl:
             dispose_on_new_alert=True,
             force=force,
             audit_enabled=audit_enabled,
-            produce_event=True,
             strict=strict,
             entity_type=entity_type,
         )
@@ -801,10 +763,8 @@ class EnrichmentsBl:
         dispose_on_new_alert=False,
         force=False,
         audit_enabled=True,
-        produce_event=True,
         strict=True,
         entity_type: str = "alert",
-        event_type: EventType = EventType.ENRICH
     ):
         """
         should_exist = False only in mapping where the alert is not yet in elastic
@@ -835,10 +795,10 @@ class EnrichmentsBl:
                 enrichments, dispose_on_new_alert
             )
             # Normalize ONCE here so the local `enrichments` used for the
-            # Kafka event and the Elasticsearch enrich call carries the same typed
-            # keys the DB layer writes. Otherwise raw `dismissed: True` (or other
-            # legacy keys) would reach ES/Kafka while the DB stored translated
-            # status/dismiss_mode, leaving ES and the consumer out of sync (HIGH).
+            # Elasticsearch enrich call carries the same typed keys the DB layer
+            # writes. Otherwise raw `dismissed: True` (or other legacy keys) would
+            # reach ES while the DB stored translated status/dismiss_mode,
+            # leaving ES out of sync (HIGH).
             # The DB layer's normalize_enrichments is idempotent on already-typed
             # input, so re-running it inside enrich_alert_db is harmless.
             try:
@@ -863,27 +823,6 @@ class EnrichmentsBl:
             strict=strict,
             entity_type=entity_type,
         )
-
-        # Publish to kafka
-        if produce_event:
-            safe_event = enrichments.copy()
-            safe_event.update({
-                "action_type": action_type.value,
-                "action_callee": action_callee,
-                "action_description": action_description,
-                "audit_enabled": False,  # Audit already created locally by API Gateway
-                "force": force,
-            })
-            
-            await self.event_producer.produce(
-                event=safe_event,
-                event_type=event_type,
-                tenant_id=self.tenant_id,
-                provider_type="keep",
-                provider_id="keep",
-                fingerprint=fingerprint,
-            )
-
 
         self.logger.debug(
             "alert enriched in db, enriching elastic",
