@@ -1,9 +1,9 @@
 """Create a single alert directly in the database, linked to nothing.
 
 Development helper for exercising alert behaviour by hand — the normal ingestion
-route (`POST /alerts/event/{provider}`) publishes to Kafka and needs the
-event-handler consumer running to land anything in the database, which is more
-moving parts than a manual check usually wants.
+route (`POST /alerts/event/{provider}` on keep-ingestion) publishes to Kafka and
+needs the event-handler consumer running to land anything in the database, which
+is more moving parts than a manual check usually wants.
 
 Writes the same shape the application maintains for itself: an `alert` row for
 the occurrence plus the `lastalert` row that points at it. No incident links, so

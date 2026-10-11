@@ -15,9 +15,6 @@ from fastapi import (
 )
 from sqlmodel import Session
 
-from src.services.producers.base_event_handler import EventProducer
-from src.services.producers.factory import get_event_producer
-
 from src.services.ai_suggestion_bl import AISuggestionBl
 from src.services.enrichments_bl import EnrichmentsBl
 from src.services.incident_reports import IncidentReportsBl
@@ -662,13 +659,12 @@ async def add_alerts_to_incident(
         IdentityManagerFactory.get_auth_verifier(["write:incident"])
     ),
     session: Session = Depends(get_session),
-    event_producer: EventProducer = Depends(get_event_producer),
 ):
     tenant_id = authenticated_entity.tenant_id
     incident_bl = IncidentBl(tenant_id, session, user=authenticated_entity.email)
     # A suppressed/acknowledged incident imposes its state on alerts joining it,
     # which is an enrichment write — hence the producer and the acting user.
-    enrichment_bl = EnrichmentsBl(tenant_id, session, event_producer=event_producer)
+    enrichment_bl = EnrichmentsBl(tenant_id, session)
     await incident_bl.add_alerts_to_incident(
         incident_id,
         alert_fingerprints,
@@ -788,7 +784,6 @@ async def assign_incident(
         IdentityManagerFactory.get_auth_verifier(["write:incident"])
     ),
     session: Session = Depends(get_session),
-    event_producer: EventProducer = Depends(get_event_producer),
 ) -> IncidentDto:
     logger.info(
         "Assigning incident to user",
@@ -803,7 +798,7 @@ async def assign_incident(
     # assignee both reach its non-resolved alerts — `change_status` handles the
     # status half, and `assignee` rides along on the same enrichment write.
     incident_bl = IncidentBl(tenant_id, session, user=authenticated_entity.email)
-    enrichment_bl = EnrichmentsBl(tenant_id, session, event_producer=event_producer)
+    enrichment_bl = EnrichmentsBl(tenant_id, session)
 
     incident_dto = await incident_bl.change_status(
         incident_id,
@@ -829,14 +824,13 @@ async def change_incident_status(
         IdentityManagerFactory.get_auth_verifier(["write:incident"])
     ),
     session: Session = Depends(get_session),
-    event_producer: EventProducer = Depends(get_event_producer),
 ) -> IncidentDto:
     tenant_id = authenticated_entity.tenant_id
 
     incident_bl = IncidentBl(tenant_id, session, user=authenticated_entity.email)
     # The status change propagates to the incident's alerts, which is an
     # enrichment write — so the producer has to come along for the ride.
-    enrichment_bl = EnrichmentsBl(tenant_id, session, event_producer=event_producer)
+    enrichment_bl = EnrichmentsBl(tenant_id, session)
 
     new_incident_dto = await incident_bl.change_status(
         incident_id,
@@ -1053,7 +1047,6 @@ async def enrich_incident(
         IdentityManagerFactory.get_auth_verifier(["write:incident"])
     ),
     db_session: Session = Depends(get_session),
-    event_producer: EventProducer = Depends(get_event_producer),
 ) -> IncidentDto:
     """Enrich an incident, and change its status in the same request.
 
@@ -1076,7 +1069,7 @@ async def enrich_incident(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
-    enrichment_bl = EnrichmentsBl(tenant_id, db_session, event_producer=event_producer)
+    enrichment_bl = EnrichmentsBl(tenant_id, db_session)
     incident_bl = IncidentBl(tenant_id, db_session, user=authenticated_entity.email)
 
     return await incident_bl.enrich_and_change_status(
@@ -1100,8 +1093,6 @@ async def unenrich_incident(
     authenticated_entity: AuthenticatedEntity = Depends(
         IdentityManagerFactory.get_auth_verifier(["write:incident"])
     ),
-    event_producer: EventProducer = Depends(get_event_producer),
-
 ) -> Response:
     """Unenrich incident additional data."""
     tenant_id = authenticated_entity.tenant_id
@@ -1123,7 +1114,7 @@ async def unenrich_incident(
     }
 
     # Use the existing enrichment infrastructure
-    enrichment_bl = EnrichmentsBl(tenant_id, event_producer=event_producer)
+    enrichment_bl = EnrichmentsBl(tenant_id)
     await enrichment_bl.enrich_entity(
         fingerprint=enrichment.fingerprint,
         enrichments=new_enrichments,

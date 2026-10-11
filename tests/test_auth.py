@@ -167,56 +167,6 @@ def test_bearer_token(db_session, client, test_app):
 
 
 @pytest.mark.parametrize(
-    "test_app", ["SINGLE_TENANT", "NO_AUTH"], indirect=True
-)
-def test_webhook_api_key(db_session, client, test_app):
-    """Tests the webhook API key authentication"""
-    auth_type = os.getenv("AUTH_TYPE")
-    valid_api_key = "valid_api_key"
-    setup_api_key(db_session, valid_api_key, role="webhook")
-    response = client.post(
-        "/alerts/event/grafana", json={}, headers={"x-api-key": valid_api_key}
-    )
-    assert response.status_code == 202
-
-    response = client.post(
-        "/alerts/event/grafana", json={}, headers={"x-api-key": "invalid_api_key"}
-    )
-    assert response.status_code == 401 if auth_type != "NO_AUTH" else 200
-
-    response = client.post(
-        "/alerts/event/grafana",
-        json={},
-        headers={"Authorization": f"Digest {valid_api_key}"},
-    )
-    assert response.status_code == 202
-
-    response = client.post(
-        "/alerts/event/grafana",
-        json={},
-        headers={"authorization": f"digest {valid_api_key}"},
-    )
-    assert response.status_code == 202
-
-    response = client.post(
-        "/alerts/event/grafana",
-        json={},
-        headers={"authorization": "digest invalid_api_key"},
-    )
-    assert response.status_code == 401 if auth_type != "NO_AUTH" else 202
-
-    response = client.post(
-        "/alerts/event/grafana",
-        json={},
-        headers={"Authorization": "digest invalid_api_key"},
-    )
-    assert response.status_code == 401 if auth_type != "NO_AUTH" else 202
-
-
-
-
-
-@pytest.mark.parametrize(
     "test_app",
     [
         {"AUTH_TYPE": "SINGLE_TENANT", "KEEP_IMPERSONATION_ENABLED": "true"},

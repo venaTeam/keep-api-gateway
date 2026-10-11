@@ -58,6 +58,9 @@ def webhook_settings(
     tenant_id = authenticated_entity.tenant_id
     logger.info("Getting webhook settings")
     api_url = KEEP_API_URL
+    # NOTE: alert intake moved to keep-ingestion; the gateway no longer serves
+    # /alerts/event*. This URL only works if KEEP_API_URL (or the ingress) routes
+    # that path to keep-ingestion. Revisit before relying on it.
     keep_webhook_api_url = f"{api_url}/alerts/event"
     try:
         webhook_api_key = get_or_create_api_key(

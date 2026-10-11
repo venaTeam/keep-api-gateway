@@ -11,6 +11,7 @@ a run is readable on its own. Exit code 0 = all selected checks passed.
 
 Configuration comes from the environment (see config.env.example):
     NAMESPACE, GATEWAY_ROUTE, GATEWAY_SELECTOR, TENANT_ID,
+    INGESTION_ROUTE (optional, where alerts are POSTed - keep-ingestion; defaults to GATEWAY_ROUTE),
     auth: KEEP_BEARER | (KC_URL, KC_REALM, KC_CLIENT_ID, KC_CLIENT_SECRET, KC_USER, KC_PASSWORD) | KEEP_API_KEY
     SSE_NOTIFY_TOKEN (optional, enables the token check),
     REDIS_DEPLOY (optional, e.g. deploy/valkey - enables the Redis-restart check),
@@ -35,6 +36,9 @@ import uuid
 
 NS = os.environ.get("NAMESPACE", "")
 ROUTE = os.environ.get("GATEWAY_ROUTE", "").rstrip("/")
+# Alert intake lives in keep-ingestion, not the gateway. Defaults to the gateway
+# route for environments where the ingress sends /alerts/event* there by path.
+INGEST_ROUTE = os.environ.get("INGESTION_ROUTE", "").rstrip("/") or ROUTE
 SELECTOR = os.environ.get("GATEWAY_SELECTOR", "app=keep-api-gateway")
 TENANT = os.environ.get("TENANT_ID", "keep")
 NOTIFY_TOKEN = os.environ.get("SSE_NOTIFY_TOKEN") or None
@@ -329,7 +333,7 @@ def check_end_to_end(pods):
         posted = []
         for i in range(n):
             fp = f"acc-e2e-{uuid.uuid4().hex[:8]}"
-            status, _ = http("POST", f"{ROUTE}/alerts/event", auth_header(), {
+            status, _ = http("POST", f"{INGEST_ROUTE}/alerts/event", auth_header(), {
                 "name": fp, "fingerprint": fp, "status": "firing", "severity": "critical",
                 "source": ["sse-acceptance"],
                 "lastReceived": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())})
@@ -422,7 +426,7 @@ def check_rolling(pods):
     def ingest():
         for _ in range(30):
             fp = f"acc-roll-{uuid.uuid4().hex[:8]}"
-            http("POST", f"{ROUTE}/alerts/event", hdr, {
+            http("POST", f"{INGEST_ROUTE}/alerts/event", hdr, {
                 "name": fp, "fingerprint": fp, "status": "firing", "severity": "critical",
                 "source": ["sse-acceptance"],
                 "lastReceived": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())})
@@ -507,7 +511,7 @@ def main():
     if not ROUTE or not NS:
         sys.exit("NAMESPACE and GATEWAY_ROUTE must be set (see config.env.example)")
 
-    print(f"namespace={NS} route={ROUTE} tenant={TENANT} "
+    print(f"namespace={NS} route={ROUTE} ingest={INGEST_ROUTE} tenant={TENANT} "
           f"auth={'bearer' if bearer() else ('api-key' if API_KEY else 'none')}\n")
     pods = check_preflight()
     if not pods:
