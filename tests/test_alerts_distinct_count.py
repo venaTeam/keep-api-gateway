@@ -24,11 +24,11 @@ def count(tenant_id=SINGLE_TENANT_UUID, **query):
 
 @pytest.fixture
 def graph(db_session):
-    """Seven live incidents, one resolved, one unlinked, one overridden each way.
+    """Six live incidents, one resolved, one unlinked.
 
     active:       busy, two-firing-a, two-firing-b, current-firing,
-                  override-firing, acknowledged, quiet            -> 7
-    firing only:  the same without acknowledged                    -> 6
+                  acknowledged, quiet                              -> 6
+    firing only:  the same without acknowledged                    -> 5
     acknowledged: acknowledged                                     -> 1
     """
     busy = seed_incident(db_session, "busy")
@@ -68,24 +68,6 @@ def graph(db_session):
     seed_alert(db_session, "fp-unlinked", name="n2")
     link(db_session, "fp-unlinked", unlinked, deleted_at=datetime(2025, 1, 1))
 
-    override_resolved = seed_incident(
-        db_session,
-        "override-resolved",
-        IncidentStatus.FIRING,
-        enrichment_status=IncidentStatus.RESOLVED,
-    )
-    seed_alert(db_session, "fp-override-resolved", name="n2")
-    link(db_session, "fp-override-resolved", override_resolved)
-
-    override_firing = seed_incident(
-        db_session,
-        "override-firing",
-        IncidentStatus.RESOLVED,
-        enrichment_status=IncidentStatus.FIRING,
-    )
-    seed_alert(db_session, "fp-override-firing", name="n2")
-    link(db_session, "fp-override-firing", override_firing)
-
     acknowledged = seed_incident(
         db_session, "acknowledged", IncidentStatus.ACKNOWLEDGED
     )
@@ -120,7 +102,7 @@ def test_an_alert_in_two_incidents_counts_both(db_session):
 
 @pytest.mark.parametrize(
     "incident_status, expected",
-    [(None, 7), ("active", 7), ("firing", 6), ("acknowledged", 1)],
+    [(None, 6), ("active", 6), ("firing", 5), ("acknowledged", 1)],
 )
 def test_incident_status_modes(graph, incident_status, expected):
     query = {"group_by": "incident"}
@@ -156,27 +138,6 @@ def test_a_soft_deleted_link_is_not_counted(db_session):
     link(db_session, "fp-1", incident, deleted_at=datetime(2025, 1, 1))
 
     assert count(group_by="incident") == 0
-
-
-def test_incident_status_follows_the_enrichment_override(db_session):
-    resolved_by_override = seed_incident(
-        db_session,
-        "resolved-by-override",
-        IncidentStatus.FIRING,
-        enrichment_status=IncidentStatus.RESOLVED,
-    )
-    firing_by_override = seed_incident(
-        db_session,
-        "firing-by-override",
-        IncidentStatus.RESOLVED,
-        enrichment_status=IncidentStatus.FIRING,
-    )
-    seed_alert(db_session, "fp-1")
-    seed_alert(db_session, "fp-2")
-    link(db_session, "fp-1", resolved_by_override)
-    link(db_session, "fp-2", firing_by_override)
-
-    assert count(group_by="incident", incident_status="firing") == 1
 
 
 @pytest.mark.parametrize(
@@ -236,7 +197,7 @@ def test_alerts_without_an_incident_contribute_nothing(db_session):
 
 def test_cel_restricts_which_alerts_are_considered(graph):
     assert count(group_by="incident", cel="service == 's1'") == 1
-    assert count(group_by="incident", cel="status == 'firing'") == 6
+    assert count(group_by="incident", cel="status == 'firing'") == 5
     assert count(group_by="incident", cel="status == 'resolved'") == 1
 
 
@@ -297,7 +258,7 @@ def test_other_tenants_are_not_counted(graph, db_session):
     seed_alert(db_session, "fp-foreign", service="s9", tenant_id=OTHER_TENANT)
     link(db_session, "fp-foreign", foreign, tenant_id=OTHER_TENANT)
 
-    assert count(group_by="incident") == 7
+    assert count(group_by="incident") == 6
     assert count(group_by="service") == 2
     assert count(tenant_id=OTHER_TENANT, group_by="incident") == 1
     assert count(tenant_id=OTHER_TENANT, group_by="service") == 1

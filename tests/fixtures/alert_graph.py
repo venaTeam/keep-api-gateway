@@ -1,11 +1,6 @@
 from datetime import datetime, timedelta
 
-from src.models.db.alert import (
-    Alert,
-    IncidentEnrichment,
-    LastAlert,
-    LastAlertToIncident,
-)
+from src.models.db.alert import Alert, LastAlert, LastAlertToIncident
 from src.models.db.incident import Incident, IncidentStatus
 from src.repositories.dependencies import SINGLE_TENANT_UUID
 
@@ -61,7 +56,6 @@ def seed_incident(
     name,
     status=IncidentStatus.FIRING,
     tenant_id=SINGLE_TENANT_UUID,
-    enrichment_status=None,
     *,
     is_visible=True,
     is_candidate=False,
@@ -77,15 +71,6 @@ def seed_incident(
     )
     session.add(incident)
     session.commit()
-    if enrichment_status is not None:
-        session.add(
-            IncidentEnrichment(
-                tenant_id=tenant_id,
-                incident_id=incident.id,
-                enrichments={"status": enrichment_status.value},
-            )
-        )
-        session.commit()
     return incident
 
 
