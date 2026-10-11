@@ -130,6 +130,15 @@ def test_incident_status_modes(graph, incident_status, expected):
     assert count(**query) == expected
 
 
+def test_incident_statuses_are_bound_not_inlined(db_session):
+    query = build_distinct_count_query(
+        SINGLE_TENANT_UUID,
+        CountQueryDto(group_by="incident", incident_status="firing"),
+    )
+
+    assert "'firing'" not in str(query)
+
+
 def test_a_resolved_incident_on_a_shared_fingerprint_is_not_counted(db_session):
     resolved = seed_incident(db_session, "resolved", IncidentStatus.RESOLVED)
     firing = seed_incident(db_session, "firing")

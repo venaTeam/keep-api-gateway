@@ -4,7 +4,7 @@ import logging
 import os
 from typing import Tuple
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, bindparam, func, select
 from sqlalchemy.orm import aliased
 from sqlalchemy.exc import OperationalError
 from sqlmodel import Session, text
@@ -356,7 +356,6 @@ def _join_incidents_with_status(sql_query, statuses: list[str]):
     status_expression = get_cel_to_sql_provider(
         incident_properties_metadata
     ).get_field_expression("status")
-    quoted_statuses = ", ".join(f"'{status}'" for status in statuses)
     incident_enrichment = aliased(IncidentEnrichment, name="incidentenrichment")
 
     return (
@@ -384,7 +383,11 @@ def _join_incidents_with_status(sql_query, statuses: list[str]):
                 Incident.id == incident_enrichment.incident_id,
             ),
         )
-        .where(text(f"({status_expression}) IN ({quoted_statuses})"))
+        .where(
+            text(f"({status_expression}) IN :incident_statuses").bindparams(
+                bindparam("incident_statuses", value=list(statuses), expanding=True)
+            )
+        )
     )
 
 
