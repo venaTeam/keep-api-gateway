@@ -11,7 +11,6 @@ from fastapi import HTTPException
 from sqlalchemy.orm.exc import StaleDataError
 from sqlmodel import Session, col, select
 
-from src.services.producers.base_event_handler import EventType
 
 from src.services.enrichments_bl import EnrichmentsBl
 from src.repositories.db import (
@@ -81,12 +80,6 @@ class IncidentBl:
         self.logger = logging.getLogger(__name__)
         self.ee_enabled = os.environ.get("EE_ENABLED", "false").lower() == "true"
         self.redis = os.environ.get("REDIS", "false") == "true"
-        self._deferred_publishes: list = []
-
-    async def _flush_deferred_publishes(self):
-        while self._deferred_publishes:
-            publish = self._deferred_publishes.pop(0)
-            await publish()
 
     def create_incident(
         self,
@@ -564,8 +557,6 @@ class IncidentBl:
 
         self.session.commit()
 
-        await self._flush_deferred_publishes()
-
         return self.__postprocess_incident_change(incident)
 
     @staticmethod
@@ -710,28 +701,11 @@ class IncidentBl:
             change_by.email,
             action_description,
             dispose_on_new_alert=dispose_on_new_alert,
-            # Never announce from in here: the rows are not durable yet, whether
-            # the commit below is ours or the caller's.
-            produce_event=False,
             commit=False,
         )
 
-        async def publish():
-            if bl.event_producer is not None:
-                await bl.publish_enrichment_event(
-                    fingerprint=affected,
-                    enrichments=enrichments,
-                    action_type=action_type,
-                    action_callee=change_by.email,
-                    action_description=action_description,
-                    event_type=EventType.BATCH_ENRICH,
-                )
-
         if commit:
             self.session.commit()
-            await publish()
-        else:
-            self._deferred_publishes.append(publish)
 
         return affected
 
@@ -823,8 +797,8 @@ class IncidentBl:
         nothing to say which half landed. Both writes are staged on one session
         and committed once; either both apply or neither does.
 
-        Side effects (Kafka, client notification) deliberately run AFTER the
-        commit, so nothing downstream is told about a change that may roll back.
+        The client notification deliberately runs AFTER the commit, so nothing
+        downstream is told about a change that may roll back.
         """
         if change is None and not enrichments:
             raise HTTPException(
@@ -858,19 +832,6 @@ class IncidentBl:
             )
 
         self.session.commit()
-
-        # Durable now — safe to tell the rest of the world.
-        if enrichments:
-            await enrichment_bl.publish_enrichment_event(
-                fingerprint=incident_id,
-                enrichments=enrichments,
-                action_type=ActionType.INCIDENT_ENRICH,
-                action_callee=change_by.email,
-                action_description=f"Incident enriched by {change_by.email}",
-                force=force,
-            )
-
-        await self._flush_deferred_publishes()
 
         self.update_client_on_incident_change(
             incident_id if isinstance(incident_id, UUID) else None

@@ -1149,6 +1149,9 @@ def simulate(info: Info, provider_type: str, params: list[str]):
     click.echo("Simulated alert:")
     click.echo(json.dumps(alert, indent=4))
     # send the alert to the server
+    # NOTE: alert intake moved to keep-ingestion; the gateway no longer serves
+    # /alerts/event*. This only works if keep_api_url (or the ingress) routes
+    # that path to keep-ingestion. Revisit before relying on it.
     resp = make_keep_request(
         "POST",
         info.keep_api_url + f"/alerts/event/{provider_type}",
