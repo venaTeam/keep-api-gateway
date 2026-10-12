@@ -1,4 +1,3 @@
-import datetime
 import html
 import json
 import logging
@@ -672,7 +671,10 @@ class EnrichmentsBl:
         audit_enabled=True,
         strict=True,
         entity_type: str = "alert",
+        commit=True,
     ):
+        """`commit=False` stages every row and leaves the transaction open for the
+        caller, so a batch can be made atomic with whatever else it belongs to."""
         self.logger.debug(
             "enriching multiple fingerprints",
             extra={"fingerprints": fingerprints, "tenant_id": self.tenant_id},
@@ -688,6 +690,7 @@ class EnrichmentsBl:
                 audit_enabled=audit_enabled,
                 strict=strict,
                 entity_type=entity_type,
+                commit=commit,
             )
 
     async def disposable_enrich_entity(
@@ -765,6 +768,7 @@ class EnrichmentsBl:
         audit_enabled=True,
         strict=True,
         entity_type: str = "alert",
+        commit=True,
     ):
         """
         should_exist = False only in mapping where the alert is not yet in elastic
@@ -774,6 +778,10 @@ class EnrichmentsBl:
             (IncidentEnrichment JSONB, keyed on incident_id)
 
         Enrich the entity with extraction and mapping rules
+
+        commit = False leaves the transaction open so the caller can commit this
+        write together with others (see IncidentBl.enrich_and_change_status).
+        The Elasticsearch update is skipped in that case.
         """
         # enrich db
         if isinstance(fingerprint, UUID):
@@ -822,7 +830,17 @@ class EnrichmentsBl:
             audit_enabled=audit_enabled,
             strict=strict,
             entity_type=entity_type,
+            commit=commit,
         )
+
+        if not commit:
+            # Nothing below this point may run yet: the write is staged, not
+            # committed. The caller commits, then fans out.
+            self.logger.debug(
+                "entity enrichment staged, deferring elastic to caller",
+                extra={"fingerprint": fingerprint, "entity_type": entity_type},
+            )
+            return
 
         self.logger.debug(
             "alert enriched in db, enriching elastic",

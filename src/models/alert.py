@@ -422,6 +422,16 @@ class DeduplicationRuleRequestDto(BaseModel):
     ignore_fields: Optional[list[str]] = None
 
 
+# Status and dismiss state live in typed columns on `incident`, never in the
+# enrichment JSONB — a copy there would be a second source of truth that
+# silently outranked the columns, which is how a "dismiss until <date>" once got
+# stored as a permanent dismissal. The incident enrich route still ACCEPTS these
+# keys, because the UI sends a dismissal and its note in one request; it splits
+# them out and routes them to the status-change path instead. See
+# `split_incident_status_keys`.
+INCIDENT_STATUS_OWNED_KEYS = frozenset({"status", "dismiss_mode", "dismissed_until"})
+
+
 class EnrichIncidentRequestBody(BaseModel):
     enrichments: Dict[str, Any]
     force: bool = False
@@ -430,3 +440,18 @@ class EnrichIncidentRequestBody(BaseModel):
 class UnEnrichIncidentRequestBody(BaseModel):
     enrichments: list[str]
     fingerprint: str
+
+    @validator("enrichments")
+    @classmethod
+    def reject_status_owned_keys(cls, value):
+        # Un-enriching these would be a no-op at best, since they are not stored
+        # as enrichments. At worst it deletes a stale pre-migration copy and
+        # looks to the caller like it cleared the real dismiss state.
+        offending = sorted(INCIDENT_STATUS_OWNED_KEYS.intersection(value))
+        if offending:
+            raise ValueError(
+                f"{', '.join(offending)} are not enrichments; they live on the "
+                "incident itself. Change them via POST "
+                "/incidents/{incident_id}/status."
+            )
+        return value
