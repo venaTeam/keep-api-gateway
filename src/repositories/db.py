@@ -34,6 +34,7 @@ from sqlalchemy import (
     func,
     literal,
     null,
+    or_,
     select,
     union,
     update,
@@ -1066,6 +1067,29 @@ def query_alerts(
 
 
 
+def hidden_by_maintenance_window_filter():
+    """Condition that is false while a row's "Hide From Feed" window is active.
+
+    The event-handler stores alerts matched by a hide-mode window and records
+    the window's id on lastalert. The row is hidden only while that window still
+    exists, is enabled, is in hide mode and is running (started, not ended), so
+    it shows again when the window ends, is deleted, disabled, rescheduled, cut
+    short or switched to suppress mode, with nothing rewriting the row. Window
+    times are naive UTC. "Running" must match the windows the event-handler
+    matches against (MaintenanceWindowsBl.__init__ in keep-event-handler).
+    """
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    window_active = exists().where(
+        MaintenanceWindowRule.id == LastAlert.maintenance_window_id,
+        MaintenanceWindowRule.tenant_id == LastAlert.tenant_id,
+        MaintenanceWindowRule.enabled.is_(True),
+        MaintenanceWindowRule.suppress.is_(False),
+        MaintenanceWindowRule.start_time <= now,
+        MaintenanceWindowRule.end_time > now,
+    )
+    return or_(LastAlert.maintenance_window_id.is_(None), ~window_active)
+
+
 def get_last_alerts(
     tenant_id,
     provider_id=None,
@@ -1105,6 +1129,10 @@ def get_last_alerts(
 
         if fingerprints:
             filter_conditions.append(LastAlert.fingerprint.in_(tuple(fingerprints)))
+        else:
+            # Listing alerts: leave out those an active "Hide From Feed" window
+            # hides, as the feed does. Explicit fingerprint lookups still return them.
+            filter_conditions.append(hidden_by_maintenance_window_filter())
 
         logger.info(f"filter_conditions: {filter_conditions}")
 

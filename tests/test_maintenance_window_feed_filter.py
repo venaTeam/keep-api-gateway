@@ -14,6 +14,7 @@ from src.models.db.alert import Alert, LastAlert
 from src.models.db.maintenance_window import MaintenanceWindowRule
 from src.models.query import QueryDto
 from src.repositories.alerts import query_last_alerts
+from src.repositories.db import get_last_alerts
 from src.repositories.dependencies import SINGLE_TENANT_UUID
 from tests.fixtures.client import client, test_app  # noqa: F401
 
@@ -121,6 +122,31 @@ def test_alert_shows_when_its_window_is_cut_short(db_session):
     db_session.commit()
 
     assert _feed() == ["revealed"]
+
+
+def test_alert_shows_when_its_window_is_rescheduled_into_the_future(db_session):
+    window = _window(db_session)
+    _alert(db_session, "revealed", window.id)
+    assert _feed() == []
+
+    window.start_time = _now() + timedelta(days=1)
+    window.end_time = _now() + timedelta(days=1, hours=1)
+    db_session.add(window)
+    db_session.commit()
+
+    assert _feed() == ["revealed"]
+
+
+def test_listing_last_alerts_leaves_out_hidden_ones(db_session):
+    window = _window(db_session)
+    _alert(db_session, "hidden", window.id)
+    _alert(db_session, "visible")
+
+    listed = sorted(a.fingerprint for a in get_last_alerts(SINGLE_TENANT_UUID))
+    assert listed == ["visible"]
+
+    by_fingerprint = get_last_alerts(SINGLE_TENANT_UUID, fingerprints=["hidden"])
+    assert [a.fingerprint for a in by_fingerprint] == ["hidden"]
 
 
 def test_window_of_another_tenant_does_not_hide(db_session):
