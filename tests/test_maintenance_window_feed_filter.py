@@ -240,7 +240,8 @@ def test_filter_on_a_field_that_is_not_stored_keeps_the_alert_hidden(db_session)
     window = _window(db_session)
     _alert(db_session, "hidden", window.id)
 
-    assert _edit(db_session, window, cel_query='labels.team == "db"') == 0
+    # `component` is an AlertDto field with no column on alert.
+    assert _edit(db_session, window, cel_query='component == "db"') == 0
     assert _feed() == []
 
 

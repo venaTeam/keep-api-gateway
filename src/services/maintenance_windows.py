@@ -8,9 +8,10 @@ the update route calls this to release the alerts the new definition no longer
 matches.
 
 The filter is evaluated against the stored latest occurrence, which keeps the
-native alert columns but not the raw provider payload (e.g. labels). When the
-filter references something that is not stored, the outcome is unknown and the
-alert stays hidden until the window stops running.
+native alert columns only: AlertDto fields without a column (e.g. `component`)
+and extra keys a sender included are not stored. When the filter references
+one of those, the outcome is unknown and the alert stays hidden until the
+window stops running.
 """
 
 import json
