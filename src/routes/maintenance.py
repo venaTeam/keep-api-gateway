@@ -17,6 +17,7 @@ from src.services.cel_validation import (
 )
 from src.services.identity_manager.authenticatedentity import AuthenticatedEntity
 from src.services.identity_manager.identitymanagerfactory import IdentityManagerFactory
+from src.services.maintenance_windows import release_alerts_no_longer_matched
 from src.services.sse import notify_sse
 
 router = APIRouter()
@@ -138,6 +139,16 @@ def update_maintenance_rule(
 
     session.commit()
     session.refresh(rule)
+    try:
+        # A changed filter or ignore statuses is not covered by the feed's
+        # read-time check, so release what the window no longer matches.
+        release_alerts_no_longer_matched(session, rule)
+    except Exception:
+        session.rollback()
+        logger.exception(
+            "Failed to re-check alerts hidden by the edited maintenance window",
+            extra={"tenant_id": rule.tenant_id, "maintenance_rule_id": rule.id},
+        )
     _notify_feed_changed(authenticated_entity.tenant_id)
     return MaintenanceRuleRead(**rule.dict())
 

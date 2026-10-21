@@ -15,6 +15,7 @@ from src.models.db.maintenance_window import MaintenanceWindowRule
 from src.models.query import QueryDto
 from src.repositories.alerts import query_last_alerts
 from src.repositories.db import get_last_alerts
+from src.services.maintenance_windows import release_alerts_no_longer_matched
 from src.repositories.dependencies import SINGLE_TENANT_UUID
 from tests.fixtures.client import client, test_app  # noqa: F401
 
@@ -198,3 +199,75 @@ def test_editing_or_deleting_a_window_notifies_open_feeds(db_session, client, te
         deleted = client.delete(f"/maintenance/{rule_id}", headers=headers)
         assert deleted.status_code == 200
         assert notify.call_count == 2
+
+
+# --------------------------------------------------------------------------- #
+# Editing a window's filter or ignore statuses re-checks the alerts it hid
+# --------------------------------------------------------------------------- #
+def _edit(db_session, window, **changes):
+    for key, value in changes.items():
+        setattr(window, key, value)
+    db_session.add(window)
+    db_session.commit()
+    return release_alerts_no_longer_matched(db_session, window)
+
+
+def test_alert_no_longer_matched_by_the_edited_filter_is_released(db_session):
+    window = _window(db_session)
+    _alert(db_session, "released", window.id)
+
+    assert _edit(db_session, window, cel_query='source == "something-else"') == 1
+    assert _feed() == ["released"]
+
+
+def test_alert_still_matched_by_the_edited_filter_stays_hidden(db_session):
+    window = _window(db_session)
+    _alert(db_session, "hidden", window.id)
+
+    assert _edit(db_session, window, cel_query='source == "test" && severity == "high"') == 0
+    assert _feed() == []
+
+
+def test_newly_ignored_status_releases_the_alert(db_session):
+    window = _window(db_session)
+    _alert(db_session, "released", window.id)
+
+    assert _edit(db_session, window, ignore_statuses=["firing"]) == 1
+    assert _feed() == ["released"]
+
+
+def test_filter_on_a_field_that_is_not_stored_keeps_the_alert_hidden(db_session):
+    window = _window(db_session)
+    _alert(db_session, "hidden", window.id)
+
+    assert _edit(db_session, window, cel_query='labels.team == "db"') == 0
+    assert _feed() == []
+
+
+def test_alerts_of_other_windows_are_not_touched(db_session):
+    edited = _window(db_session)
+    other = _window(db_session)
+    _alert(db_session, "other", other.id)
+
+    _edit(db_session, edited, cel_query='source == "something-else"')
+
+    assert _feed() == []
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+def test_put_with_a_new_filter_releases_alerts(db_session, client, test_app):
+    headers = {"x-api-key": "some-key"}
+    with patch("src.routes.maintenance.notify_sse"):
+        created = client.post("/maintenance", headers=headers, json=_window_payload())
+        rule_id = created.json()["id"]
+        _alert(db_session, "released", rule_id)
+        assert _feed() == []
+
+        updated = client.put(
+            f"/maintenance/{rule_id}",
+            headers=headers,
+            json=_window_payload(cel_query='source == "something-else"'),
+        )
+
+    assert updated.status_code == 200
+    assert _feed() == ["released"]
