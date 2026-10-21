@@ -1,4 +1,5 @@
-﻿from datetime import timedelta, timezone
+﻿import logging
+from datetime import timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session
@@ -16,8 +17,23 @@ from src.services.cel_validation import (
 )
 from src.services.identity_manager.authenticatedentity import AuthenticatedEntity
 from src.services.identity_manager.identitymanagerfactory import IdentityManagerFactory
+from src.services.sse import notify_sse
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+
+def _notify_feed_changed(tenant_id: str) -> None:
+    """Tell open feeds to reload after a window changed or was deleted.
+
+    Alerts a "Hide From Feed" window hid are filtered on read, so ending,
+    disabling, deleting or re-moding a window reveals them without any row
+    changing; an empty poll-alerts is the UI's signal to refetch.
+    """
+    try:
+        notify_sse(tenant_id, "poll-alerts", {})
+    except Exception:
+        logger.exception("Failed to tell client to poll alerts")
 
 
 def _validate_cel_query(cel_query: str) -> None:
@@ -122,6 +138,7 @@ def update_maintenance_rule(
 
     session.commit()
     session.refresh(rule)
+    _notify_feed_changed(authenticated_entity.tenant_id)
     return MaintenanceRuleRead(**rule.dict())
 
 
@@ -147,6 +164,7 @@ def delete_maintenance_rule(
         )
     session.delete(rule)
     session.commit()
+    _notify_feed_changed(authenticated_entity.tenant_id)
     return {"detail": "Maintenance rule deleted successfully"}
 
 

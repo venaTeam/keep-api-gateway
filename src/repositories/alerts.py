@@ -4,7 +4,7 @@ import logging
 import os
 from typing import Tuple
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.exc import OperationalError
 from sqlmodel import Session, text
 
@@ -30,6 +30,7 @@ from src.models.db.alert import (
     LastAlertToIncident,
 )
 from src.models.db.facet import FacetType
+from src.models.db.maintenance_window import MaintenanceWindowRule
 from src.models.db.incident import IncidentStatus
 from src.models.facet import FacetDto, FacetOptionDto, FacetOptionsQueryDto
 from src.models.query import QueryDto, SortOptionsDto
@@ -326,6 +327,26 @@ def get_threeshold_query(tenant_id: str):
     )
 
 
+def hidden_by_maintenance_window_filter():
+    """Condition that is false while a row's "Hide From Feed" window is active.
+
+    The event-handler stores alerts matched by a hide-mode window and records
+    the window's id on lastalert. The row is hidden only while that window still
+    exists, is enabled, is in hide mode and has not ended, so it shows again
+    when the window ends, is deleted, disabled, cut short or switched to
+    suppress mode, with nothing rewriting the row. Window times are naive UTC.
+    """
+    now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    window_active = exists().where(
+        MaintenanceWindowRule.id == LastAlert.maintenance_window_id,
+        MaintenanceWindowRule.tenant_id == LastAlert.tenant_id,
+        MaintenanceWindowRule.enabled.is_(True),
+        MaintenanceWindowRule.suppress.is_(False),
+        MaintenanceWindowRule.end_time > now,
+    )
+    return or_(LastAlert.maintenance_window_id.is_(None), ~window_active)
+
+
 def __build_query_for_filtering(
     tenant_id: str,
     select_args: list,
@@ -393,8 +414,10 @@ def __build_query_for_filtering(
             ),
         )
 
-    sql_query = sql_query.filter(LastAlert.tenant_id == tenant_id).filter(
-        LastAlert.timestamp >= get_threeshold_query(tenant_id)
+    sql_query = (
+        sql_query.filter(LastAlert.tenant_id == tenant_id)
+        .filter(LastAlert.timestamp >= get_threeshold_query(tenant_id))
+        .filter(hidden_by_maintenance_window_filter())
     )
     involved_fields = []
 
