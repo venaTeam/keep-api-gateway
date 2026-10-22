@@ -1,12 +1,36 @@
-from src.models.alert import AlertDto
+import pytest
+
 from src.models.db.alert import AlertField
 from src.models.db.tenant import Tenant
 from src.repositories.alerts import get_alert_potential_facet_fields
+from src.repositories.alerts import properties_metadata as alert_properties_metadata
 from src.repositories.dependencies import GENERIC_TENANT_UUID
 from src.repositories.incidents import get_incident_potential_facet_fields
+from src.repositories.incidents import (
+    properties_metadata as incident_properties_metadata,
+)
+from tests.fixtures.client import client, test_app  # noqa
 
 OTHER_TENANT_ID = "other-tenant"
-DECLARED_SAMPLE = {"name", "status", "severity", "description", "source"}
+QUERYABLE_SAMPLE = {
+    "name",
+    "status",
+    "severity",
+    "description",
+    "source",
+    "providerId",
+    "providerType",
+}
+NOT_QUERYABLE = {
+    "component",
+    "dismiss_until",
+    "incident",
+    "ticket_provider_id",
+    "ticket_type",
+    "ticket_url",
+    "provider_id",
+    "provider_type",
+}
 
 
 def _add_fields(db_session, tenant_id, field_names):
@@ -22,21 +46,40 @@ def _add_fields(db_session, tenant_id, field_names):
     db_session.commit()
 
 
-def test_tenant_without_observed_fields_gets_declared_alert_fields(db_session):
-    """A tenant with no alertfield rows still gets the alert schema fields."""
+def _unresolved(properties_metadata, field_names):
+    return [
+        name
+        for name in field_names
+        if properties_metadata.get_property_metadata_for_str(name) is None
+    ]
+
+
+def test_tenant_without_observed_fields_gets_the_queryable_declared_fields(db_session):
+    """A tenant with no alertfield rows still gets the declared fields the query layer accepts."""
+    fields = set(get_alert_potential_facet_fields(GENERIC_TENANT_UUID))
+
+    assert QUERYABLE_SAMPLE <= fields
+    assert fields.isdisjoint(NOT_QUERYABLE)
+
+
+def test_every_declared_field_offered_resolves_in_the_alert_metadata(db_session):
+    """Every name offered to an empty tenant can be used for filtering and facets."""
     fields = get_alert_potential_facet_fields(GENERIC_TENANT_UUID)
 
-    assert DECLARED_SAMPLE <= set(fields)
+    assert _unresolved(alert_properties_metadata, fields) == []
 
 
-def test_observed_fields_are_added_to_declared_fields(db_session):
-    """Observed custom fields are returned next to the declared ones."""
-    _add_fields(db_session, GENERIC_TENANT_UUID, ["labels.team", "service"])
+def test_observed_fields_follow_the_declared_fields_in_sorted_order(db_session):
+    """Observed fields come after the declared ones, sorted, so the list is stable."""
+    declared = get_alert_potential_facet_fields(GENERIC_TENANT_UUID)
+    _add_fields(
+        db_session, GENERIC_TENANT_UUID, ["labels.zeta", "custom_zz", "labels.alpha"]
+    )
 
     fields = get_alert_potential_facet_fields(GENERIC_TENANT_UUID)
 
-    assert {"labels.team", "service"} <= set(fields)
-    assert DECLARED_SAMPLE <= set(fields)
+    assert fields[: len(declared)] == declared
+    assert fields[len(declared) :] == ["custom_zz", "labels.alpha", "labels.zeta"]
 
 
 def test_field_declared_and_observed_is_returned_once(db_session):
@@ -62,9 +105,25 @@ def test_observed_fields_of_other_tenants_are_not_returned(db_session):
     assert "labels.secret" not in fields
 
 
-def test_incident_fields_include_every_declared_alert_field(db_session):
-    """Incident facet fields offer each declared alert field, even for an empty tenant."""
-    fields = set(get_incident_potential_facet_fields(GENERIC_TENANT_UUID))
+def test_incident_fields_for_an_empty_tenant_all_resolve_in_the_incident_metadata(
+    db_session,
+):
+    """Incident facet fields do not gain alert.* names the incident query layer rejects."""
+    fields = get_incident_potential_facet_fields(GENERIC_TENANT_UUID)
 
-    declared = {f"alert.{name}" for name in AlertDto.__fields__}
-    assert declared <= fields
+    assert _unresolved(incident_properties_metadata, fields) == []
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+def test_facet_fields_route_offers_only_queryable_fields_to_an_empty_tenant(
+    db_session, client, test_app
+):
+    """GET /alerts/facets/fields returns usable names for a tenant without alertfield rows."""
+    response = client.get(
+        "/alerts/facets/fields", headers={"x-api-key": "some-api-key"}
+    )
+
+    assert response.status_code == 200
+    fields = response.json()
+    assert QUERYABLE_SAMPLE <= set(fields)
+    assert _unresolved(alert_properties_metadata, fields) == []
