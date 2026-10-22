@@ -13,6 +13,7 @@ from src.repositories.alerts import (
     get_alert_facets,
     get_alert_facets_data,
     get_alert_potential_facet_fields,
+    query_distinct_alerts_count,
     query_last_alerts,
     query_total_alerts_count
 )
@@ -54,7 +55,7 @@ from src.models.alert_audit import AlertAuditDto
 from src.models.db.incident import IncidentStatus
 from src.models.db.rule import ResolveOn
 from src.models.facet import FacetOptionsQueryDto
-from src.models.query import QueryDto
+from src.models.query import CountQueryDto, QueryDto
 from src.models.search_alert import SearchAlertsRequest
 from src.models.time_stamp import TimeStampFilter
 from src.utils.enrichment_helpers import convert_db_alerts_to_dto_alerts
@@ -217,7 +218,7 @@ def fetch_alert_facet_fields(
     description="Get last alerts count",
 )
 def query_alerts_count(
-    query: QueryDto,
+    query: CountQueryDto,
     authenticated_entity: AuthenticatedEntity = Depends(
         IdentityManagerFactory.get_auth_verifier(["read:alert"])
     ),
@@ -225,11 +226,21 @@ def query_alerts_count(
     tenant_id = authenticated_entity.tenant_id
     logger.info(
         msg="Fetching alerts count from DB",
-        extra={"tenant_id": tenant_id, "cel_expression": query.cel},
+        extra={
+            "tenant_id": tenant_id,
+            "cel_expression": query.cel,
+            "group_by": query.group_by.value if query.group_by else None,
+            "incident_status": (
+                query.incident_status.value if query.incident_status else None
+            ),
+        },
     )
 
     try:
-        total_count = query_total_alerts_count(tenant_id=tenant_id, query=query)
+        if query.group_by is None:
+            total_count = query_total_alerts_count(tenant_id=tenant_id, query=query)
+        else:
+            total_count = query_distinct_alerts_count(tenant_id=tenant_id, query=query)
         logger.info(
             msg="Fetched alerts count from DB",
             extra={
@@ -238,7 +249,9 @@ def query_alerts_count(
                 "total_count": total_count,
             },
         )
-        return total_count
+        if query.group_by is None:
+            return total_count
+        return {"count": total_count, "group_by": query.group_by.value}
 
     except CelToSqlException as e:
         logger.exception(f'Error parsing CEL expression "{query.cel}". {str(e)}')

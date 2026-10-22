@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Count-by for dashboard widgets: mock</title>
+<style>
+
+  *, *::before, *::after { box-sizing: border-box; }
+  body { margin: 0; padding: 28px 32px 48px; background: #f9fafb; color: #111827;
+         font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; max-width: 1180px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .subtitle { color: #6b7280; margin: 0 0 18px; }
+  .mockup { background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 10px; margin: 20px 0; overflow: hidden; }
+  .mockup-header { padding: 9px 16px; background: #e5e7eb; font-weight: 600; font-size: 13px; }
+  .mockup-body { padding: 18px 16px; }
+  .sk { display: block; }
+
+  .fm { font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; color: #111827; }
+  .fm-row { display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-start; }
+  .fm-cap { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #6b7280; margin: 0 0 6px; }
+  .fm-note { font-size: 12.5px; line-height: 1.5; margin-top: 10px; color: #374151; }
+  .fm-note b { color: #111827; }
+
+  /* form */
+  .kf { background: #fff; padding: 14px; border-radius: 8px; border: 1px solid #e5e7eb; width: 255px; box-sizing: border-box; }
+  .kf .row { margin-bottom: 12px; position: relative; }
+  .kf label { display: block; font-size: 11.5px; font-weight: 600; color: #374151; margin-bottom: 3px; }
+  .kf .sel { border: 1px solid #d1d5db; border-radius: 6px; padding: 6px 9px; display: flex; justify-content: space-between; background: #fff; font-size: 12.5px; }
+  .kf .sel::after { content: "\2304"; color: #9ca3af; }
+  .kf .help { font-size: 10.5px; color: #6b7280; margin-top: 3px; }
+  .kf .new { outline: 2px dashed #f97316; outline-offset: 4px; border-radius: 6px; }
+  .kf .seg { display: flex; border: 1px solid #d1d5db; border-radius: 6px; overflow: hidden; font-size: 12.5px; }
+  .kf .seg span { flex: 1; padding: 6px 0; text-align: center; background: #fff; color: #374151; border-right: 1px solid #e5e7eb; white-space: nowrap; }
+  .kf .seg span:last-child { border-right: 0; }
+  .kf .seg span.on { background: #fff7ed; color: #c2410c; font-weight: 700; box-shadow: inset 0 0 0 1.5px #f97316; }
+  .kf .seg span.more::after { content: " \2304"; color: #9ca3af; }
+  .kf .rest { color: #9ca3af; font-size: 11.5px; border-top: 1px dashed #e5e7eb; padding-top: 8px; }
+
+  /* counter */
+  .cc { width: 190px; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 9px; height: 160px; display: flex; flex-direction: column; box-sizing: border-box; }
+  .cc-btns { display: flex; justify-content: flex-end; margin-bottom: 5px; }
+  .cc-btn { border: 1px solid #fb923c; color: #ea580c; border-radius: 6px; width: 20px; height: 20px; text-align: center; font-size: 11px; line-height: 18px; background: #fff; }
+  .cc-box { flex: 1; border: 2px solid; border-radius: 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; box-shadow: 0 1px 2px rgba(0,0,0,.05); }
+  .cc-title { font-size: 20px; font-weight: 700; color: #374151; line-height: 1.15; margin-bottom: 6px; }
+  .cc-num { font-size: 38px; font-weight: 900; letter-spacing: -.02em; line-height: 1; margin-bottom: 6px; text-shadow: 0 1px 2px rgba(0,0,0,.1); }
+  .cc-lab { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: #374151; }
+  .cc-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 3px color-mix(in srgb, var(--c) 28%, transparent); }
+  .g { --c: #10b981; border-color: #10b981; background: rgba(16,185,129,.13); } .g .cc-num { color: #10b981; }
+  .n { --c: #9ca3af; border-color: #9ca3af; background: rgba(156,163,175,.12); } .n .cc-num { color: #9ca3af; }
+  .sk { width: 54px; height: 32px; border-radius: 6px; margin-bottom: 6px; background: linear-gradient(90deg,#e5e7eb 25%,#f3f4f6 50%,#e5e7eb 75%); }
+
+  /* table widget */
+  .tw { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; width: 470px; box-sizing: border-box; }
+  .tw-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
+  .tw-head .ln { margin-bottom: 3px; display: flex; align-items: center; gap: 6px; }
+  .tw-go { border: 1px solid #fb923c; color: #ea580c; border-radius: 6px; padding: 3px 10px; font-size: 12px; background: #fff; }
+  .tw-tbl { width: 100%; border-collapse: collapse; font-size: 11.5px; background: rgba(16,185,129,.1); border-radius: 6px; overflow: hidden; }
+  .tw-tbl th { text-align: left; padding: 5px 8px; color: #6b7280; font-weight: 600; border-bottom: 1px solid rgba(0,0,0,.08); }
+  .tw-tbl td { padding: 5px 8px; border-bottom: 1px solid rgba(0,0,0,.05); }
+  .tw-dot { width: 7px; height: 7px; border-radius: 50%; background: #10b981; box-shadow: 0 0 0 3px color-mix(in srgb, #10b981 28%, transparent); }
+
+
+  .cx { font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; color: #111827; }
+  .cx-row { display: flex; gap: 22px; flex-wrap: wrap; align-items: flex-start; }
+  .cx-cap { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #6b7280; margin: 0 0 6px; }
+  .cx-note { font-size: 12.5px; line-height: 1.5; margin-top: 10px; color: #374151; }
+  .cx-note b { color: #111827; }
+  .cx-card { position: relative; background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px 14px; box-shadow: 0 1px 3px rgba(0,0,0,.06); box-sizing: border-box; }
+  .cx-grip { position: absolute; left: 3px; top: 14px; color: #9ca3af; font-size: 12px; letter-spacing: -2px; }
+  .cx-kebab { color: #6b7280; font-size: 16px; line-height: 1; padding: 2px 6px; border-radius: 4px; }
+  .cx-link { border: 1px solid #93c5fd; color: #2563eb; border-radius: 6px; width: 20px; height: 20px; text-align: center; font-size: 11px; line-height: 18px; background: #fff; }
+
+  .tile { width: 230px; height: 170px; }
+  .tile .box { height: 100%; border: 2px solid; border-radius: 8px; padding: 6px 8px; display: flex; flex-direction: column; box-sizing: border-box; box-shadow: 0 1px 2px rgba(0,0,0,.05); cursor: pointer; }
+  .tile .hd { display: flex; align-items: center; gap: 4px; }
+  .tile .ttl { flex: 1; text-align: center; font-size: 18px; font-weight: 700; color: #374151; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tile .mid { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  .tile .num { font-size: 38px; font-weight: 900; letter-spacing: -.02em; line-height: 1; margin-bottom: 6px; text-shadow: 0 1px 2px rgba(0,0,0,.1); }
+  .tile .lab { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: #374151; }
+  .tile .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 3px color-mix(in srgb, var(--c) 28%, transparent); }
+  .g { --c: #10b981; border-color: #10b981; background: rgba(16,185,129,.13); } .g .num { color: #10b981; }
+  .n { --c: #9ca3af; border-color: #9ca3af; background: rgba(156,163,175,.12); } .n .num { color: #9ca3af; }
+
+  .tw { width: 520px; }
+  .tw .top { display: flex; justify-content: space-between; align-items: center; margin: 0 0 8px 8px; }
+  .tw .top b { font-size: 17px; }
+  .tw .hdr { display: flex; justify-content: space-between; align-items: flex-start; margin: 0 0 8px 8px; }
+  .tw .ln { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+  .tw .go { border: 1px solid #fb923c; color: #ea580c; border-radius: 6px; padding: 3px 10px; font-size: 12px; background: #fff; }
+  .tw .tbl { width: 100%; border-collapse: collapse; font-size: 11.5px; background: rgba(16,185,129,.1); border-radius: 6px; overflow: hidden; }
+  .tw .tbl th { text-align: left; padding: 5px 8px; color: #6b7280; font-weight: 600; border-bottom: 1px solid rgba(0,0,0,.08); }
+  .tw .tbl td { padding: 5px 8px; border-bottom: 1px solid rgba(0,0,0,.05); }
+  .tw .tdot { width: 7px; height: 7px; border-radius: 50%; background: #10b981; box-shadow: 0 0 0 3px color-mix(in srgb, #10b981 28%, transparent); }
+  .hl { outline: 2px dashed #f97316; outline-offset: 3px; border-radius: 4px; }
+
+</style>
+</head>
+<body>
+<h1>Count-by for dashboard widgets</h1>
+<p class="subtitle">Visual reference for the design spec. Orange dashed outline marks what is new. Thresholds in all examples: &ge;0 green, &ge;10 red.</p>
+
+<div class="mockup">
+  <div class="mockup-header">1 &middot; Widget form &mdash; the "Count" control, three states (shown for both preset panel types)</div>
+  <div class="mockup-body fm">
+    <div class="fm-row">
+      <div>
+        <p class="fm-cap">Alerts (default)</p>
+        <div class="kf">
+          <div class="row"><label>Preset</label><div class="sel">Prod Critical</div></div>
+          <div class="row"><label>Panel Type</label><div class="sel">Alert Count Panel</div></div>
+          <div class="row new"><label>Count</label><div class="seg"><span class="on">Alerts</span><span>Incidents</span><span class="more">Other field</span></div></div>
+          <div class="rest">&hellip; existing fields (unchanged)</div>
+        </div>
+        <div class="fm-note">Nothing else appears. Existing widgets load in this state.</div>
+      </div>
+      <div>
+        <p class="fm-cap">Incidents</p>
+        <div class="kf">
+          <div class="row"><label>Preset</label><div class="sel">Prod Critical</div></div>
+          <div class="row"><label>Panel Type</label><div class="sel">Alert Count Panel</div></div>
+          <div class="row new"><label>Count</label><div class="seg"><span>Alerts</span><span class="on">Incidents</span><span class="more">Other field</span></div>
+            <div class="help">Distinct incidents with at least one alert matching the preset.</div></div>
+          <div class="row new"><label>Incident status</label><div class="sel">Active (firing + acknowledged)</div>
+            <div class="help">Also: Firing only &middot; Acknowledged only</div></div>
+          <div class="rest">&hellip; existing fields (unchanged)</div>
+        </div>
+        <div class="fm-note">Status dropdown only here. Default: Active.</div>
+      </div>
+      <div>
+        <p class="fm-cap">Other field</p>
+        <div class="kf">
+          <div class="row"><label>Preset</label><div class="sel">Prod Critical</div></div>
+          <div class="row"><label>Panel Type</label><div class="sel">Alert Count Panel</div></div>
+          <div class="row new"><label>Count</label><div class="seg"><span>Alerts</span><span>Incidents</span><span class="on more">Other field</span></div></div>
+          <div class="row new"><label>Field</label><div class="sel">Service</div>
+            <div class="help">Alert name &middot; Service &middot; Host &middot; Application &middot; Site &middot; Assignee</div></div>
+          <div class="rest">&hellip; existing fields (unchanged)</div>
+        </div>
+        <div class="fm-note">Counts distinct values of that field. Empty values aren't counted.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="mockup">
+  <div class="mockup-header">2 &middot; Alert Count Panel &mdash; dot caption, four states (whole tile links to the preset; title, optional custom link and kebab sit in the tile header)</div>
+  <div class="mockup-body cx">
+    <div class="cx-row">
+      <div><p class="cx-cap">Alerts (today, unchanged)</p>
+        <div class="cx-card tile"><span class="cx-grip">&#8942;&#8942;</span>
+          <div class="box" style="--c:#dc2626;border-color:#dc2626;background:rgba(220,38,38,.13)">
+            <div class="hd"><span class="ttl">Prod Critical</span><span class="cx-kebab">&#8942;</span></div>
+            <div class="mid"><div class="num" style="color:#dc2626">120</div></div>
+          </div></div></div>
+      <div><p class="cx-cap">Normal (custom link set)</p>
+        <div class="cx-card tile"><span class="cx-grip">&#8942;&#8942;</span>
+          <div class="box g">
+            <div class="hd"><span class="ttl">Prod Critical</span><span class="cx-link">&#8599;</span><span class="cx-kebab">&#8942;</span></div>
+            <div class="mid"><div class="num">3</div><div class="lab hl"><i class="dot"></i>Active incidents</div></div>
+          </div></div></div>
+      <div><p class="cx-cap">Loading</p>
+        <div class="cx-card tile"><span class="cx-grip">&#8942;&#8942;</span>
+          <div class="box g">
+            <div class="hd"><span class="ttl">Prod Critical</span><span class="cx-kebab">&#8942;</span></div>
+            <div class="mid"><div class="sk"></div><div class="lab hl"><i class="dot"></i>Active incidents</div></div>
+          </div></div></div>
+      <div><p class="cx-cap">Zero</p>
+        <div class="cx-card tile"><span class="cx-grip">&#8942;&#8942;</span>
+          <div class="box g">
+            <div class="hd"><span class="ttl">Prod Critical</span><span class="cx-kebab">&#8942;</span></div>
+            <div class="mid"><div class="num">0</div><div class="lab hl"><i class="dot"></i>Active incidents</div></div>
+          </div></div></div>
+      <div><p class="cx-cap">Error</p>
+        <div class="cx-card tile"><span class="cx-grip">&#8942;&#8942;</span>
+          <div class="box n">
+            <div class="hd"><span class="ttl">Prod Critical</span><span class="cx-kebab">&#8942;</span></div>
+            <div class="mid"><div class="num">&mdash;</div><div class="lab hl"><i class="dot"></i>Couldn't load count</div></div>
+          </div></div></div>
+    </div>
+    <div class="cx-note">Alert-counting tiles get no caption. An error never renders as 0: a failed grouped request shows a neutral grey tile.</div>
+  </div>
+</div>
+
+<div class="mockup">
+  <div class="mockup-header">3 &middot; Alert Table widget &mdash; group count on its own line; rows stay the latest N alerts</div>
+  <div class="mockup-body cx">
+    <div class="cx-row">
+      <div class="cx-card tw"><span class="cx-grip">&#8942;&#8942;</span>
+        <div class="top"><b>Prod Critical</b><span class="cx-kebab">&#8942;</span></div>
+        <div class="hdr">
+          <div>
+            <div class="ln hl"><i class="tdot"></i>Active incidents: <b style="color:#10b981;font-size:15px">3</b></div>
+            <div class="ln" style="color:#6b7280">Alerts count: showing 5 out of 120</div>
+          </div>
+          <span class="go">Go to preset</span>
+        </div>
+        <table class="tbl">
+          <tr><th>Name</th><th>Severity</th><th>Status</th><th>Incident</th></tr>
+          <tr><td>5xx rate checkout</td><td>critical</td><td>firing</td><td>Checkout outage</td></tr>
+          <tr><td>Latency p99 payments</td><td>high</td><td>firing</td><td>Checkout outage</td></tr>
+          <tr><td>Disk full db-1</td><td>critical</td><td>firing</td><td>DB storage</td></tr>
+          <tr><td>WAL growth db-1</td><td>high</td><td>firing</td><td>DB storage</td></tr>
+          <tr><td>Slow queries search</td><td>critical</td><td>firing</td><td>Search latency</td></tr>
+        </table>
+      </div>
+      <div style="flex:1;min-width:230px" class="cx-note">
+        <b>Rules</b>
+        <ul style="margin:4px 0 0;padding-left:18px">
+          <li>The group line appears only when Count is not Alerts; otherwise the header is exactly today's.</li>
+          <li>Thresholds and the table tint follow the grouped number; the alerts line goes neutral grey.</li>
+          <li>A failed group count shows &mdash;, never 0.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="mockup">
+  <div class="mockup-header">4 &middot; Labels</div>
+  <div class="mockup-body fm">
+    <table style="border-collapse:collapse;font-size:13px">
+      <tr style="text-align:left"><th style="padding:4px 18px 4px 0">Count / field</th><th style="padding:4px 18px 4px 0">API value</th><th style="padding:4px 18px 4px 0">Plural label</th><th style="padding:4px 0">Singular (count = 1)</th></tr>
+      <tr><td>Incidents, Active</td><td>incident + active</td><td>Active incidents</td><td>Active incident</td></tr>
+      <tr><td>Incidents, Firing only</td><td>incident + firing</td><td>Firing incidents</td><td>Firing incident</td></tr>
+      <tr><td>Incidents, Acknowledged only</td><td>incident + acknowledged</td><td>Acknowledged incidents</td><td>Acknowledged incident</td></tr>
+      <tr><td>Alert name</td><td>name</td><td>Alert names</td><td>Alert name</td></tr>
+      <tr><td>Service</td><td>service</td><td>Services</td><td>Service</td></tr>
+      <tr><td>Host</td><td>node_name</td><td>Hosts</td><td>Host</td></tr>
+      <tr><td>Application</td><td>application</td><td>Applications</td><td>Application</td></tr>
+      <tr><td>Site</td><td>site</td><td>Sites</td><td>Site</td></tr>
+      <tr><td>Assignee</td><td>assignee</td><td>Assignees</td><td>Assignee</td></tr>
+    </table>
+  </div>
+</div>
+
+</body>
+</html>
