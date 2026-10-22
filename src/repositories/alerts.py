@@ -21,7 +21,7 @@ from src.repositories.db import engine
 
 # This import is required to create the tables
 from src.repositories.facets import get_facet_options, get_facets
-from src.models.alert import AlertEnvironment, AlertSeverity, AlertStatus
+from src.models.alert import AlertDto, AlertEnvironment, AlertSeverity, AlertStatus
 from src.models.db.alert import (
     Alert,
     AlertField,
@@ -586,14 +586,47 @@ def get_alert_facets(
     return facets
 
 
-def get_alert_potential_facet_fields(tenant_id: str) -> list[str]:
+def get_observed_alert_fields(tenant_id: str) -> list[str]:
+    """Return the field names observed on the tenant's alerts, sorted by name."""
     with Session(engine) as session:
         query = (
             select(AlertField.field_name)
             .select_from(AlertField)
             .where(AlertField.tenant_id == tenant_id)
             .distinct(AlertField.field_name)
+            .order_by(AlertField.field_name)
         )
         result = session.exec(query).all()
         return [row[0] for row in result]
+
+
+def _get_declared_alert_fields() -> list[str]:
+    """Return the declared AlertDto fields that the query layer accepts.
+
+    A field is returned under its name, or under its alias when only the alias is
+    mapped (providerId, providerType). Fields with no mapping are left out, since
+    filtering or faceting on them is rejected.
+    """
+    fields = []
+    for name, field in AlertDto.__fields__.items():
+        for candidate in (name, field.alias):
+            if properties_metadata.get_property_metadata_for_str(candidate):
+                fields.append(candidate)
+                break
+    return fields
+
+
+def get_alert_potential_facet_fields(tenant_id: str) -> list[str]:
+    """Return the fields the tenant's alerts can be faceted on.
+
+    The declared AlertDto fields the query layer accepts come first, so the list
+    does not depend on the alertfield table being populated (it is only written
+    while KEEP_ALERT_FIELDS_ENABLED is on). The tenant's observed fields follow,
+    sorted and without duplicates.
+    """
+    return list(
+        dict.fromkeys(
+            [*_get_declared_alert_fields(), *get_observed_alert_fields(tenant_id)]
+        )
+    )
 
