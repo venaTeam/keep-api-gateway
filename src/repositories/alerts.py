@@ -18,7 +18,7 @@ from src.repositories.cel_to_sql.properties_metadata import (
 from src.repositories.cel_to_sql.sql_providers.get_cel_to_sql_provider_for_dialect import (
     get_cel_to_sql_provider,
 )
-from src.repositories.db import engine
+from src.repositories.db import engine, hidden_by_maintenance_window_filter
 
 # This import is required to create the tables
 from src.repositories.facets import get_facet_options, get_facets
@@ -460,8 +460,10 @@ def __build_query_for_filtering(
             ),
         )
 
-    sql_query = sql_query.filter(LastAlert.tenant_id == tenant_id).filter(
-        LastAlert.timestamp >= get_threeshold_query(tenant_id)
+    sql_query = (
+        sql_query.filter(LastAlert.tenant_id == tenant_id)
+        .filter(LastAlert.timestamp >= get_threeshold_query(tenant_id))
+        .filter(hidden_by_maintenance_window_filter())
     )
     involved_fields = []
 
