@@ -6,7 +6,7 @@ from sqlalchemy import and_, case, func, select
 from sqlalchemy.orm import aliased
 from sqlmodel import Session, col, text
 
-from src.repositories.alerts import get_alert_potential_facet_fields
+from src.repositories.alerts import get_observed_alert_fields
 from src.repositories.cel_to_sql.ast_nodes import DataType
 from src.repositories.cel_to_sql.properties_mapper import (
     PropertiesMappingException,
@@ -643,9 +643,7 @@ def get_incident_facets(
 
 
 def get_incident_potential_facet_fields(tenant_id: str) -> list[str]:
-    alert_fields = [
-        f"alert.{item}" for item in get_alert_potential_facet_fields(tenant_id)
-    ]
+    alert_fields = [f"alert.{item}" for item in get_observed_alert_fields(tenant_id)]
     incident_fields = [
         item.map_from_pattern
         for item in incident_field_configurations

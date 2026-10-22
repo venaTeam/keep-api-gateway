@@ -4,7 +4,8 @@ import logging
 import os
 from typing import Tuple
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, bindparam, func, select
+from sqlalchemy.orm import aliased
 from sqlalchemy.exc import OperationalError
 from sqlmodel import Session, text
 
@@ -21,27 +22,41 @@ from src.repositories.db import engine
 
 # This import is required to create the tables
 from src.repositories.facets import get_facet_options, get_facets
-from src.models.alert import AlertEnvironment, AlertSeverity, AlertStatus
+from src.models.alert import AlertDto, AlertEnvironment, AlertSeverity, AlertStatus
 from src.models.db.alert import (
     Alert,
     AlertField,
     Incident,
+    IncidentEnrichment,
     LastAlert,
     LastAlertToIncident,
 )
 from src.models.db.facet import FacetType
 from src.models.db.helpers import (
+    NULL_FOR_DELETED_AT,
     UTC_NOW_SQL,
     DismissMode,
     suppressed_if_dismiss_active_sql,
 )
 from src.models.db.incident import IncidentStatus
 from src.models.facet import FacetDto, FacetOptionDto, FacetOptionsQueryDto
-from src.models.query import QueryDto, SortOptionsDto
+from src.models.query import (
+    CountGroupBy,
+    CountIncidentStatus,
+    CountQueryDto,
+    QueryDto,
+    SortOptionsDto,
+)
 
 logger = logging.getLogger(__name__)
 
 ALERTS_HARD_LIMIT = int(os.environ.get("KEEP_LAST_ALERTS_LIMIT", 50000))
+
+_COUNT_INCIDENT_STATUSES = {
+    CountIncidentStatus.ACTIVE: IncidentStatus.get_active(return_values=True),
+    CountIncidentStatus.FIRING: [IncidentStatus.FIRING.value],
+    CountIncidentStatus.ACKNOWLEDGED: [IncidentStatus.ACKNOWLEDGED.value],
+}
 
 alert_field_configurations = [
     FieldMappingConfiguration(
@@ -352,6 +367,55 @@ def get_threeshold_query(tenant_id: str):
     )
 
 
+def _join_incidents_with_status(sql_query, statuses: list[str]):
+    """Inner-join live incident links and keep visible, non-candidate incidents whose status is in ``statuses``.
+
+    The status expression comes from the incidents repository, so the count filters
+    on the same status the Incidents page does. The import is local because
+    ``incidents`` already imports this module.
+    """
+    from src.repositories.incidents import (
+        properties_metadata as incident_properties_metadata,
+    )
+
+    status_expression = get_cel_to_sql_provider(
+        incident_properties_metadata
+    ).get_field_expression("status")
+    incident_enrichment = aliased(IncidentEnrichment, name="incidentenrichment")
+
+    return (
+        sql_query.join(
+            LastAlertToIncident,
+            and_(
+                LastAlert.tenant_id == LastAlertToIncident.tenant_id,
+                LastAlert.fingerprint == LastAlertToIncident.fingerprint,
+                LastAlertToIncident.deleted_at == NULL_FOR_DELETED_AT,
+            ),
+        )
+        .join(
+            Incident,
+            and_(
+                LastAlertToIncident.tenant_id == Incident.tenant_id,
+                LastAlertToIncident.incident_id == Incident.id,
+                Incident.is_visible == True,
+                Incident.is_candidate == False,
+            ),
+        )
+        .outerjoin(
+            incident_enrichment,
+            and_(
+                Incident.tenant_id == incident_enrichment.tenant_id,
+                Incident.id == incident_enrichment.incident_id,
+            ),
+        )
+        .where(
+            text(f"({status_expression}) IN :incident_statuses").bindparams(
+                bindparam("incident_statuses", value=list(statuses), expanding=True)
+            )
+        )
+    )
+
+
 def __build_query_for_filtering(
     tenant_id: str,
     select_args: list,
@@ -360,6 +424,7 @@ def __build_query_for_filtering(
     fetch_alerts_data=True,
     fetch_incidents=False,
     force_fetch=False,
+    incident_statuses: list[str] | None = None,
 ):
     fetch_incidents = fetch_incidents or (cel and "incident." in cel)
     cel_to_sql_instance = get_cel_to_sql_provider(properties_metadata)
@@ -391,7 +456,9 @@ def __build_query_for_filtering(
             ),
         )
 
-    if fetch_incidents or force_fetch:
+    if incident_statuses is not None:
+        sql_query = _join_incidents_with_status(sql_query, incident_statuses)
+    elif fetch_incidents or force_fetch:
         # Fingerprint with active incidents subquery, i.e  in Firing status
         firing_subq = (
             select(LastAlert.fingerprint)
@@ -510,6 +577,46 @@ def query_total_alerts_count(tenant_id, query: QueryDto) -> int:
             raise
 
 
+def build_distinct_count_query(tenant_id: str, query: CountQueryDto):
+    if query.group_by is None:
+        raise ValueError("group_by is required")
+
+    if query.group_by == CountGroupBy.INCIDENT:
+        count_expression = func.count(func.distinct(Incident.id))
+        incident_statuses = _COUNT_INCIDENT_STATUSES[query.incident_status]
+    else:
+        field_expression = get_cel_to_sql_provider(
+            properties_metadata
+        ).get_field_expression(query.group_by.value)
+        count_expression = func.count(
+            func.distinct(func.nullif(text(field_expression), ""))
+        )
+        incident_statuses = None
+
+    built_query_result = __build_query_for_filtering(
+        tenant_id=tenant_id,
+        cel=query.cel,
+        select_args=[count_expression],
+        limit=query.limit,
+        incident_statuses=incident_statuses,
+    )
+    return built_query_result["query"]
+
+
+def query_distinct_alerts_count(tenant_id, query: CountQueryDto) -> int:
+    with Session(engine) as session:
+        try:
+            distinct_count_query = build_distinct_count_query(
+                tenant_id=tenant_id, query=query
+            )
+            return session.exec(distinct_count_query).one()[0]
+        except OperationalError as e:
+            logger.exception(
+                f"Failed to query distinct alerts count for query object '{json.dumps(query.dict(exclude_unset=True), default=str)}': {e}"
+            )
+            raise
+
+
 def query_last_alerts(tenant_id, query: QueryDto) -> list[Alert]:
     query_with_defaults = query.copy()
 
@@ -612,14 +719,47 @@ def get_alert_facets(
     return facets
 
 
-def get_alert_potential_facet_fields(tenant_id: str) -> list[str]:
+def get_observed_alert_fields(tenant_id: str) -> list[str]:
+    """Return the field names observed on the tenant's alerts, sorted by name."""
     with Session(engine) as session:
         query = (
             select(AlertField.field_name)
             .select_from(AlertField)
             .where(AlertField.tenant_id == tenant_id)
             .distinct(AlertField.field_name)
+            .order_by(AlertField.field_name)
         )
         result = session.exec(query).all()
         return [row[0] for row in result]
+
+
+def _get_declared_alert_fields() -> list[str]:
+    """Return the declared AlertDto fields that the query layer accepts.
+
+    A field is returned under its name, or under its alias when only the alias is
+    mapped (providerId, providerType). Fields with no mapping are left out, since
+    filtering or faceting on them is rejected.
+    """
+    fields = []
+    for name, field in AlertDto.__fields__.items():
+        for candidate in (name, field.alias):
+            if properties_metadata.get_property_metadata_for_str(candidate):
+                fields.append(candidate)
+                break
+    return fields
+
+
+def get_alert_potential_facet_fields(tenant_id: str) -> list[str]:
+    """Return the fields the tenant's alerts can be faceted on.
+
+    The declared AlertDto fields the query layer accepts come first, so the list
+    does not depend on the alertfield table being populated (it is only written
+    while KEEP_ALERT_FIELDS_ENABLED is on). The tenant's observed fields follow,
+    sorted and without duplicates.
+    """
+    return list(
+        dict.fromkeys(
+            [*_get_declared_alert_fields(), *get_observed_alert_fields(tenant_id)]
+        )
+    )
 
