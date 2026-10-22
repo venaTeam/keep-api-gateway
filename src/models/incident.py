@@ -15,7 +15,13 @@ from pydantic import (
 )
 from sqlmodel import col, desc
 
-from src.models.db.incident import Incident, IncidentSeverity, IncidentStatus
+from src.models.alert import INCIDENT_STATUS_OWNED_KEYS
+from src.models.db.incident import (
+    Incident,
+    IncidentDismissMode,
+    IncidentSeverity,
+    IncidentStatus,
+)
 from src.models.db.rule import ResolveOn, Rule
 
 
@@ -24,6 +30,12 @@ class IncidentStatusChangeDto(BaseModel):
     comment: str | None
     dispose_on_new_alert: bool = False
     tagged_users: list[str] = []
+
+    # Only meaningful when status is SUPPRESSED. `dismiss_mode` defaults to
+    # permanent; `dismissed_until` is required for, and only for, a time-boxed
+    # dismissal.
+    dismiss_mode: IncidentDismissMode | None = None
+    dismissed_until: datetime.datetime | None = None
 
     @validator("tagged_users")
     @classmethod
@@ -35,6 +47,97 @@ class IncidentStatusChangeDto(BaseModel):
             )  # Preserves order while removing duplicates
             return unique_users
         return value
+
+    @root_validator
+    def validate_dismiss_fields(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+        """Reject dismiss payloads that would persist a state no reader can make
+        sense of, rather than silently dropping or half-applying them."""
+        status = values.get("status")
+        dismiss_mode = values.get("dismiss_mode")
+        dismissed_until = values.get("dismissed_until")
+
+        if status != IncidentStatus.SUPPRESSED:
+            if dismiss_mode is not None or dismissed_until is not None:
+                raise ValueError(
+                    "dismiss_mode/dismissed_until are only valid with "
+                    f"status='{IncidentStatus.SUPPRESSED.value}'"
+                )
+            return values
+
+        # Suppressing without saying how means "permanently".
+        if dismiss_mode is None:
+            dismiss_mode = IncidentDismissMode.PERMANENT
+            values["dismiss_mode"] = dismiss_mode
+
+        if dismiss_mode == IncidentDismissMode.DISMISS_UNTIL:
+            if dismissed_until is None:
+                raise ValueError(
+                    "dismissed_until is required when "
+                    f"dismiss_mode='{IncidentDismissMode.DISMISS_UNTIL.value}'"
+                )
+            # Naive input is read as UTC, matching the timezone-aware column.
+            if dismissed_until.tzinfo is None:
+                dismissed_until = dismissed_until.replace(
+                    tzinfo=datetime.timezone.utc
+                )
+                values["dismissed_until"] = dismissed_until
+            # A deadline in the past would store a dismissal that reads as
+            # already expired — the caller almost certainly meant something else.
+            if dismissed_until <= datetime.datetime.now(datetime.timezone.utc):
+                raise ValueError("dismissed_until must be in the future")
+        else:
+            # A permanent dismissal carries no deadline.
+            values["dismissed_until"] = None
+
+        return values
+
+
+def split_incident_status_keys(
+    enrichments: dict,
+) -> tuple[Optional[IncidentStatusChangeDto], dict]:
+    """Split an incident enrich payload into (status change, real enrichments).
+
+    The UI sends a dismissal and its note as one body. Status and dismiss keys
+    belong on the incident's typed columns, everything else in the enrichment
+    JSONB, so they are separated here and applied in one transaction by
+    `IncidentBl.enrich_and_change_status`.
+
+    Returns `(None, enrichments)` when the payload carries no status keys. The
+    status half is validated by `IncidentStatusChangeDto`, so a bad dismissal is
+    rejected before either half is written — the same rules the dedicated status
+    endpoint enforces, rather than a second looser copy of them.
+    """
+    rest = {
+        key: value
+        for key, value in enrichments.items()
+        if key not in INCIDENT_STATUS_OWNED_KEYS
+    }
+    status_keys = {
+        key: value
+        for key, value in enrichments.items()
+        if key in INCIDENT_STATUS_OWNED_KEYS
+    }
+
+    if not status_keys:
+        return None, rest
+
+    if "status" not in status_keys:
+        # dismiss_mode/dismissed_until on their own are meaningless: dismissal IS
+        # the suppressed status. Rather than guess, say so.
+        raise ValueError(
+            "dismiss_mode/dismissed_until require an accompanying "
+            f"status='{IncidentStatus.SUPPRESSED.value}'"
+        )
+
+    return (
+        IncidentStatusChangeDto(
+            status=status_keys["status"],
+            comment=None,
+            dismiss_mode=status_keys.get("dismiss_mode"),
+            dismissed_until=status_keys.get("dismissed_until"),
+        ),
+        rest,
+    )
 
 
 class IncidentSeverityChangeDto(BaseModel):
@@ -74,6 +177,11 @@ class IncidentDto(IncidentDtoIn):
     alerts_count: int
     alert_sources: list[str]
     status: IncidentStatus = IncidentStatus.FIRING
+    # Dismiss state behind a SUPPRESSED status. `dismissed_until` stays populated
+    # after it lapses (status reverts on its own) so the UI can show when a
+    # dismissal ended, not just that it did.
+    dismiss_mode: IncidentDismissMode | None = None
+    dismissed_until: datetime.datetime | None = None
     assignee: str | None
     services: list[str]
 
@@ -199,6 +307,8 @@ class IncidentDto(IncidentDtoIn):
             alert_sources=db_incident.sources or [],
             severity=severity,
             status=db_incident.status,
+            dismiss_mode=db_incident.dismiss_mode,
+            dismissed_until=db_incident.dismissed_until,
             assignee=db_incident.assignee,
             services=db_incident.affected_services or [],
             rule_fingerprint=db_incident.rule_fingerprint,
@@ -220,13 +330,43 @@ class IncidentDto(IncidentDtoIn):
         dto._tenant_id = db_incident.tenant_id
 
         if db_incident.enrichments:
-            dto = dto.copy(update=db_incident.enrichments)
+            # Status and dismiss state are owned by the typed columns, so a
+            # `status`/`dismiss_*` key in the JSONB — pre-migration rows still
+            # carry them — must not overlay what was read above. The enrich route
+            # refuses to write them going forward
+            # (INCIDENT_STATUS_OWNED_KEYS); this drops the ones already stored.
+            overlay = {
+                key: value
+                for key, value in db_incident.enrichments.items()
+                if key not in INCIDENT_STATUS_OWNED_KEYS
+            }
+            if overlay:
+                dto = dto.copy(update=overlay)
+
+        # Derived last so it wins outright. Same precedence as the COALESCE chain
+        # CEL filters compile to, so the list view and this DTO can't disagree
+        # about what is suppressed.
+        if db_incident.is_dismiss_active():
+            dto.status = IncidentStatus.SUPPRESSED
 
         return dto
 
     def to_db_incident(self) -> "Incident":
         """Converts an IncidentDto instance to an Incident database model."""
         from src.models.db.alert import Incident
+
+        # `suppressed` is derived, never stored — persisting it would leave the
+        # incident stuck suppressed once the dismissal lapsed, since nothing
+        # sweeps the table. Record it as the dismiss state it actually is and
+        # keep FIRING as the status it reverts to.
+        status = self.status
+        dismiss_mode = self.dismiss_mode
+        dismissed_until = self.dismissed_until
+        if status == IncidentStatus.SUPPRESSED:
+            status = IncidentStatus.FIRING
+            if dismiss_mode is None:
+                dismiss_mode = IncidentDismissMode.PERMANENT
+                dismissed_until = None
 
         db_incident = Incident(
             id=self.id,
@@ -236,7 +376,9 @@ class IncidentDto(IncidentDtoIn):
             generated_summary=self.generated_summary,
             assignee=self.assignee,
             severity=self.severity.order,
-            status=self.status.value,
+            status=status.value,
+            dismiss_mode=dismiss_mode.value if dismiss_mode else None,
+            dismissed_until=dismissed_until,
             creation_time=self.creation_time or datetime.datetime.utcnow(),
             start_time=self.start_time,
             end_time=self.end_time,
