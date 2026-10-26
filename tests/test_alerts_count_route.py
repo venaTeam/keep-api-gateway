@@ -58,6 +58,45 @@ def test_grouped_count_confirms_the_grouping(
 
 @pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
 @pytest.mark.parametrize(
+    "body, expected_count, expected_missing",
+    [
+        ({"group_by": "incident"}, 1, 1),
+        ({"group_by": "incident", "incident_status": "acknowledged"}, 0, 1),
+        ({"group_by": "service"}, 2, 0),
+        ({"group_by": "assignee"}, 0, 5),
+    ],
+)
+def test_grouped_count_with_missing(
+    db_session, client, test_app, two_incidents, body, expected_count, expected_missing
+):
+    response = client.post(
+        COUNT_URL, headers=AUTH, json={"cel": "", "include_missing": True, **body}
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "count": expected_count,
+        "group_by": body["group_by"],
+        "missing": expected_missing,
+    }
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+def test_grouped_count_without_missing_is_unchanged(
+    db_session, client, test_app, two_incidents
+):
+    response = client.post(
+        COUNT_URL,
+        headers=AUTH,
+        json={"cel": "", "group_by": "incident", "include_missing": False},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"count": 1, "group_by": "incident"}
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+@pytest.mark.parametrize(
     "body",
     [
         {"group_by": "severity"},
