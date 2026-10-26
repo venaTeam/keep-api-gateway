@@ -44,3 +44,10 @@ A gateway without this change drops the unknown key (Pydantic v1 ignores extras)
 - Gateway: model validation, route shapes (with/without `include_missing`, ungrouped unchanged), and repository counts on the shared graph fixture: alerts with no incident, only-resolved incident, hidden/candidate incident, removed link, empty and blank field values, other tenant, and a CEL filter that references `incident.`.
 - UI: Jest for the label helpers, the hook (requests `include_missing` only when on; `missing` absent → unavailable), the Count control toggle, the tile strip in every state, the table line, and the form's height rule.
 - Local stack in a browser: a dashboard with every case, the numbers cross-checked against SQL, and the strip against a gateway built from `dev` without this change.
+
+### What ran (2026-10-26/27)
+
+- Gateway suite: 895 passed, 5 skipped, 0 failed (the two Elasticsearch test files need Docker Compose and were run separately: they fail the same way on `dev` without Docker). Ruff: nothing new.
+- keep-ui: Jest 85 suites / 924 tests passed; typecheck only the 2 pre-existing errors; ESLint nothing new.
+- Live stack on PostgreSQL 16 with the schema from keep-migrations `dev` and a namespaced dataset (27 alerts, 8 incidents, including a deleted, a merged, a hidden and a candidate incident, a removed link, resolved-only, blank and whitespace values): 240 API checks comparing the design, independent SQL and the live endpoint, response shapes included, 0 mismatches. A gateway built from `dev` answers the same requests with `{count, group_by}` and no `missing`.
+- Browser, 43 checks, all passing: every tile, strip and table line against the expected numbers; with the grouped requests answered by the `dev` gateway every strip and line shows "—" and the main numbers stay; the form switch labels and states; a new tile created with the switch on is 5 rows; turning it off lowers the minimum to 4 and keeps the height; clicking the strip opens the preset like the rest of the tile.
