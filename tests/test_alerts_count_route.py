@@ -65,6 +65,7 @@ def test_grouped_count_confirms_the_grouping(
         {"incident_status": "active"},
         {"group_by": "service", "incident_status": "active"},
         {"group_by": "incident", "incident_status": "resolved"},
+        {"include_missing": True},
     ],
 )
 def test_invalid_grouping_is_a_validation_error(db_session, client, test_app, body):
