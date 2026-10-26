@@ -594,10 +594,11 @@ def query_distinct_alerts_count(tenant_id, query: CountQueryDto) -> int:
 def build_missing_count_query(tenant_id: str, query: CountQueryDto):
     """Count the matching alerts that ``group_by`` leaves out.
 
-    For incidents that is an alert with no live link to an incident the Incidents
-    page shows, whatever its status. For a field it is an alert whose value is
-    empty, the rule the distinct count uses to skip blanks. Links and incidents are
-    aliased so a CEL filter that joins them cannot correlate with this check.
+    For incidents that is an alert with no live link to a visible, non-candidate
+    incident that has not been deleted, whatever its other status. For a field it
+    is an alert whose value is empty, the rule the distinct count uses to skip
+    blanks. Links and incidents are aliased so a CEL filter that joins them cannot
+    correlate with this check.
     """
     if query.group_by is None:
         raise ValueError("group_by is required")
@@ -628,6 +629,7 @@ def build_missing_count_query(tenant_id: str, query: CountQueryDto):
                 live_link.deleted_at == NULL_FOR_DELETED_AT,
                 shown_incident.is_visible == True,
                 shown_incident.is_candidate == False,
+                shown_incident.status != IncidentStatus.DELETED.value,
             )
             .correlate(LastAlert)
         )

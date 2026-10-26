@@ -72,6 +72,14 @@ def test_an_alert_only_in_a_resolved_incident_is_not_missing(db_session):
     assert missing(group_by="incident") == 0
 
 
+def test_a_deleted_incident_does_not_count_as_an_incident(db_session):
+    deleted = seed_incident(db_session, "deleted", IncidentStatus.DELETED)
+    seed_alert(db_session, "fp-1")
+    link(db_session, "fp-1", deleted)
+
+    assert missing(group_by="incident") == 1
+
+
 def test_hidden_and_candidate_incidents_do_not_count_as_an_incident(db_session):
     hidden = seed_incident(db_session, "hidden", is_visible=False)
     candidate = seed_incident(db_session, "candidate", is_candidate=True)
