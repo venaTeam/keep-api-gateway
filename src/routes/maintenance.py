@@ -150,6 +150,9 @@ def update_maintenance_rule(
             extra={"tenant_id": rule.tenant_id, "maintenance_rule_id": rule.id},
         )
     _notify_feed_changed(authenticated_entity.tenant_id)
+    # The re-check commits (or rolls back), which expires `rule`; rule.dict()
+    # does not lazy-load, so reload it before building the response.
+    session.refresh(rule)
     return MaintenanceRuleRead(**rule.dict())
 
 

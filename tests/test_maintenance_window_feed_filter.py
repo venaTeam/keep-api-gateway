@@ -201,6 +201,31 @@ def test_editing_or_deleting_a_window_notifies_open_feeds(db_session, client, te
         assert notify.call_count == 2
 
 
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+@pytest.mark.parametrize("tagged", ["hidden", "frozen"])
+def test_resaving_a_window_that_still_matches_returns_the_rule(
+    db_session, client, test_app, tagged
+):
+    """The re-check commits again even when it releases nothing, which expires
+    the rule; the response must still be built from a loaded rule."""
+    headers = {"x-api-key": "some-key"}
+    with patch("src.routes.maintenance.notify_sse"):
+        created = client.post("/maintenance", headers=headers, json=_window_payload())
+        rule_id = created.json()["id"]
+        if tagged == "hidden":
+            _alert(db_session, "still-hidden", rule_id)
+        else:
+            _frozen_alert(db_session, "still-frozen", rule_id, held_name="renamed")
+
+        updated = client.put(
+            f"/maintenance/{rule_id}", headers=headers, json=_window_payload()
+        )
+
+    assert updated.status_code == 200
+    assert updated.json()["id"] == rule_id
+    assert updated.json()["cel_query"] == 'source == "test"'
+
+
 # --------------------------------------------------------------------------- #
 # Editing a window's filter or ignore statuses re-checks the alerts it hid
 # --------------------------------------------------------------------------- #
