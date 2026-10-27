@@ -138,6 +138,27 @@ class LastAlert(SQLModel, table=True):
         default=None,
         sa_column=Column(Integer, nullable=True),
     )
+    # Freeze of an alert already on screen when a "Hide From Feed" window
+    # matches its new occurrences: the event-handler keeps the row pointing at
+    # the pre-window occurrence and holds the latest one back here; the
+    # keep-workflows watcher catches the row up once the window stops being
+    # active. Holding something back iff maintenance_pending_firing_count IS
+    # NOT NULL (0 = duplicates only). The gateway only releases rows, by
+    # clearing maintenance_frozen_window_id when an edited window no longer
+    # matches (services/maintenance_windows.py).
+    maintenance_frozen_window_id: int | None = Field(
+        default=None,
+        sa_column=Column(Integer, nullable=True),
+    )
+    maintenance_pending_alert_id: UUID | None = Field(default=None, nullable=True)
+    maintenance_pending_last_received: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+    maintenance_pending_firing_count: int | None = Field(
+        default=None,
+        sa_column=Column(Integer, nullable=True),
+    )
 
     __table_args__ = (
         # Original indexes from MySQL

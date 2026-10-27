@@ -7,18 +7,24 @@ mode is handled at read time. Editing its filter or ignore statuses is not, so
 the update route calls this to release the alerts the new definition no longer
 matches.
 
-The filter is evaluated against the stored latest occurrence, which keeps the
-native alert columns only: AlertDto fields without a column (e.g. `component`)
-and extra keys a sender included are not stored. When the filter references
-one of those, the outcome is unknown and the alert stays hidden until the
-window stops running.
+Alerts that were already on screen when the window matched them are frozen
+instead: their row keeps the pre-window occurrence and holds the latest one
+back. For those, release means clearing maintenance_frozen_window_id; the
+keep-workflows watcher then catches the row up to the held-back occurrence on
+its next run, as it does when a window stops being active.
+
+The filter is evaluated against the stored latest occurrence (for a frozen
+alert, the one held back), which keeps the native alert columns only: AlertDto
+fields without a column (e.g. `component`) and extra keys a sender included
+are not stored. When the filter references one of those, the outcome is
+unknown and the alert stays hidden or frozen until the window stops running.
 """
 
 import json
 import logging
 
 import celpy
-from sqlalchemy import and_, update
+from sqlalchemy import and_, func, update
 from sqlmodel import Session, select
 
 from src.models.db.alert import Alert, LastAlert
@@ -48,8 +54,9 @@ def _still_matches(program, rule: MaintenanceWindowRule, alert: Alert) -> bool:
 def release_alerts_no_longer_matched(
     session: Session, rule: MaintenanceWindowRule
 ) -> int:
-    """Clear maintenance_window_id on the rows this window hid whose latest
-    occurrence the window's current definition no longer matches. Returns the
+    """Release the rows this window hid or froze whose latest occurrence the
+    window's current definition no longer matches: clear maintenance_window_id
+    on hidden rows, maintenance_frozen_window_id on frozen ones. Returns the
     number of alerts released; the caller notifies open feeds."""
     rows = session.exec(
         select(LastAlert.fingerprint, Alert)
@@ -62,7 +69,24 @@ def release_alerts_no_longer_matched(
             LastAlert.maintenance_window_id == rule.id,
         )
     ).all()
-    if not rows:
+    frozen_rows = session.exec(
+        select(LastAlert.fingerprint, LastAlert.maintenance_pending_alert_id, Alert)
+        .join(
+            Alert,
+            and_(
+                Alert.id
+                == func.coalesce(
+                    LastAlert.maintenance_pending_alert_id, LastAlert.alert_id
+                ),
+                Alert.tenant_id == LastAlert.tenant_id,
+            ),
+        )
+        .where(
+            LastAlert.tenant_id == rule.tenant_id,
+            LastAlert.maintenance_frozen_window_id == rule.id,
+        )
+    ).all()
+    if not rows and not frozen_rows:
         return 0
 
     try:
@@ -72,7 +96,7 @@ def release_alerts_no_longer_matched(
         )
     except Exception:
         logger.exception(
-            "Failed to compile maintenance window filter, keeping alerts hidden",
+            "Failed to compile maintenance window filter, keeping alerts hidden or frozen",
             extra={"tenant_id": rule.tenant_id, "maintenance_rule_id": rule.id},
         )
         return 0
@@ -92,6 +116,27 @@ def release_alerts_no_longer_matched(
                 LastAlert.maintenance_window_id == rule.id,
             )
             .values(maintenance_window_id=None)
+            .execution_options(synchronize_session=False)
+        )
+        released += result.rowcount
+    for fingerprint, pending_alert_id, alert in frozen_rows:
+        if _still_matches(program, rule, alert):
+            continue
+        # Only if the row still holds back the occurrence evaluated here.
+        held_back = (
+            LastAlert.maintenance_pending_alert_id.is_(None)
+            if pending_alert_id is None
+            else LastAlert.maintenance_pending_alert_id == pending_alert_id
+        )
+        result = session.execute(
+            update(LastAlert)
+            .where(
+                LastAlert.tenant_id == rule.tenant_id,
+                LastAlert.fingerprint == fingerprint,
+                LastAlert.maintenance_frozen_window_id == rule.id,
+                held_back,
+            )
+            .values(maintenance_frozen_window_id=None)
             .execution_options(synchronize_session=False)
         )
         released += result.rowcount

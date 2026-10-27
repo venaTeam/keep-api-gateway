@@ -272,3 +272,71 @@ def test_put_with_a_new_filter_releases_alerts(db_session, client, test_app):
 
     assert updated.status_code == 200
     assert _feed() == ["released"]
+
+
+# --------------------------------------------------------------------------- #
+# Frozen alerts: on screen when the window matched them
+# --------------------------------------------------------------------------- #
+
+
+def _frozen_alert(db_session, fingerprint, window_id, held_name="renamed"):
+    """A visible row still showing its pre-window occurrence (named after the
+    fingerprint), holding back a newer one named `held_name`."""
+    _alert(db_session, fingerprint)
+    held = Alert(
+        tenant_id=SINGLE_TENANT_UUID,
+        provider_type="test",
+        provider_id="test",
+        fingerprint=fingerprint,
+        source="test",
+        severity="high",
+        status="firing",
+        name=held_name,
+        timestamp=_now() + timedelta(seconds=1),
+    )
+    db_session.add(held)
+    db_session.commit()
+    last_alert = db_session.get(LastAlert, (SINGLE_TENANT_UUID, fingerprint))
+    last_alert.maintenance_frozen_window_id = window_id
+    last_alert.maintenance_pending_alert_id = held.id
+    last_alert.maintenance_pending_firing_count = 1
+    db_session.add(last_alert)
+    db_session.commit()
+    return held
+
+
+def _frozen_window_id(db_session, fingerprint):
+    db_session.expire_all()
+    return db_session.get(
+        LastAlert, (SINGLE_TENANT_UUID, fingerprint)
+    ).maintenance_frozen_window_id
+
+
+def test_frozen_alert_stays_in_the_feed(db_session):
+    window = _window(db_session)
+    _frozen_alert(db_session, "frozen", window.id)
+
+    assert _feed() == ["frozen"]
+
+
+def test_edit_releases_a_frozen_alert_judged_by_its_held_back_occurrence(db_session):
+    window = _window(db_session)
+    held = _frozen_alert(db_session, "frozen", window.id, held_name="renamed")
+
+    # The occurrence on screen still matches; the held-back one does not, so
+    # the edited window no longer freezes the alert.
+    assert _edit(db_session, window, cel_query='name == "frozen"') == 1
+    assert _frozen_window_id(db_session, "frozen") is None
+    # The held-back occurrence stays for the watcher to catch up to.
+    db_session.expire_all()
+    last_alert = db_session.get(LastAlert, (SINGLE_TENANT_UUID, "frozen"))
+    assert last_alert.maintenance_pending_alert_id == held.id
+    assert last_alert.maintenance_pending_firing_count == 1
+
+
+def test_edit_keeps_a_frozen_alert_it_still_matches(db_session):
+    window = _window(db_session)
+    _frozen_alert(db_session, "frozen", window.id, held_name="renamed")
+
+    assert _edit(db_session, window, cel_query='name == "renamed"') == 0
+    assert _frozen_window_id(db_session, "frozen") == window.id
