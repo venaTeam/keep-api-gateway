@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Count-by left-out alerts: mock</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  body { margin: 0; padding: 28px 32px 48px; background: #f9fafb; color: #111827; font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; max-width: 1240px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .subtitle { color: #6b7280; margin: 0 0 18px; }
+  .mockup { background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 10px; margin: 20px 0; overflow: hidden; }
+  .mockup-header { padding: 9px 16px; background: #e5e7eb; font-weight: 600; font-size: 13px; }
+  .mockup-body { padding: 18px 16px; }
+  .row { display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-start; }
+  .cap { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #6b7280; margin: 0 0 6px; }
+  .note { font-size: 12.5px; line-height: 1.5; margin-top: 10px; color: #374151; max-width: 900px; }
+  .new { outline: 2px dashed #f97316; outline-offset: 3px; border-radius: 6px; }
+
+  .kf { background: #fff; padding: 14px; border-radius: 8px; border: 1px solid #e5e7eb; width: 265px; }
+  .kf .r { margin-bottom: 12px; }
+  .kf label { display: block; font-size: 11.5px; font-weight: 600; color: #374151; margin-bottom: 3px; }
+  .kf .sel { border: 1px solid #d1d5db; border-radius: 6px; padding: 6px 9px; display: flex; justify-content: space-between; background: #fff; font-size: 12.5px; }
+  .kf .sel::after { content: "\2304"; color: #9ca3af; }
+  .kf .help { font-size: 10.5px; color: #6b7280; margin-top: 3px; }
+  .kf .seg { display: flex; border: 1px solid #d1d5db; border-radius: 6px; overflow: hidden; font-size: 12.5px; }
+  .kf .seg span { flex: 1; padding: 6px 0; text-align: center; background: #fff; color: #374151; border-right: 1px solid #e5e7eb; white-space: nowrap; }
+  .kf .seg span:last-child { border-right: 0; }
+  .kf .seg span.on { background: #fff7ed; color: #c2410c; font-weight: 700; box-shadow: inset 0 0 0 1.5px #f97316; }
+  .kf .sw { display: flex; justify-content: space-between; align-items: center; font-size: 12.5px; font-weight: 600; color: #374151; }
+  .kf .tg { width: 30px; height: 17px; border-radius: 9px; background: #d1d5db; position: relative; flex: none; }
+  .kf .tg::after { content: ""; position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%; background: #fff; }
+  .kf .tg.on { background: #f97316; } .kf .tg.on::after { left: 15px; }
+  .kf .rest { color: #9ca3af; font-size: 11.5px; border-top: 1px dashed #e5e7eb; padding-top: 8px; }
+
+  .kt { width: 230px; height: 190px; background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px 14px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+  .kt .box { height: 100%; border: 2px solid; border-radius: 8px; padding: 6px 8px; display: flex; flex-direction: column; overflow: hidden; }
+  .kt .hd { display: flex; align-items: center; gap: 4px; }
+  .kt .ttl { flex: 1; text-align: center; font-size: 18px; font-weight: 700; color: #374151; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .kt .keb { color: #6b7280; font-size: 16px; line-height: 1; padding: 2px 4px; }
+  .kt .mid { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  .kt .num { font-size: 38px; font-weight: 900; letter-spacing: -.02em; line-height: 1; margin-bottom: 6px; text-shadow: 0 1px 2px rgba(0,0,0,.1); }
+  .kt .lab { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: #374151; }
+  .kt .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 3px color-mix(in srgb, var(--c) 28%, transparent); }
+  .g { --c: #10b981; border-color: #10b981; background: rgba(16,185,129,.13); } .g .num { color: #10b981; }
+  .rd { --c: #dc2626; border-color: #dc2626; background: rgba(220,38,38,.13); } .rd .num { color: #dc2626; }
+  .n { --c: #9ca3af; border-color: #9ca3af; background: rgba(156,163,175,.12); } .n .num { color: #9ca3af; }
+  .kt .foot { margin: 0 -8px -6px; padding: 4px 8px; background: rgba(255,255,255,.75); border-top: 1px solid rgba(0,0,0,.08); font-size: 11.5px; color: #4b5563; text-align: center; }
+  .kt .sk { width: 54px; height: 32px; border-radius: 6px; margin-bottom: 6px; background: linear-gradient(90deg,#e5e7eb 25%,#f3f4f6 50%,#e5e7eb 75%); }
+  .kt .skl { display: inline-block; width: 140px; height: 10px; border-radius: 4px; background: #e5e7eb; vertical-align: middle; }
+
+  .kw { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px 14px; width: 540px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+  .kw .top { display: flex; justify-content: space-between; align-items: center; margin: 0 0 8px; }
+  .kw .top b { font-size: 17px; }
+  .kw .hdr { display: flex; justify-content: space-between; align-items: flex-start; margin: 0 0 8px; }
+  .kw .ln { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+  .kw .go { border: 1px solid #fb923c; color: #ea580c; border-radius: 6px; padding: 3px 10px; font-size: 12px; background: #fff; }
+  .kw table { width: 100%; border-collapse: collapse; font-size: 11.5px; background: rgba(220,38,38,.08); border-radius: 6px; overflow: hidden; }
+  .kw th { text-align: left; padding: 5px 8px; color: #6b7280; font-weight: 600; border-bottom: 1px solid rgba(0,0,0,.08); }
+  .kw td { padding: 5px 8px; border-bottom: 1px solid rgba(0,0,0,.05); }
+  .kw .tdot { width: 7px; height: 7px; border-radius: 50%; background: #dc2626; box-shadow: 0 0 0 3px color-mix(in srgb, #dc2626 28%, transparent); }
+  .kw .ring { width: 7px; height: 7px; border-radius: 50%; border: 1.5px solid #9ca3af; }
+</style>
+</head>
+<body>
+<h1>Count-by: the alerts a grouped count leaves out</h1>
+<p class="subtitle">Visual reference for <code>2026-10-26-count-by-missing-alerts-design.md</code>. Example preset: 100 alerts, 90 of them in 10 active incidents, 10 in none. Orange dashed outline = new. Thresholds: &ge;0 green, &ge;10 red.</p>
+
+<div class="mockup">
+  <div class="mockup-header">1 &middot; Widget form: the switch (both panel types; only when Count isn't Alerts; off by default)</div>
+  <div class="mockup-body">
+    <div class="row">
+      <div><p class="cap">Count: Incidents</p>
+        <div class="kf">
+          <div class="r"><label>Panel Type</label><div class="sel">Alert Count Panel</div></div>
+          <div class="r"><label>Count</label><div class="seg"><span>Alerts</span><span class="on">Incidents</span><span>Other field</span></div></div>
+          <div class="r"><label>Incident status</label><div class="sel">Active (firing + acknowledged)</div></div>
+          <div class="r new"><div class="sw">Show alerts not in an incident <i class="tg on"></i></div>
+            <div class="help">Adds how many matching alerts aren't in any incident.</div></div>
+          <div class="rest">&hellip; existing fields (unchanged)</div>
+        </div></div>
+      <div><p class="cap">Count: Other field (Service)</p>
+        <div class="kf">
+          <div class="r"><label>Panel Type</label><div class="sel">Alert Count Panel</div></div>
+          <div class="r"><label>Count</label><div class="seg"><span>Alerts</span><span>Incidents</span><span class="on">Other field</span></div></div>
+          <div class="r"><label>Field</label><div class="sel">Service</div></div>
+          <div class="r new"><div class="sw">Show alerts with no service <i class="tg"></i></div>
+            <div class="help">Adds how many matching alerts have no service.</div></div>
+          <div class="rest">&hellip; existing fields (unchanged)</div>
+        </div></div>
+    </div>
+  </div>
+</div>
+
+<div class="mockup">
+  <div class="mockup-header">2 &middot; Alert Count Panel: footer strip, in each state (grey; not clickable on its own)</div>
+  <div class="mockup-body">
+    <div class="row">
+      <div><p class="cap">Normal</p>
+        <div class="kt"><div class="box rd"><div class="hd"><span class="ttl">Prod Critical</span><span class="keb">&#8942;</span></div>
+          <div class="mid"><div class="num">10</div><div class="lab"><i class="dot"></i>Active incidents</div></div>
+          <div class="foot new">+ 10 alerts not in an incident</div></div></div></div>
+      <div><p class="cap">One left out</p>
+        <div class="kt"><div class="box g"><div class="hd"><span class="ttl">Prod Critical</span><span class="keb">&#8942;</span></div>
+          <div class="mid"><div class="num">4</div><div class="lab"><i class="dot"></i>Services</div></div>
+          <div class="foot new">+ 1 alert with no service</div></div></div></div>
+      <div><p class="cap">Nothing left out</p>
+        <div class="kt"><div class="box g"><div class="hd"><span class="ttl">Prod Critical</span><span class="keb">&#8942;</span></div>
+          <div class="mid"><div class="num">3</div><div class="lab"><i class="dot"></i>Active incidents</div></div>
+          <div class="foot new">Every alert is in an incident</div></div></div></div>
+      <div><p class="cap">Loading</p>
+        <div class="kt"><div class="box g"><div class="hd"><span class="ttl">Prod Critical</span><span class="keb">&#8942;</span></div>
+          <div class="mid"><div class="sk"></div><div class="lab"><i class="dot"></i>Active incidents</div></div>
+          <div class="foot new"><span class="skl"></span></div></div></div></div>
+      <div><p class="cap">Gateway without the number</p>
+        <div class="kt"><div class="box rd"><div class="hd"><span class="ttl">Prod Critical</span><span class="keb">&#8942;</span></div>
+          <div class="mid"><div class="num">10</div><div class="lab"><i class="dot"></i>Active incidents</div></div>
+          <div class="foot new">&mdash;</div></div></div></div>
+      <div><p class="cap">Count failed</p>
+        <div class="kt"><div class="box n"><div class="hd"><span class="ttl">Prod Critical</span><span class="keb">&#8942;</span></div>
+          <div class="mid"><div class="num">&mdash;</div><div class="lab"><i class="dot"></i>Couldn't load count</div></div></div></div></div>
+    </div>
+    <div class="note">A tile with the strip is 5 grid rows (4 without). Labels per field: "with no alert name / service / host / application / site / assignee"; at zero "Every alert has a service", "an application", "an assignee", "an alert name".</div>
+  </div>
+</div>
+
+<div class="mockup">
+  <div class="mockup-header">3 &middot; Alert Table widget: the same text as a line under the group count; rows unchanged</div>
+  <div class="mockup-body">
+    <div class="kw">
+      <div class="top"><b>Prod Critical</b><span style="color:#6b7280">&#8942;</span></div>
+      <div class="hdr">
+        <div>
+          <div class="ln"><i class="tdot"></i>Active incidents: <b style="color:#dc2626;font-size:15px">10</b></div>
+          <div class="ln new" style="color:#4b5563"><i class="ring"></i>+ 10 alerts not in an incident</div>
+          <div class="ln" style="color:#6b7280">Alerts count: showing 5 out of 100</div>
+        </div>
+        <span class="go">Go to preset</span>
+      </div>
+      <table>
+        <tr><th>Name</th><th>Severity</th><th>Status</th><th>Incident</th></tr>
+        <tr><td>5xx rate checkout</td><td>critical</td><td>firing</td><td>Checkout outage</td></tr>
+        <tr><td>Latency p99 payments</td><td>high</td><td>firing</td><td>Checkout outage</td></tr>
+        <tr><td>Cert expiring api-gw</td><td>warning</td><td>firing</td><td style="color:#9ca3af">&mdash;</td></tr>
+        <tr><td>Disk full db-1</td><td>critical</td><td>firing</td><td>DB storage</td></tr>
+        <tr><td>Backup job late</td><td>high</td><td>firing</td><td style="color:#9ca3af">&mdash;</td></tr>
+      </table>
+    </div>
+  </div>
+</div>
+</body>
+</html>
