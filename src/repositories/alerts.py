@@ -591,6 +591,70 @@ def query_distinct_alerts_count(tenant_id, query: CountQueryDto) -> int:
             raise
 
 
+def build_missing_count_query(tenant_id: str, query: CountQueryDto):
+    """Count the matching alerts that ``group_by`` leaves out.
+
+    For incidents that is an alert with no live link to a visible, non-candidate
+    incident that has not been deleted, whatever its other status. For a field it
+    is an alert whose value is empty, the rule the distinct count uses to skip
+    blanks. Links and incidents are aliased so a CEL filter that joins them cannot
+    correlate with this check.
+    """
+    if query.group_by is None:
+        raise ValueError("group_by is required")
+
+    sql_query = __build_query_for_filtering(
+        tenant_id=tenant_id,
+        cel=query.cel,
+        select_args=[func.count(func.distinct(LastAlert.alert_id))],
+        limit=query.limit,
+    )["query"]
+
+    if query.group_by == CountGroupBy.INCIDENT:
+        live_link = aliased(LastAlertToIncident)
+        shown_incident = aliased(Incident)
+        linked = (
+            select(1)
+            .select_from(live_link)
+            .join(
+                shown_incident,
+                and_(
+                    live_link.tenant_id == shown_incident.tenant_id,
+                    live_link.incident_id == shown_incident.id,
+                ),
+            )
+            .where(
+                live_link.tenant_id == LastAlert.tenant_id,
+                live_link.fingerprint == LastAlert.fingerprint,
+                live_link.deleted_at == NULL_FOR_DELETED_AT,
+                shown_incident.is_visible == True,
+                shown_incident.is_candidate == False,
+                shown_incident.status != IncidentStatus.DELETED.value,
+            )
+            .correlate(LastAlert)
+        )
+        return sql_query.where(~linked.exists())
+
+    field_expression = get_cel_to_sql_provider(
+        properties_metadata
+    ).get_field_expression(query.group_by.value)
+    return sql_query.where(func.nullif(text(field_expression), "").is_(None))
+
+
+def query_missing_alerts_count(tenant_id, query: CountQueryDto) -> int:
+    with Session(engine) as session:
+        try:
+            missing_count_query = build_missing_count_query(
+                tenant_id=tenant_id, query=query
+            )
+            return session.exec(missing_count_query).one()[0]
+        except OperationalError as e:
+            logger.exception(
+                f"Failed to query missing alerts count for query object '{json.dumps(query.dict(exclude_unset=True), default=str)}': {e}"
+            )
+            raise
+
+
 def query_last_alerts(tenant_id, query: QueryDto) -> list[Alert]:
     query_with_defaults = query.copy()
 

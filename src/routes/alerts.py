@@ -15,6 +15,7 @@ from src.repositories.alerts import (
     get_alert_potential_facet_fields,
     query_distinct_alerts_count,
     query_last_alerts,
+    query_missing_alerts_count,
     query_total_alerts_count
 )
 from src.repositories.cel_to_sql.sql_providers.base import CelToSqlException
@@ -233,6 +234,7 @@ def query_alerts_count(
             "incident_status": (
                 query.incident_status.value if query.incident_status else None
             ),
+            "include_missing": query.include_missing,
         },
     )
 
@@ -251,7 +253,12 @@ def query_alerts_count(
         )
         if query.group_by is None:
             return total_count
-        return {"count": total_count, "group_by": query.group_by.value}
+        response = {"count": total_count, "group_by": query.group_by.value}
+        if query.include_missing:
+            response["missing"] = query_missing_alerts_count(
+                tenant_id=tenant_id, query=query
+            )
+        return response
 
     except CelToSqlException as e:
         logger.exception(f'Error parsing CEL expression "{query.cel}". {str(e)}')
