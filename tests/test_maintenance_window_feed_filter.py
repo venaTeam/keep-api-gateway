@@ -365,3 +365,113 @@ def test_edit_keeps_a_frozen_alert_it_still_matches(db_session):
 
     assert _edit(db_session, window, cel_query='name == "renamed"') == 0
     assert _frozen_window_id(db_session, "frozen") == window.id
+
+
+# --------------------------------------------------------------------------- #
+# Several windows per alert (lastalertmaintenancewindow tags)
+# --------------------------------------------------------------------------- #
+
+
+def _tag(db_session, fingerprint, window_id, kind="hide"):
+    from src.models.db.alert import LastAlertMaintenanceWindow
+
+    db_session.add(
+        LastAlertMaintenanceWindow(
+            tenant_id=SINGLE_TENANT_UUID,
+            fingerprint=fingerprint,
+            kind=kind,
+            maintenance_window_id=window_id,
+        )
+    )
+    db_session.commit()
+
+
+def _tags(db_session, fingerprint):
+    from sqlmodel import select as sm_select
+
+    from src.models.db.alert import LastAlertMaintenanceWindow
+
+    db_session.expire_all()
+    rows = db_session.exec(
+        sm_select(LastAlertMaintenanceWindow).where(
+            LastAlertMaintenanceWindow.fingerprint == fingerprint
+        )
+    ).all()
+    return sorted((row.kind, row.maintenance_window_id) for row in rows)
+
+
+def _marker(db_session, fingerprint, column="maintenance_window_id"):
+    db_session.expire_all()
+    return getattr(db_session.get(LastAlert, (SINGLE_TENANT_UUID, fingerprint)), column)
+
+
+def test_alert_stays_hidden_while_any_tagged_window_is_active(db_session):
+    """SegevSi's review: the marker's window ended, another matching window
+    is still running."""
+    ended = _window(db_session, end_time=_now() - timedelta(minutes=1))
+    running = _window(db_session, end_time=_now() + timedelta(hours=1))
+    _alert(db_session, "two-windows", ended.id)
+    _tag(db_session, "two-windows", ended.id)
+    _tag(db_session, "two-windows", running.id)
+
+    assert _feed() == []
+
+
+def test_alert_shows_once_every_tagged_window_stopped(db_session):
+    ended = _window(db_session, end_time=_now() - timedelta(minutes=1))
+    disabled = _window(db_session, enabled=False)
+    _alert(db_session, "all-stopped", ended.id)
+    _tag(db_session, "all-stopped", ended.id)
+    _tag(db_session, "all-stopped", disabled.id)
+
+    assert _feed() == ["all-stopped"]
+
+
+def test_freeze_tags_do_not_hide(db_session):
+    window = _window(db_session)
+    _alert(db_session, "frozen-tag")
+    _tag(db_session, "frozen-tag", window.id, kind="freeze")
+
+    assert _feed() == ["frozen-tag"]
+
+
+def test_edit_moves_the_marker_to_the_other_window_that_still_hides(db_session):
+    edited = _window(db_session, end_time=_now() + timedelta(hours=2))
+    other = _window(db_session, end_time=_now() + timedelta(hours=1))
+    _alert(db_session, "still-hidden", edited.id)
+    _tag(db_session, "still-hidden", edited.id)
+    _tag(db_session, "still-hidden", other.id)
+
+    assert _edit(db_session, edited, cel_query='source == "something-else"') == 1
+    assert _marker(db_session, "still-hidden") == other.id
+    assert _tags(db_session, "still-hidden") == [("hide", other.id)]
+    assert _feed() == []
+
+    assert _edit(db_session, other, cel_query='source == "something-else"') == 1
+    assert _marker(db_session, "still-hidden") is None
+    assert _tags(db_session, "still-hidden") == []
+    assert _feed() == ["still-hidden"]
+
+
+def test_edit_keeps_a_frozen_alert_frozen_by_the_other_window(db_session):
+    edited = _window(db_session, end_time=_now() + timedelta(hours=2))
+    other = _window(db_session, end_time=_now() + timedelta(hours=1))
+    _frozen_alert(db_session, "frozen-two", edited.id, held_name="renamed")
+    _tag(db_session, "frozen-two", edited.id, kind="freeze")
+    _tag(db_session, "frozen-two", other.id, kind="freeze")
+
+    assert _edit(db_session, edited, cel_query='name == "frozen-two"') == 1
+    assert _marker(db_session, "frozen-two", "maintenance_frozen_window_id") == other.id
+    assert _tags(db_session, "frozen-two") == [("freeze", other.id)]
+
+
+def test_edit_reaches_a_row_that_lists_the_window_only_as_a_tag(db_session):
+    edited = _window(db_session, end_time=_now() + timedelta(hours=1))
+    marker = _window(db_session, end_time=_now() + timedelta(hours=2))
+    _alert(db_session, "tag-only", marker.id)
+    _tag(db_session, "tag-only", marker.id)
+    _tag(db_session, "tag-only", edited.id)
+
+    assert _edit(db_session, edited, cel_query='source == "something-else"') == 1
+    assert _marker(db_session, "tag-only") == marker.id
+    assert _tags(db_session, "tag-only") == [("hide", marker.id)]

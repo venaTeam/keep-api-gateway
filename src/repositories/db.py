@@ -1067,27 +1067,45 @@ def query_alerts(
 
 
 
-def hidden_by_maintenance_window_filter():
-    """Condition that is false while a row's "Hide From Feed" window is active.
-
-    The event-handler stores alerts matched by a hide-mode window and records
-    the window's id on lastalert. The row is hidden only while that window still
-    exists, is enabled, is in hide mode and is running (started, not ended), so
-    it shows again when the window ends, is deleted, disabled, rescheduled, cut
-    short or switched to suppress mode, with nothing rewriting the row. Window
-    times are naive UTC. "Running" must match the windows the event-handler
-    matches against (MaintenanceWindowsBl.__init__ in keep-event-handler).
-    """
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
-    window_active = exists().where(
-        MaintenanceWindowRule.id == LastAlert.maintenance_window_id,
-        MaintenanceWindowRule.tenant_id == LastAlert.tenant_id,
+def hide_window_active(window_id, tenant_id, now: datetime):
+    """True while that "Hide From Feed" window exists, is enabled, is in hide
+    mode and is running (started, not ended). Window times are naive UTC.
+    "Running" must match the windows the event-handler matches against
+    (MaintenanceWindowsBl.__init__ in keep-event-handler)."""
+    return exists().where(
+        MaintenanceWindowRule.id == window_id,
+        MaintenanceWindowRule.tenant_id == tenant_id,
         MaintenanceWindowRule.enabled.is_(True),
         MaintenanceWindowRule.suppress.is_(False),
         MaintenanceWindowRule.start_time <= now,
         MaintenanceWindowRule.end_time > now,
     )
-    return or_(LastAlert.maintenance_window_id.is_(None), ~window_active)
+
+
+def hidden_by_maintenance_window_filter():
+    """Condition that is false while any of a row's "Hide From Feed" windows
+    is active.
+
+    The event-handler stores alerts matched by hide-mode windows and records
+    every matching window: lastalert.maintenance_window_id (the marker) plus
+    one 'hide' row per window in lastalertmaintenancewindow. The row is hidden
+    while any of them is running, so it shows again once all of them have
+    ended, been deleted, disabled, rescheduled, cut short or switched to
+    suppress mode, with nothing rewriting the row. Rows without a marker never
+    read the tag table. The marker counts as a tag too, so rows written by an
+    event-handler that only sets the marker stay correct.
+    """
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    tag = LastAlertMaintenanceWindow
+    any_window_active = hide_window_active(
+        LastAlert.maintenance_window_id, LastAlert.tenant_id, now
+    ) | exists().where(
+        tag.tenant_id == LastAlert.tenant_id,
+        tag.fingerprint == LastAlert.fingerprint,
+        tag.kind == "hide",
+        hide_window_active(tag.maintenance_window_id, tag.tenant_id, now),
+    )
+    return or_(LastAlert.maintenance_window_id.is_(None), ~any_window_active)
 
 
 def get_last_alerts(
