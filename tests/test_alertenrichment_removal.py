@@ -79,6 +79,18 @@ def _audit_count(db_session, fingerprint):
     )
 
 
+@pytest.mark.parametrize("matched, grace", [(False, None), (True, 120)])
+def test_automation_coverage_native_readback(db_session, matched, grace):
+    alert = _make_alert(db_session, "coverage")
+    row = _make_last_alert(db_session, alert, automation_matched=matched, grace_seconds=grace)
+    values = last_alert_enrichments_dict(row)
+    assert values["automation_matched"] is matched
+    assert values.get("grace_seconds") == grace
+    dto = convert_db_alerts_to_dto_alerts([alert], session=db_session)[0]
+    assert dto.dict()["automation_matched"] is matched
+    assert dto.dict().get("grace_seconds") == grace
+
+
 # --------------------------------------------------------------------------- #
 # normalize_enrichments: translation + unknown-key handling
 # --------------------------------------------------------------------------- #
@@ -498,6 +510,7 @@ def test_enrichment_columns_match_model():
     assert LASTALERT_ENRICHMENT_COLUMNS == {
         "status", "status_disposable", "dismiss_mode", "dismissed_until", "assignee",
         "note", "deleted", "ticket_type", "ticket_url", "ticket_provider_id",
+        "automation_matched", "grace_seconds",
     }
 
 
