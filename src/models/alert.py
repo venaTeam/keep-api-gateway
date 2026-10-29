@@ -78,6 +78,7 @@ class AlertErrorDto(BaseModel):
 
 class AlertDto(BaseModel):
     id: str | None
+    event_id: str | None = None
     name: str
     status: AlertStatus
     severity: AlertSeverity
