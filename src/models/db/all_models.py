@@ -71,6 +71,7 @@ MODELS = (
     Incident,  # noqa: F405
     IncidentEnrichment,  # noqa: F405
     LastAlert,  # noqa: F405
+    LastAlertMaintenanceWindow,  # noqa: F405
     LastAlertToIncident,  # noqa: F405
     MaintenanceWindowRule,  # noqa: F405
     MappingRule,  # noqa: F405
