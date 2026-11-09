@@ -20,11 +20,11 @@ QUERYABLE_SAMPLE = {
     "source",
     "providerId",
     "providerType",
+    "component",
+    "incident",
 }
 NOT_QUERYABLE = {
-    "component",
     "dismiss_until",
-    "incident",
     "ticket_provider_id",
     "ticket_type",
     "ticket_url",

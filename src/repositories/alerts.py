@@ -2,6 +2,7 @@ import datetime
 import json
 import logging
 import os
+import re
 from typing import Tuple
 
 from sqlalchemy import and_, bindparam, func, select
@@ -107,6 +108,21 @@ alert_field_configurations = [
             "incident.user_generated_name",
             "incident.ai_generated_name",
         ],
+        data_type=DataType.STRING,
+    ),
+    # The alerts table's "incident" column shows the incident name.
+    FieldMappingConfiguration(
+        map_from_pattern="incident",
+        map_to=[
+            "incident.user_generated_name",
+            "incident.ai_generated_name",
+        ],
+        data_type=DataType.STRING,
+    ),
+    # AlertDto's alias for the object column.
+    FieldMappingConfiguration(
+        map_from_pattern="component",
+        map_to=["alert.object"],
         data_type=DataType.STRING,
     ),
     FieldMappingConfiguration(
@@ -233,6 +249,12 @@ _STRICT_SCHEMA_FIELD_CONFIGS = [
         map_to=["lastalert.last_received"],
         data_type=DataType.DATETIME,
     ),
+    # The camelCase name the UI shows.
+    FieldMappingConfiguration(
+        map_from_pattern="lastReceived",
+        map_to=["lastalert.last_received"],
+        data_type=DataType.DATETIME,
+    ),
     FieldMappingConfiguration(
         map_from_pattern="firing_counter",
         map_to=["lastalert.firing_counter"],
@@ -328,6 +350,14 @@ static_facets = [
 static_facets_dict = {facet.id: facet for facet in static_facets}
 
 
+_INCIDENT_FIELD = re.compile(r"\bincident\b")
+
+
+def _is_incident_field(field_name: str) -> bool:
+    field_name = field_name.removeprefix("alert.")
+    return field_name == "incident" or field_name.startswith("incident.")
+
+
 def get_threeshold_query(tenant_id: str):
     return func.coalesce(
         select(LastAlert.timestamp)
@@ -400,7 +430,7 @@ def __build_query_for_filtering(
     force_fetch=False,
     incident_statuses: list[str] | None = None,
 ):
-    fetch_incidents = fetch_incidents or (cel and "incident." in cel)
+    fetch_incidents = fetch_incidents or bool(cel and _INCIDENT_FIELD.search(cel))
     cel_to_sql_instance = get_cel_to_sql_provider(properties_metadata)
     sql_filter = None
     involved_fields = []
@@ -413,7 +443,7 @@ def __build_query_for_filtering(
             (
                 True
                 for field in involved_fields
-                if field.field_name.startswith("incident.")
+                if _is_incident_field(field.field_name)
             ),
             False,
         )
@@ -477,7 +507,7 @@ def __build_query_for_filtering(
 
 
 def build_total_alerts_query(tenant_id, query: QueryDto):
-    fetch_incidents = query.cel and "incident." in query.cel
+    fetch_incidents = bool(query.cel and _INCIDENT_FIELD.search(query.cel))
     fetch_alerts_data = query.cel is not None or query.cel != ""
 
     count_funct = (
@@ -716,8 +746,8 @@ def get_alert_facets_data(
         involved_fields: PropertyMetadataInfo,
         select_statement,
     ):
-        fetch_incidents = "incident." in facet_property_path or next(
-            (True for item in involved_fields if "incident." in item.field_name),
+        fetch_incidents = _is_incident_field(facet_property_path) or next(
+            (True for item in involved_fields if _is_incident_field(item.field_name)),
             False,
         )
         return __build_query_for_filtering(
