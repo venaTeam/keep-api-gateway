@@ -89,10 +89,11 @@ class KeycloakIdentityManager(BaseIdentityManager):
 
         except Exception as e:
             self.logger.error(
-                "Failed to initialize Keycloak Identity Manager: %s", str(e)
+                "Failed to initialize Keycloak Identity Manager",
+                extra={"error": str(e)},
             )
             raise
-        self.logger.info("Keycloak Identity Manager initialized")
+        self.logger.debug("Keycloak Identity Manager initialized")
 
     def get_policies(self) -> list[dict]:
         try:
@@ -101,7 +102,9 @@ class KeycloakIdentityManager(BaseIdentityManager):
             ).json()
             return policies
         except KeycloakGetError as e:
-            self.logger.error("Failed to fetch policies from Keycloak: %s", str(e))
+            self.logger.error(
+                "Failed to fetch policies from Keycloak", extra={"error": str(e)}
+            )
             raise HTTPException(status_code=500, detail="Failed to fetch policies")
 
 
@@ -112,18 +115,18 @@ class KeycloakIdentityManager(BaseIdentityManager):
             return
         # first, create all the scopes
         for scope in get_all_scopes():
-            self.logger.info("Creating scope: %s", scope)
             self.create_scope(scope)
-            self.logger.info("Scope created: %s", scope)
+            self.logger.debug("Scope created", extra={"scope": scope})
         # create resource for each route
         for route in app.routes:
-            self.logger.info("Creating resource for route %s", route.path)
             # fetch the scopes for this route from the auth dependency
             if isinstance(route, Route) and not isinstance(route, APIRoute):
-                self.logger.info("Skipping route: %s", route.path)
+                self.logger.debug("Skipping route", extra={"path": route.path})
                 continue
             if not route.dependant.dependencies:
-                self.logger.warning("Skipping unprotected route: %s", route.path)
+                self.logger.warning(
+                    "Skipping unprotected route", extra={"path": route.path}
+                )
                 continue
 
             scopes = []
@@ -137,6 +140,7 @@ class KeycloakIdentityManager(BaseIdentityManager):
                 if len(methods) > 1:
                     self.logger.warning(
                         "Keep does not support multiple methods for a single route",
+                        extra={"path": route.path},
                     )
                     continue
                 protected_resource = methods[0] + " " + route.path
@@ -145,12 +149,12 @@ class KeycloakIdentityManager(BaseIdentityManager):
 
             # protected route but without scopes
             if not scopes:
-                self.logger.warning("Route without scopes: %s", route.path)
+                self.logger.warning("Route without scopes", extra={"path": route.path})
 
             self.create_resource(
                 protected_resource, scopes=scopes, resource_type="keep_route"
             )
-            self.logger.info("Resource created for route: %s", route.path)
+            self.logger.debug("Resource created for route", extra={"path": route.path})
 
             # another thing we need to do is to add a /auth/user/orgs endpoint that will
             # return the orgs of the user for TenantSwitcher in the UI
@@ -180,7 +184,6 @@ class KeycloakIdentityManager(BaseIdentityManager):
         # create resource for each object
         if self.abac_enabled:
             for resource_type, resource_type_data in self.RESOURCES.items():
-                self.logger.info("Creating resource for object %s", resource_type)
                 resources = get_resource_ids_by_resource_type(
                     tenant_id=self.tenant_id,
                     table_name=resource_type_data["table"],
@@ -194,11 +197,13 @@ class KeycloakIdentityManager(BaseIdentityManager):
                         scopes=[],
                         resource_type=resource_type_name,
                     )
-                self.logger.info("Resource created for object: %s", resource_type)
+                self.logger.info(
+                    "Resource created for object",
+                    extra={"resource_type": resource_type, "count": len(resources)},
+                )
         for role in PREDEFINED_ROLES:
-            self.logger.info("Creating role: %s", role)
             self.create_role(role, predefined=True)
-            self.logger.info("Role created: %s", role)
+            self.logger.debug("Role created", extra={"role": str(role)})
 
     def _scope_name_to_id(self, all_scopes, scope_name: str) -> str:
         # if its ":*":
@@ -217,9 +222,8 @@ class KeycloakIdentityManager(BaseIdentityManager):
             )
             if not scope:
                 self.logger.error(
-                    "Scope %s not found in Keycloak",
-                    scope_name,
-                    extra={"scopes": all_scopes},
+                    "Scope not found in Keycloak",
+                    extra={"scope_name": scope_name, "scopes": all_scopes},
                 )
                 return []
             return [scope["id"]]
@@ -286,7 +290,8 @@ class KeycloakIdentityManager(BaseIdentityManager):
                     pass
             else:
                 self.logger.error(
-                    "Failed to create scope based permission in Keycloak: %s", str(e)
+                    "Failed to create scope based permission in Keycloak",
+                    extra={"error": str(e)},
                 )
                 raise HTTPException(
                     status_code=500, detail="Failed to create scope based permission"
@@ -302,7 +307,9 @@ class KeycloakIdentityManager(BaseIdentityManager):
                 },
             )
         except KeycloakPostError as e:
-            self.logger.error("Failed to create scopes in Keycloak: %s", str(e))
+            self.logger.error(
+                "Failed to create scopes in Keycloak", extra={"error": str(e)}
+            )
             raise HTTPException(status_code=500, detail="Failed to create scopes")
 
     def create_role(self, role: Role, predefined=False) -> str:
@@ -331,7 +338,9 @@ class KeycloakIdentityManager(BaseIdentityManager):
                 # its ok!
                 pass
             else:
-                self.logger.error("Failed to create roles in Keycloak: %s", str(e))
+                self.logger.error(
+                    "Failed to create roles in Keycloak", extra={"error": str(e)}
+                )
                 raise HTTPException(status_code=500, detail="Failed to create roles")
 
     def update_role(self, role_id: str, role: Role) -> str:
@@ -397,10 +406,14 @@ class KeycloakIdentityManager(BaseIdentityManager):
                 )
                 return policy["id"]
             else:
-                self.logger.error("Failed to create policies in Keycloak: %s", str(e))
+                self.logger.error(
+                    "Failed to create policies in Keycloak", extra={"error": str(e)}
+                )
                 raise HTTPException(status_code=500, detail="Failed to create policies")
         except Exception as e:
-            self.logger.error("Failed to create policies in Keycloak: %s", str(e))
+            self.logger.error(
+                "Failed to create policies in Keycloak", extra={"error": str(e)}
+            )
             raise HTTPException(status_code=500, detail="Failed to create policies")
 
     @property
@@ -469,7 +482,9 @@ class KeycloakIdentityManager(BaseIdentityManager):
                 users_dto.append(user_dto)
             return users_dto
         except KeycloakGetError as e:
-            self.logger.error("Failed to fetch users from Keycloak: %s", str(e))
+            self.logger.error(
+                "Failed to fetch users from Keycloak", extra={"error": str(e)}
+            )
             raise HTTPException(status_code=500, detail="Failed to fetch users")
 
     def create_user(
@@ -513,13 +528,16 @@ class KeycloakIdentityManager(BaseIdentityManager):
         except KeycloakPostError as e:
             if "User exists" in str(e):
                 self.logger.error(
-                    "Failed to create user - user %s already exists", user_email
+                    "Failed to create user - user already exists",
+                    extra={"user_email": user_email},
                 )
                 raise HTTPException(
                     status_code=409,
                     detail=f"Failed to create user - user {user_email} already exists",
                 )
-            self.logger.error("Failed to create user in Keycloak: %s", str(e))
+            self.logger.error(
+                "Failed to create user in Keycloak", extra={"error": str(e)}
+            )
             raise HTTPException(status_code=500, detail="Failed to create user")
 
     def get_user_id_by_email(self, user_email: str) -> str:
@@ -605,20 +623,26 @@ class KeycloakIdentityManager(BaseIdentityManager):
                 ]
                 # remove
                 for group in groups_to_remove:
-                    self.logger.info("Leaving group")
                     resp = self.keycloak_admin.connection.raw_delete(
                         f"{self.admin_url_without_client}/users/{user_id}/groups/{group}"
                     )
                     resp.raise_for_status()
-                    self.logger.info("Left group")
+                    self.logger.info(
+                        "Left group",
+                        extra={"user_email": user_email, "group_id": group},
+                    )
                 # add
                 for group in groups_to_add:
-                    self.logger.info("Joining group")
                     self.add_user_to_group(user_id=user_id, group=group)
-                    self.logger.info("Joined group")
+                    self.logger.info(
+                        "Joined group",
+                        extra={"user_email": user_email, "group_id": group},
+                    )
             return {"status": "success", "message": "User updated successfully"}
         except KeycloakPostError as e:
-            self.logger.error("Failed to update user in Keycloak: %s", str(e))
+            self.logger.error(
+                "Failed to update user in Keycloak", extra={"error": str(e)}
+            )
             raise HTTPException(status_code=500, detail="Failed to update user")
 
     def delete_user(self, user_email: str) -> dict:
@@ -628,7 +652,9 @@ class KeycloakIdentityManager(BaseIdentityManager):
             # delete the policy for the user (if not implicitly deleted?)
             return {"status": "success", "message": "User deleted successfully"}
         except KeycloakDeleteError as e:
-            self.logger.error("Failed to delete user from Keycloak: %s", str(e))
+            self.logger.error(
+                "Failed to delete user from Keycloak", extra={"error": str(e)}
+            )
             raise HTTPException(status_code=500, detail="Failed to delete user")
 
     def get_auth_verifier(self, scopes: list) -> AuthVerifierBase:
@@ -655,7 +681,9 @@ class KeycloakIdentityManager(BaseIdentityManager):
                 self.logger.info("Resource already exists in Keycloak")
                 pass
             else:
-                self.logger.error("Failed to create resource in Keycloak: %s", str(e))
+                self.logger.error(
+                    "Failed to create resource in Keycloak", extra={"error": str(e)}
+                )
                 raise HTTPException(status_code=500, detail="Failed to create resource")
 
     def delete_resource(self, resource_id: str) -> None:
@@ -669,7 +697,9 @@ class KeycloakIdentityManager(BaseIdentityManager):
                         os.environ["KEYCLOAK_CLIENT_ID"], resource["id"]
                     )
         except KeycloakDeleteError as e:
-            self.logger.error("Failed to delete resource from Keycloak: %s", str(e))
+            self.logger.error(
+                "Failed to delete resource from Keycloak", extra={"error": str(e)}
+            )
             raise HTTPException(status_code=500, detail="Failed to delete resource")
 
     def get_groups(self, search: str | None = None) -> list[dict]:
@@ -719,7 +749,9 @@ class KeycloakIdentityManager(BaseIdentityManager):
                 )
             return result
         except KeycloakGetError as e:
-            self.logger.error("Failed to fetch groups from Keycloak: %s", str(e))
+            self.logger.error(
+                "Failed to fetch groups from Keycloak", extra={"error": str(e)}
+            )
             raise HTTPException(status_code=500, detail="Failed to fetch groups")
 
     def create_user_policy(self, perm, permission: ResourcePermission) -> None:
@@ -765,7 +797,10 @@ class KeycloakIdentityManager(BaseIdentityManager):
         group_name = perm.id
         group = self.keycloak_admin.get_groups(query={"search": perm.id})
         if not group or len(group) > 1:
-            self.logger.error("Problem with group - should be 1 but got %s", len(group))
+            self.logger.error(
+                "Problem with group",
+                extra={"group_name": group_name, "group_count": len(group or [])},
+            )
             raise HTTPException(status_code=400, detail="Problem with group")
         group = group[0]
         group_id = group["id"]
@@ -844,14 +879,16 @@ class KeycloakIdentityManager(BaseIdentityManager):
                             pass
                         else:
                             self.logger.error(
-                                "Failed to create policy in Keycloak: %s", str(e)
+                                "Failed to create policy in Keycloak",
+                                extra={"error": str(e)},
                             )
                             raise HTTPException(
                                 status_code=500, detail="Failed to create policy"
                             )
                     except Exception as e:
                         self.logger.error(
-                            "Failed to create policy in Keycloak: %s", str(e)
+                            "Failed to create policy in Keycloak",
+                            extra={"error": str(e)},
                         )
                         raise HTTPException(
                             status_code=500, detail="Failed to create policy"
@@ -900,7 +937,9 @@ class KeycloakIdentityManager(BaseIdentityManager):
                     )
 
         except KeycloakPostError as e:
-            self.logger.error("Failed to create permissions in Keycloak: %s", str(e))
+            self.logger.error(
+                "Failed to create permissions in Keycloak", extra={"error": str(e)}
+            )
             raise HTTPException(status_code=500, detail="Failed to create permissions")
 
     def get_permissions(self) -> list[ResourcePermission]:

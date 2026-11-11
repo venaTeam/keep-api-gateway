@@ -1,4 +1,4 @@
-import http.client
+import contextvars
 import inspect
 import logging
 import logging.config
@@ -116,7 +116,7 @@ class ProviderDBHandler(logging.Handler):
         except Exception as e:
             # Use the parent logger to avoid infinite recursion
             logging.getLogger(__name__).error(
-                f"Failed to flush provider logs: {str(e)}"
+                "Failed to flush provider logs", extra={"error": str(e)}
             )
         finally:
             if session is not None:
@@ -273,6 +273,44 @@ class CustomJsonFormatter(jsonlogger.JsonFormatter):
             log_record["worker_type"] = getattr(record, "worker_type", WORKER_TYPE)
 
 
+# Per-request log context. Holds a dict so values set in a copied context
+# (e.g. a sync dependency in the threadpool) are seen by the whole request.
+_log_context: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
+    "keep_log_context", default=None
+)
+
+
+def start_log_context(**fields) -> contextvars.Token:
+    """Starts a request's log context. Reset it with `reset_log_context`."""
+    return _log_context.set(dict(fields))
+
+
+def reset_log_context(token: contextvars.Token) -> None:
+    _log_context.reset(token)
+
+
+def update_log_context(**fields) -> None:
+    """Updates the current request's log context; no-op outside a request."""
+    context = _log_context.get()
+    if context is not None:
+        context.update(fields)
+
+
+class LogContextFilter(logging.Filter):
+    """Adds tenant_id / trace_id from the request context to every record.
+
+    Values passed explicitly in `extra` are never overwritten.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        context = _log_context.get()
+        if context:
+            for key, value in context.items():
+                if value is not None and key not in record.__dict__:
+                    record.__dict__[key] = value
+        return True
+
+
 CONFIG = {
     "version": 1,
     "disable_existing_loggers": False,
@@ -292,9 +330,6 @@ CONFIG = {
             "()": DevTerminalFormatter,
             "format": "%(asctime)s - %(thread)s %(otelTraceID)s %(threadName)s %(levelname)s - %(message)s",
         },
-        "uvicorn_access": {  # Add new formatter for uvicorn.access
-            "format": "%(asctime)s - %(otelTraceID)s - %(threadName)s - %(message)s"
-        },
     },
     "handlers": {
         "default": {
@@ -304,13 +339,10 @@ CONFIG = {
             ),
             "class": "logging.StreamHandler",
             "stream": "ext://sys.stdout",
-        },
-        "uvicorn_access": {  # Add new handler for uvicorn.access
-            "class": "logging.StreamHandler",
-            "formatter": "uvicorn_access",
+            "filters": ["log_context"],
         },
     },
-    "filters": {},
+    "filters": {"log_context": {"()": LogContextFilter}},
     "loggers": {
         "": {
             "handlers": ["default"],
@@ -322,9 +354,10 @@ CONFIG = {
             "level": LOG_LEVEL,
             "propagate": False,
         },
-        "uvicorn.access": {  # Add uvicorn.access logger configuration
-            "handlers": ["uvicorn_access"],
-            "level": get_gunicorn_log_level(),
+        # duplicates the "Request finished" log from LoggingMiddleware
+        "uvicorn.access": {
+            "handlers": [],
+            "level": "WARNING",
             "propagate": False,
         },
         "uvicorn.error": {  # Add uvicorn.error logger configuration
@@ -361,11 +394,6 @@ CONFIG = {
         "httpx": {
             "handlers": [],
             "level": "ERROR",
-            "propagate": False,
-        },
-        "http.client": {
-            "handlers": ["default"],
-            "level": "DEBUG",
             "propagate": False,
         },
     },
@@ -465,29 +493,18 @@ def setup_logging():
         # Add file handler to root logger
         CONFIG["loggers"][""]["handlers"].append("file")
 
-    # Add fluentbit handler if KEEP_FLUENTBIT is set
-    if KEEP_FLUENTBIT:
+    # Add fluentbit handler if KEEP_FLUENTBIT and KEEP_FLUENTBIT_HOST are set
+    if KEEP_FLUENTBIT and KEEP_FLUENTBIT_HOST:
         CONFIG["handlers"]["fluentbit"] = {
-            "level": "DEBUG",
+            "level": LOG_LEVEL,
             "formatter": ("json"),
             "class": "src.utils.logging.FluentBitHandler",
             "host": KEEP_FLUENTBIT_HOST,
             "port": int(KEEP_FLUENTBIT_PORT),
+            "filters": ["log_context"],
         }
         # Add file handler to root logger
         CONFIG["loggers"][""]["handlers"].append("fluentbit")
 
     logging.config.dictConfig(CONFIG)
-    # MONKEY PATCHING http.client
-    # See: https://stackoverflow.com/questions/58738195/python-http-request-and-debug-level-logging-to-the-log-file
-    http_client_logger = logging.getLogger("http.client")
-    http_client_logger.setLevel(logging.DEBUG)
-    http.client.HTTPConnection.debuglevel = 1
-
-    def print_to_log(*args):
-        http_client_logger.debug(" ".join(args))
-
-    # monkey-patch a `print` global into the http.client module; all calls to
-    # print() in that module will then use our print_to_log implementation
-    http.client.print = print_to_log
 

@@ -111,12 +111,12 @@ def init_services(auth_type: str, provision_dashboards_func=None, skip_ngrok=Fal
                 domain=os.environ.get("NGROK_DOMAIN", None),
             )
             public_url = ngrok_connection.public_url
-            logger.info(f"ngrok tunnel: {public_url}")
+            logger.info("ngrok tunnel", extra={"public_url": public_url})
             os.environ["KEEP_API_URL"] = public_url
         except ImportError:
             logger.warning("pyngrok not installed, skipping ngrok initialization")
         except Exception as e:
-            logger.warning(f"Failed to initialize ngrok: {e}")
+            logger.warning("Failed to initialize ngrok", extra={"error": str(e)})
 
     logger.info("Keep server started")
 

@@ -266,7 +266,7 @@ class KeycloakAuthVerifier(AuthVerifierBase):
                 active_tenant = None
             payload = self.keycloak_client.decode_token(token, validate=True)
         except Exception as e:
-            logger.error("Token decoding error: %s", str(e))
+            logger.error("Token decoding error", extra={"error": str(e)})
             if "Expired" in str(e):
                 raise HTTPException(status_code=401, detail="Expired Keycloak token")
             raise HTTPException(status_code=401, detail=f"Invalid Keycloak token: {str(e)}")
@@ -283,7 +283,7 @@ class KeycloakAuthVerifier(AuthVerifierBase):
         # todo: support dynamic roles
         user_orgs = {}
         if self.roles_from_groups:
-            self.logger.info("Using roles from groups")
+            self.logger.debug("Using roles from groups")
             # get roles from groups
             # e.g.
             # "group-keeps": [
@@ -302,14 +302,16 @@ class KeycloakAuthVerifier(AuthVerifierBase):
                     org_name = self._get_org_name(group_lower)
                     groups_that_represent_orgs.append(group_lower)
                     if org_name not in self.tenants:
-                        self.logger.info("Creating tenant")
                         org_tenant_id = create_tenant(tenant_name=org_name)
                         # so it won't be
                         self.tenants[org_name] = {
                             "tenant_id": org_tenant_id,
                             "tenant_logo_url": None,
                         }
-                        self.logger.info("Tenant created")
+                        self.logger.info(
+                            "Tenant created",
+                            extra={"tenant_id": org_tenant_id, "org_name": org_name},
+                        )
                     # this will be returned to the UI
                     user_orgs[org_name] = self.tenants.get(org_name)
 
@@ -483,11 +485,13 @@ class KeycloakAuthVerifier(AuthVerifierBase):
                 resource=self.protected_resource,
                 scope=self.scopes[0],  # todo: handle multiple scopes per resource
             )
-            self.logger.info(f"Checking permission {permission}")
             allowed = self.keycloak_uma.permissions_check(
                 token=authenticated_entity.token, permissions=[permission]
             )
-            self.logger.info(f"Permission check result: {allowed}")
+            self.logger.debug(
+                "Permission check result",
+                extra={"permission": str(permission), "allowed": allowed},
+            )
             if not allowed:
                 raise HTTPException(status_code=403, detail="Permission check failed")
         # secure fallback
