@@ -9,7 +9,7 @@ import pytest
 from fastapi import Depends, FastAPI, Request
 from fastapi.testclient import TestClient
 
-from src.middlewares import LoggingMiddleware
+from src.middlewares import LoggingMiddleware, catch_exception
 from src.utils.logging import LogContextFilter, update_log_context
 
 TEST_LOGGER = "tests.log_context"
@@ -120,3 +120,64 @@ def test_logging_outside_request_does_not_crash(captured):
     record = next(r for r in captured if r.getMessage() == "outside request")
     assert not hasattr(record, "tenant_id")
     assert not hasattr(record, "trace_id")
+
+
+def test_unhandled_exception_logs_request_line_and_one_traceback():
+    handler = _ListHandler()
+    middleware_logger = logging.getLogger("src.middlewares")
+    middleware_logger.addHandler(handler)
+    middleware_logger.setLevel(logging.INFO)
+
+    app = FastAPI()
+
+    @app.get("/boom")
+    async def boom():
+        raise RuntimeError("boom")
+
+    app.add_exception_handler(Exception, catch_exception)
+    app.add_middleware(LoggingMiddleware)
+
+    @app.middleware("http")
+    async def set_trace_id(request: Request, call_next):
+        request.state.trace_id = "trace-123"
+        return await call_next(request)
+
+    try:
+        response = TestClient(app, raise_server_exceptions=False).get(
+            "/boom", headers={"Authorization": f"Bearer {_token('tenant-a')}"}
+        )
+    finally:
+        middleware_logger.removeHandler(handler)
+
+    assert response.status_code == 500
+    finished = [r for r in handler.records if r.getMessage() == "Request finished"]
+    assert len(finished) == 1
+    assert finished[0].levelno == logging.ERROR
+    assert finished[0].status_code == 500
+    assert finished[0].exc_info is None
+
+    unhandled = [r for r in handler.records if r.getMessage() == "Unhandled exception"]
+    assert len(unhandled) == 1
+    assert unhandled[0].exc_info is not None
+    assert unhandled[0].method == "GET"
+    assert unhandled[0].path == "/boom"
+    assert unhandled[0].tenant_id == "tenant-a"
+    assert unhandled[0].trace_id == "trace-123"
+
+
+def test_redact_headers_hides_secret_headers_any_case():
+    from src.middlewares import _redact_headers
+
+    headers = {
+        "Authorization": "Bearer x",
+        "Proxy-Authorization": "Basic x",
+        "Cookie": "s=1",
+        "X-Api-Key": "k",
+        "X-Keep-Notify-Token": "t",
+        "X-Forwarded-Access-Token": "t",
+        "X-Auth-Request-Access-Token": "t",
+        "Content-Type": "application/json",
+    }
+    redacted = _redact_headers(headers)
+    assert redacted.pop("Content-Type") == "application/json"
+    assert set(redacted.values()) == {"[REDACTED]"}

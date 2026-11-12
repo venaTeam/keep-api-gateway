@@ -125,7 +125,7 @@ class AuthVerifierBase:
             if any([scope.split(":")[0] != "read" for scope in self.scopes]):
                 self.logger.error(
                     "Read only instance, but non-read scopes requested",
-                    extra={"tenant_id": self.tenant_id, "scopes": self.scopes},
+                    extra={"scopes": self.scopes},
                 )
                 raise HTTPException(
                     status_code=403,
@@ -140,6 +140,8 @@ class AuthVerifierBase:
             body=body,
             session=session,
         )
+        # verified tenant replaces the unverified one the middleware set
+        update_log_context(tenant_id=authenticated_entity.tenant_id)
         self.authorize(authenticated_entity)
 
         return authenticated_entity
@@ -175,9 +177,7 @@ class AuthVerifierBase:
             except HTTPException:
                 raise
             except Exception:
-                self.logger.exception(
-                    "Failed to validate token", extra={"tenant_id": self.tenant_id}
-                )
+                self.logger.exception("Failed to validate token")
                 raise HTTPException(
                     status_code=401, detail="Invalid authentication credentials"
                 )
@@ -191,9 +191,7 @@ class AuthVerifierBase:
             except HTTPException:
                 raise
             except Exception:
-                self.logger.exception(
-                    "Failed to validate API Key", extra={"tenant_id": self.tenant_id}
-                )
+                self.logger.exception("Failed to validate API Key")
                 raise HTTPException(
                     status_code=401, detail="Invalid authentication credentials"
                 )
@@ -304,10 +302,7 @@ class AuthVerifierBase:
                 api_key = authorization.password
             elif scheme.lower() == "digest":
                 if not credentials:
-                    self.logger.error(
-                        "Invalid Digest credentials",
-                        extra={"tenant_id": self.tenant_id},
-                    )
+                    self.logger.error("Invalid Digest credentials")
                     raise HTTPException(
                         status_code=403, detail="Invalid Digest credentials"
                     )
@@ -343,7 +338,7 @@ class AuthVerifierBase:
         """
         tenant_api_key = get_api_key(api_key, session=session)
         if not tenant_api_key:
-            self.logger.warning("Invalid API Key", extra={"tenant_id": self.tenant_id})
+            self.logger.warning("Invalid API Key")
             raise HTTPException(status_code=401, detail="Invalid API Key")
         tenant_id = tenant_api_key.tenant_id
         created_by = tenant_api_key.created_by
@@ -447,13 +442,9 @@ class AuthVerifierBase:
         Raises:
             NotImplementedError: This method needs to be implemented in subclasses.
         """
-        self.logger.error(
-            "_verify_bearer_token() method not implemented",
-            extra={"tenant_id": self.tenant_id},
-        )
+        self.logger.error("_verify_bearer_token() method not implemented")
         raise NotImplementedError(
             "_verify_bearer_token() method not implemented for {}".format(
                 self.__class__.__name__
             )
         )
-
