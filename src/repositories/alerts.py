@@ -1,5 +1,4 @@
 import datetime
-import json
 import logging
 import os
 import re
@@ -578,7 +577,8 @@ def query_total_alerts_count(tenant_id, query: QueryDto) -> int:
             # A database failure is a failure. Returning 0 here used to make a
             # dead database look like a successful search that matched nothing.
             logger.exception(
-                f"Failed to query alerts count for query object '{json.dumps(query_with_defaults.dict(exclude_unset=True))}': {e}"
+                "Failed to query alerts count",
+                extra={"tenant_id": tenant_id, "error": str(e)},
             )
             raise
 
@@ -618,7 +618,8 @@ def query_distinct_alerts_count(tenant_id, query: CountQueryDto) -> int:
             return session.exec(distinct_count_query).one()[0]
         except OperationalError as e:
             logger.exception(
-                f"Failed to query distinct alerts count for query object '{json.dumps(query.dict(exclude_unset=True), default=str)}': {e}"
+                "Failed to query distinct alerts count",
+                extra={"tenant_id": tenant_id, "error": str(e)},
             )
             raise
 
@@ -682,7 +683,8 @@ def query_missing_alerts_count(tenant_id, query: CountQueryDto) -> int:
             return session.exec(missing_count_query).one()[0]
         except OperationalError as e:
             logger.exception(
-                f"Failed to query missing alerts count for query object '{json.dumps(query.dict(exclude_unset=True), default=str)}': {e}"
+                "Failed to query missing alerts count",
+                extra={"tenant_id": tenant_id, "error": str(e)},
             )
             raise
 
@@ -714,7 +716,8 @@ def query_last_alerts(tenant_id, query: QueryDto) -> list[Alert]:
             # Propagate: an empty list here is indistinguishable from a search
             # that legitimately matched nothing, and hid real outages.
             logger.exception(
-                f"Failed to query alerts for query object '{json.dumps(query_with_defaults.dict(exclude_unset=True))}': {e}"
+                "Failed to query alerts",
+                extra={"tenant_id": tenant_id, "error": str(e)},
             )
             raise
 

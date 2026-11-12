@@ -85,6 +85,7 @@ class AlertDeduplicator:
                 "Alert is deduplicated",
                 extra={
                     "alert_id": alert.id,
+                    "fingerprint": alert.fingerprint,
                     "rule_id": rule.id,
                     "tenant_id": self.tenant_id,
                 },
@@ -97,20 +98,12 @@ class AlertDeduplicator:
                 "Alert is partially deduplicated",
                 extra={
                     "alert_id": alert.id,
+                    "fingerprint": alert.fingerprint,
+                    "rule_id": rule.id,
                     "tenant_id": self.tenant_id,
                 },
             )
             alert.is_partial_duplicate = True
-        else:
-            self.logger.debug(
-                "Alert is not deduplicated",
-                extra={
-                    "alert_id": alert.id,
-                    "fingerprint": alert.fingerprint,
-                    "tenant_id": self.tenant_id,
-                    "last_alert_hash_by_fingerprint": last_alerts_hash_by_fingerprint,
-                },
-            )
 
         return alert
 
@@ -130,24 +123,8 @@ class AlertDeduplicator:
         )
 
         for rule in rules:
-            self.logger.debug(
-                "Applying deduplication rule to alert",
-                extra={
-                    "rule_id": rule.id,
-                    "alert_id": alert.id,
-                },
-            )
             alert = self._apply_deduplication_rule(
                 alert, rule, last_alert_fingerprint_to_hash
-            )
-            self.logger.debug(
-                "Alert after deduplication rule applied",
-                extra={
-                    "rule_id": rule.id,
-                    "alert_id": alert.id,
-                    "is_full_duplicate": alert.is_full_duplicate,
-                    "is_partial_duplicate": alert.is_partial_duplicate,
-                },
             )
 
             if AlertDeduplicator.DEDUPLICATION_DISTRIBUTION_ENABLED:
@@ -183,7 +160,10 @@ class AlertDeduplicator:
             try:
                 delattr(alert, field)
             except AttributeError:
-                self.logger.warning(f"Failed to delete attribute {field} from alert")
+                self.logger.warning(
+                    "Failed to delete attribute from alert",
+                    extra={"field": field, "fingerprint": alert.fingerprint},
+                )
         else:
             alert_attr = field_parts[0]
             d = copy.deepcopy(getattr(alert, alert_attr))
@@ -208,35 +188,15 @@ class AlertDeduplicator:
         )
 
         if not rule:
-            self.logger.debug(
-                "No custom deduplication rule found, using deafult full deduplication rule",
-                extra={
-                    "provider_id": provider_id,
-                    "provider_type": provider_type,
-                    "tenant_id": tenant_id,
-                },
-            )
             rule = self._get_default_full_deduplication_rule(provider_id, provider_type)
             return [rule]
 
         # else, return the custom rules
-        self.logger.debug(
-            "Using custom deduplication rules",
-            extra={
-                "provider_id": provider_id,
-                "provider_type": provider_type,
-                "tenant_id": tenant_id,
-            },
-        )
-
         # if full deduplication rule found, return the rules
         if rule.full_deduplication:
             return [rule]
 
         # if not, assign them the default full deduplication rule ignore fields
-        self.logger.info(
-            "No full deduplication rule found, assigning default full deduplication rule ignore fields"
-        )
         default_full_dedup_rule = self._get_default_full_deduplication_rule(
             provider_id=provider_id, provider_type=provider_type
         )
@@ -358,12 +318,6 @@ class AlertDeduplicator:
         # if a provider has custom deduplication rule, use it
         # else, use the default deduplication rule of the provider
         if "keep_None" in custom_deduplications_dict:
-            self.logger.info(
-                "Using custom deduplication rule for default deduplication rule",
-                extra={
-                    "tenant_id": self.tenant_id,
-                },
-            )
             final_deduplications = custom_deduplications_dict["keep_None"]
         else:
             final_deduplications = [catch_all_full_deduplication]
@@ -374,7 +328,12 @@ class AlertDeduplicator:
                 # no default deduplication rule found [if provider doesn't have FINGERPRINT_FIELDS]
                 if provider.type not in default_deduplications_dict:
                     self.logger.warning(
-                        f"Provider {provider.type} does not have a default deduplication"
+                        "Provider does not have a default deduplication",
+                        extra={
+                            "provider_type": provider.type,
+                            "provider_id": provider.id,
+                            "tenant_id": self.tenant_id,
+                        },
                     )
                     continue
 
@@ -403,14 +362,6 @@ class AlertDeduplicator:
 
         result = []
         for dedup in final_deduplications:
-            self.logger.debug(
-                "Calculating deduplication stats",
-                extra={
-                    "deduplication_rule_id": dedup.id,
-                    "tenant_id": self.tenant_id,
-                    "deduplication_stats": deduplication_stats,
-                },
-            )
             key = dedup.id
             full_dedup = deduplication_stats.get(key, {"full_dedup_count": 0}).get(
                 "full_dedup_count", 0
@@ -430,7 +381,10 @@ class AlertDeduplicator:
                 dedup.dedup_ratio = 0.0
             # this shouldn't happen, only in backward compatibility or some bug that dedup events are not created
             elif key not in deduplication_stats:
-                self.logger.warning(f"Provider {key} does not have deduplication stats")
+                self.logger.warning(
+                    "Provider does not have deduplication stats",
+                    extra={"provider_key": key, "tenant_id": self.tenant_id},
+                )
                 dedup.dedup_ratio = 0.0
             elif dedup_count == 0:
                 dedup.dedup_ratio = 0.0
@@ -538,9 +492,11 @@ class AlertDeduplicator:
         default_rule_id = self._generate_uuid(rule.provider_id, rule.provider_type)
         # if its a default, we need to override and create a new rule
         if rule_id == default_rule_id:
-            self.logger.info("Default rule update, creating a new rule")
             rule_dto = self.create_deduplication_rule(rule, updated_by)
-            self.logger.info("Default rule updated")
+            self.logger.info(
+                "Default rule updated",
+                extra={"rule_id": rule_dto.id, "tenant_id": self.tenant_id},
+            )
             return rule_dto
 
         rule_before_update = get_deduplication_rule_by_id(self.tenant_id, rule_id)

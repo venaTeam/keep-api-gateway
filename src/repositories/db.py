@@ -204,7 +204,8 @@ def retry_on_db_error(f):
                 raise  # retry will catch this
             else:
                 logger.exception(
-                    f"Error while executing transaction during {f.__name__}",
+                    "Error while executing transaction",
+                    extra={"function": f.__name__},
                 )
             raise  # if it's not a deadlock, let it propagate
 
@@ -1154,7 +1155,9 @@ def get_last_alerts(
             # hides, as the feed does. Explicit fingerprint lookups still return them.
             filter_conditions.append(hidden_by_maintenance_window_filter())
 
-        logger.info(f"filter_conditions: {filter_conditions}")
+        logger.debug(
+            "filter_conditions", extra={"filter_conditions": filter_conditions}
+        )
 
         if filter_conditions:
             stmt = stmt.where(*filter_conditions)
@@ -2093,8 +2096,13 @@ def update_key_last_used(
                 break
             except StaleDataError as ex:
                 if "expected to update" in ex.args[0]:
-                    logger.info(
-                        f"Phantom read detected while updating API key `{reference_id}`, retry #{attempt}"
+                    logger.warning(
+                        "Phantom read detected while updating API key, retrying",
+                        extra={
+                            "tenant_id": tenant_id,
+                            "reference_id": reference_id,
+                            "attempt": attempt,
+                        },
                     )
                     session.rollback()
                     continue
@@ -3428,8 +3436,12 @@ def add_alerts_to_incident(
     max_retries=3,
 ) -> Optional[Incident]:
     logger.info(
-        f"Adding alerts to incident {incident.id} in database, total {len(fingerprints)} alerts",
-        extra={"tags": {"tenant_id": tenant_id, "incident_id": incident.id}},
+        "Adding alerts to incident in database",
+        extra={
+            "tenant_id": tenant_id,
+            "incident_id": str(incident.id),
+            "alerts_count": len(fingerprints),
+        },
     )
 
     with existed_or_new_session(session) as session:
@@ -3497,10 +3509,13 @@ def add_alerts_to_incident(
             for idx, entry in enumerate(alert_to_incident_entries):
                 session.add(entry)
                 if (idx + 1) % 100 == 0:
-                    logger.info(
-                        f"Added {idx + 1}/{len(alert_to_incident_entries)} alerts to incident {incident.id} in database",
+                    logger.debug(
+                        "Added alerts to incident in database",
                         extra={
-                            "tags": {"tenant_id": tenant_id, "incident_id": incident.id}
+                            "tenant_id": tenant_id,
+                            "incident_id": str(incident.id),
+                            "added_count": idx + 1,
+                            "total_count": len(alert_to_incident_entries),
                         },
                     )
                     session.flush()
@@ -3593,8 +3608,13 @@ def add_alerts_to_incident(
                     break
                 except StaleDataError as ex:
                     if "expected to update" in ex.args[0]:
-                        logger.info(
-                            f"Phantom read detected while updating incident `{incident_id}`, retry #{attempt}"
+                        logger.warning(
+                            "Phantom read detected while updating incident, retrying",
+                            extra={
+                                "tenant_id": tenant_id,
+                                "incident_id": str(incident_id),
+                                "attempt": attempt,
+                            },
                         )
                         session.rollback()
                         continue
@@ -3901,7 +3921,12 @@ def merge_incidents_to_id(
                 )
             except OperationalError as e:
                 logger.error(
-                    f"Error removing alerts from incident {source_incident.id}: {e}"
+                    "Error removing alerts from incident",
+                    extra={
+                        "tenant_id": tenant_id,
+                        "incident_id": str(source_incident.id),
+                        "error": str(e),
+                    },
                 )
             try:
                 add_alerts_to_incident(
@@ -3913,7 +3938,13 @@ def merge_incidents_to_id(
                 merged_incident_ids.append(source_incident.id)
             except OperationalError as e:
                 logger.error(
-                    f"Error adding alerts to incident {destination_incident.id} from {source_incident.id}: {e}"
+                    "Error adding alerts to incident",
+                    extra={
+                        "tenant_id": tenant_id,
+                        "incident_id": str(destination_incident.id),
+                        "source_incident_id": str(source_incident.id),
+                        "error": str(e),
+                    },
                 )
                 failed_incident_ids.append(source_incident.id)
 
@@ -4008,8 +4039,8 @@ def update_incident_severity(
 
         if not incident:
             logger.error(
-                f"Incident not found for tenant {tenant_id} and incident {incident_id}",
-                extra={"tenant_id": tenant_id},
+                "Incident not found",
+                extra={"tenant_id": tenant_id, "incident_id": str(incident_id)},
             )
             return
 
@@ -4145,8 +4176,13 @@ def bulk_upsert_alert_fields(
                 # Handle any potential race conditions
                 session.rollback()
                 if "Deadlock found" in str(e):
-                    logger.info(
-                        f"Deadlock found during bulk_upsert_alert_fields `{e}`, retry #{attempt}"
+                    logger.warning(
+                        "Deadlock found during bulk_upsert_alert_fields, retrying",
+                        extra={
+                            "tenant_id": tenant_id,
+                            "attempt": attempt,
+                            "error": str(e),
+                        },
                     )
                     if attempt >= max_retries:
                         raise e
@@ -4569,15 +4605,15 @@ def set_last_alert(
     happens here (replacing the old dispose/make-permanent enrichment dance).
     """
     fingerprint = alert.fingerprint
-    logger.info(f"Setting last alert for `{fingerprint}`")
     with existed_or_new_session(session) as session:
         for attempt in range(1, max_retries + 1):
-            logger.info(
-                f"Attempt {attempt} to set last alert for `{fingerprint}`",
+            logger.debug(
+                "Setting last alert",
                 extra={
                     "alert_id": alert.id,
                     "tenant_id": tenant_id,
                     "fingerprint": fingerprint,
+                    "attempt": attempt,
                 },
             )
             try:
@@ -4591,10 +4627,11 @@ def set_last_alert(
                 if last_alert and last_alert.timestamp.replace(
                     tzinfo=tz.UTC
                 ) < alert.timestamp.replace(tzinfo=tz.UTC):
-                    logger.info(
-                        f"Update last alert for `{fingerprint}`: {last_alert.alert_id} -> {alert.id}",
+                    logger.debug(
+                        "Updating last alert",
                         extra={
                             "alert_id": alert.id,
+                            "previous_alert_id": last_alert.alert_id,
                             "tenant_id": tenant_id,
                             "fingerprint": fingerprint,
                         },
@@ -4625,7 +4662,14 @@ def set_last_alert(
                     session.add(last_alert)
 
                 elif not last_alert:
-                    logger.info(f"No last alert for `{fingerprint}`, creating new")
+                    logger.debug(
+                        "No last alert, creating new",
+                        extra={
+                            "alert_id": alert.id,
+                            "tenant_id": tenant_id,
+                            "fingerprint": fingerprint,
+                        },
+                    )
                     new_last_alert = LastAlert(
                         tenant_id=tenant_id,
                         fingerprint=alert.fingerprint,
@@ -4654,11 +4698,12 @@ def set_last_alert(
             except IntegrityError as ex:
                 session.rollback()
                 logger.warning(
-                    f"Integrity error while updating lastalert for `{fingerprint}`, retry #{attempt}",
+                    "Integrity error while updating lastalert",
                     extra={
                         "alert_id": alert.id,
                         "tenant_id": tenant_id,
                         "fingerprint": fingerprint,
+                        "attempt": attempt,
                         "error": str(ex),
                     },
                 )
@@ -4670,22 +4715,26 @@ def set_last_alert(
             except OperationalError as ex:
                 session.rollback()
                 message = ex.args[0] if ex.args else ""
+                retry_extra = {
+                    "alert_id": alert.id,
+                    "tenant_id": tenant_id,
+                    "fingerprint": fingerprint,
+                    "attempt": attempt,
+                }
                 if "no such savepoint" in message:
-                    logger.info(
-                        f"No such savepoint while updating lastalert for `{fingerprint}`, retry #{attempt}"
+                    logger.warning(
+                        "No such savepoint while updating lastalert, retrying",
+                        extra=retry_extra,
                     )
                 elif "Deadlock found" in message:
-                    logger.info(
-                        f"Deadlock found while updating lastalert for `{fingerprint}`, retry #{attempt}"
+                    logger.warning(
+                        "Deadlock found while updating lastalert, retrying",
+                        extra=retry_extra,
                     )
                 else:
                     logger.exception(
-                        f"Operational error while updating lastalert for `{fingerprint}`",
-                        extra={
-                            "alert_id": alert.id,
-                            "tenant_id": tenant_id,
-                            "fingerprint": fingerprint,
-                        },
+                        "Operational error while updating lastalert",
+                        extra=retry_extra,
                     )
                     raise
 
@@ -4697,11 +4746,12 @@ def set_last_alert(
             except NoActiveSqlTransaction as ex:
                 session.rollback()
                 logger.exception(
-                    f"No active sql transaction while updating lastalert for `{fingerprint}`, retry #{attempt}",
+                    "No active sql transaction while updating lastalert",
                     extra={
                         "alert_id": alert.id,
                         "tenant_id": tenant_id,
                         "fingerprint": fingerprint,
+                        "attempt": attempt,
                     },
                 )
                 if attempt == max_retries:
@@ -4712,11 +4762,12 @@ def set_last_alert(
             except InternalError as ex:
                 session.rollback()
                 logger.exception(
-                    f"Internal error while updating lastalert for `{fingerprint}`, retry #{attempt}",
+                    "Internal error while updating lastalert",
                     extra={
                         "alert_id": alert.id,
                         "tenant_id": tenant_id,
                         "fingerprint": fingerprint,
+                        "attempt": attempt,
                     },
                 )
                 if attempt == max_retries:
@@ -4726,7 +4777,7 @@ def set_last_alert(
                 continue
             else:
                 logger.debug(
-                    f"Successfully updated lastalert for `{fingerprint}`",
+                    "Successfully updated lastalert",
                     extra={
                         "alert_id": alert.id,
                         "tenant_id": tenant_id,
@@ -4807,7 +4858,6 @@ def create_tenant(tenant_name: str) -> str:
     with Session(engine) as session:
         try:
             # check if the tenant exist:
-            logger.info("Checking if tenant exists")
             tenant = session.exec(
                 select(Tenant).where(Tenant.name == tenant_name)
             ).first()
@@ -5060,7 +5110,6 @@ def create_single_tenant_for_e2e(tenant_id: str) -> None:
     with Session(engine) as session:
         try:
             # check if the tenant exist:
-            logger.info("Checking if single tenant exists")
             tenant = session.exec(select(Tenant).where(Tenant.id == tenant_id)).first()
             if not tenant:
                 # Do everything related with single tenant creation in here
