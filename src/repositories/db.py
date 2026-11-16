@@ -61,7 +61,10 @@ from src.repositories.db_utils import (
 from src.repositories.dependencies import GENERIC_TENANT_UUID
 from src.repositories.dashboard_images import (
     check_dashboard_image_references,
+    copy_dashboard_images,
     delete_dashboard_images,
+    referenced_image_ids,
+    rewrite_image_ids,
     sync_dashboard_images,
 )
 
@@ -2538,6 +2541,68 @@ def create_dashboard(
         session.add(dashboard)
         session.flush()
         sync_dashboard_images(session, tenant_id, dashboard.id, dashboard_config)
+        session.commit()
+        session.refresh(dashboard)
+        return dashboard
+
+
+class DashboardNameTakenError(ValueError):
+    """Another dashboard in the tenant already has the requested name."""
+
+
+def duplicate_dashboard(
+    tenant_id: str, dashboard_id: str, dashboard_name: str, created_by: str | None
+) -> Dashboard | None:
+    """Copy a dashboard the caller can see, with its uploaded images, under a new name.
+
+    The copy gets the source's saved config with each uploaded image copied
+    under a new id, the source's `is_private`, and the caller as creator and
+    last editor. Everything happens in one transaction.
+
+    Returns None when the source is missing, in another tenant, or another
+    user's private dashboard. Raises DashboardNameTakenError when the name is
+    in use, and DashboardImageReferenceError when the source references an
+    image it does not own; nothing is written in either case. As on the save
+    path, references to missing or foreign images are rejected before any
+    write; the image copy re-checks ownership inside the transaction.
+    """
+    with Session(engine) as session:
+        source = session.exec(
+            select(Dashboard)
+            .where(Dashboard.tenant_id == tenant_id)
+            .where(Dashboard.id == dashboard_id)
+            .where(
+                or_(
+                    Dashboard.is_private == False,
+                    Dashboard.created_by == created_by,
+                )
+            )
+        ).first()
+        if not source:
+            return None
+
+        config = source.dashboard_config
+        if isinstance(config, str):
+            config = json.loads(config)
+        check_dashboard_image_references(session, tenant_id, source.id, config)
+        id_map = {old_id: str(uuid4()) for old_id in referenced_image_ids(config)}
+        dashboard = Dashboard(
+            tenant_id=tenant_id,
+            dashboard_name=dashboard_name,
+            dashboard_config=rewrite_image_ids(config, id_map),
+            created_by=created_by,
+            updated_by=created_by,
+            is_private=source.is_private,
+        )
+        session.add(dashboard)
+        try:
+            session.flush()
+        except IntegrityError:
+            session.rollback()
+            raise DashboardNameTakenError(dashboard_name)
+        copy_dashboard_images(
+            session, tenant_id, source.id, dashboard.id, id_map, created_by
+        )
         session.commit()
         session.refresh(dashboard)
         return dashboard

@@ -1,33 +1,50 @@
-"""Dashboard duplication: image-copy helpers."""
+"""Dashboard duplication: image-copy helpers and POST /dashboard/{id}/duplicate."""
 
+import json
 from datetime import datetime, timedelta
 
 import pytest
 
 from src.models.db.dashboard import Dashboard
 from src.models.db.dashboard_image import DashboardImage
+from src.models.db.tenant import Tenant
 from src.repositories.dashboard_images import (
     DashboardImageReferenceError,
     copy_dashboard_images,
     rewrite_image_ids,
 )
-from src.repositories.dependencies import SINGLE_TENANT_UUID
+from src.repositories.dependencies import SINGLE_TENANT_EMAIL, SINGLE_TENANT_UUID
+from tests.fixtures.client import client, test_app  # noqa
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
+AUTH = {"x-api-key": "some-key"}
 
 
-def _add_dashboard(db_session, name):
+def _add_dashboard(
+    db_session, name, tenant_id=SINGLE_TENANT_UUID, dashboard_config=None, **fields
+):
     dashboard = Dashboard(
-        tenant_id=SINGLE_TENANT_UUID, dashboard_name=name, dashboard_config={}
+        tenant_id=tenant_id,
+        dashboard_name=name,
+        dashboard_config={} if dashboard_config is None else dashboard_config,
+        **fields,
     )
     db_session.add(dashboard)
     db_session.commit()
     return dashboard.id
 
 
-def _add_image(db_session, dashboard_id, age=timedelta(0)):
+def _add_tenant(db_session, tenant_id="other-tenant"):
+    db_session.add(Tenant(id=tenant_id, name=tenant_id, created_by="tests"))
+    db_session.commit()
+    return tenant_id
+
+
+def _add_image(
+    db_session, dashboard_id, age=timedelta(0), tenant_id=SINGLE_TENANT_UUID
+):
     image = DashboardImage(
-        tenant_id=SINGLE_TENANT_UUID,
+        tenant_id=tenant_id,
         dashboard_id=dashboard_id,
         name="seed.png",
         content_type="image/png",
@@ -121,3 +138,342 @@ def test_copy_dashboard_images_rejects_image_not_owned_by_source(db_session):
 
     assert exc.value.invalid_image_ids == [image_id]
     assert db_session.get(DashboardImage, "new-id") is None
+
+
+def test_copy_dashboard_images_rejects_source_dashboard_id_in_another_tenant(
+    db_session,
+):
+    source_id = _add_dashboard(db_session, "source")
+    new_id = _add_dashboard(db_session, "copy")
+    other = _add_tenant(db_session)
+    image_id = _add_image(db_session, source_id, tenant_id=other)
+
+    with pytest.raises(DashboardImageReferenceError) as exc:
+        copy_dashboard_images(
+            db_session,
+            SINGLE_TENANT_UUID,
+            source_id,
+            new_id,
+            {image_id: "new-id"},
+            "admin@keephq",
+        )
+    db_session.rollback()
+
+    assert exc.value.invalid_image_ids == [image_id]
+    assert db_session.get(DashboardImage, "new-id") is None
+
+
+def test_copy_dashboard_images_rejects_pending_image(db_session):
+    source_id = _add_dashboard(db_session, "source")
+    new_id = _add_dashboard(db_session, "copy")
+    image_id = _add_image(db_session, None)
+
+    with pytest.raises(DashboardImageReferenceError) as exc:
+        copy_dashboard_images(
+            db_session,
+            SINGLE_TENANT_UUID,
+            source_id,
+            new_id,
+            {image_id: "new-id"},
+            "admin@keephq",
+        )
+    db_session.rollback()
+
+    assert exc.value.invalid_image_ids == [image_id]
+    assert db_session.get(DashboardImage, "new-id") is None
+
+
+def _upload(client, data=PNG, content_type="image/png", name="a.png"):
+    return client.post(
+        f"/dashboard-images?name={name}",
+        content=data,
+        headers={**AUTH, "Content-Type": content_type},
+    )
+
+
+def _image_widget(image_id, i="w-1", widget_type="IMAGE"):
+    return {
+        "i": i,
+        "x": 0,
+        "y": 0,
+        "w": 4,
+        "h": 4,
+        "static": False,
+        "name": f"widget {i}",
+        "widgetType": widget_type,
+        "image": {"source": "upload", "imageId": image_id, "fit": "contain"},
+    }
+
+
+def _config(*widgets):
+    return {"layout": [], "widget_data": list(widgets)}
+
+
+def _create_dashboard(client, name, config):
+    return client.post(
+        "/dashboard",
+        headers=AUTH,
+        json={"dashboard_name": name, "dashboard_config": config},
+    )
+
+
+def _duplicate(client, dashboard_id, name):
+    return client.post(
+        f"/dashboard/{dashboard_id}/duplicate",
+        headers=AUTH,
+        json={"dashboard_name": name},
+    )
+
+
+def _owner(db_session, image_id):
+    db_session.expire_all()
+    row = db_session.get(DashboardImage, image_id)
+    return "gone" if row is None else row.dashboard_id
+
+
+def _first_image_id(dashboard_body):
+    return dashboard_body["dashboard_config"]["widget_data"][0]["image"]["imageId"]
+
+
+def _dashboard_row(db_session, dashboard_id):
+    db_session.expire_all()
+    return db_session.get(Dashboard, dashboard_id)
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+def test_duplicate_copies_config_and_sets_metadata(db_session, client, test_app):
+    source_config = {
+        "layout": [{"i": "w-1", "x": 0, "y": 0, "w": 4, "h": 4, "static": False}],
+        "widget_data": [
+            {
+                "i": "w-1",
+                "x": 0,
+                "y": 0,
+                "w": 4,
+                "h": 4,
+                "static": False,
+                "name": "Critical",
+                "widgetType": "PRESET",
+                "preset": {"id": "p1", "name": "feed"},
+                "presetPanelType": "ALERT_COUNT_PANEL",
+                "showFiringOnly": True,
+                "thresholds": [{"value": 0, "color": "#22c55e"}],
+            },
+            {
+                "i": "w-2",
+                "name": "Logo",
+                "widgetType": "IMAGE",
+                "image": {
+                    "source": "url",
+                    "url": "https://example.com/a.png",
+                    "fit": "cover",
+                },
+            },
+            {
+                "i": "w-3",
+                "name": "Note",
+                "widgetType": "HTML",
+                "html": {"html": "<b>hi</b>"},
+            },
+        ],
+        "appearance": {"backgroundColor": "#f8fafc", "density": "compact"},
+    }
+    source_id = _create_dashboard(client, "d1", source_config).json()["id"]
+    source_before = _dashboard_row(db_session, source_id).dict()
+
+    response = _duplicate(client, source_id, "d1 (copy)")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["dashboard_name"] == "d1 (copy)"
+    assert body["id"] != source_id
+    assert body["dashboard_config"] == source_config
+
+    copy = _dashboard_row(db_session, body["id"])
+    assert copy.tenant_id == SINGLE_TENANT_UUID
+    assert copy.created_by == SINGLE_TENANT_EMAIL
+    assert copy.updated_by == SINGLE_TENANT_EMAIL
+    assert copy.is_private is False
+    assert _dashboard_row(db_session, source_id).dict() == source_before
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+def test_duplicate_copies_uploaded_images(db_session, client, test_app):
+    image_id = _upload(client).json()["id"]
+    source_id = _create_dashboard(
+        client, "d1", _config(_image_widget(image_id))
+    ).json()["id"]
+
+    response = _duplicate(client, source_id, "d1 (copy)")
+
+    assert response.status_code == 200
+    body = response.json()
+    new_image_id = _first_image_id(body)
+    assert new_image_id != image_id
+    assert body["dashboard_config"] == _config(_image_widget(new_image_id))
+    fetched = client.get(f"/dashboard-images/{new_image_id}", headers=AUTH)
+    assert fetched.status_code == 200
+    assert fetched.content == PNG
+    assert _owner(db_session, new_image_id) == body["id"]
+    assert _owner(db_session, image_id) == source_id
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+def test_deleting_source_keeps_copy_images(db_session, client, test_app):
+    image_id = _upload(client).json()["id"]
+    source_id = _create_dashboard(
+        client, "d1", _config(_image_widget(image_id))
+    ).json()["id"]
+    new_image_id = _first_image_id(_duplicate(client, source_id, "d1 (copy)").json())
+
+    assert client.delete(f"/dashboard/{source_id}", headers=AUTH).status_code == 200
+
+    assert client.get(f"/dashboard-images/{image_id}", headers=AUTH).status_code == 404
+    fetched = client.get(f"/dashboard-images/{new_image_id}", headers=AUTH)
+    assert fetched.status_code == 200
+    assert fetched.content == PNG
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+def test_duplicate_name_taken_is_409_and_writes_nothing(db_session, client, test_app):
+    image_id = _upload(client).json()["id"]
+    source_id = _create_dashboard(
+        client, "d1", _config(_image_widget(image_id))
+    ).json()["id"]
+
+    response = _duplicate(client, source_id, "d1")
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "A dashboard with this name already exists"}
+    assert db_session.query(Dashboard).count() == 1
+    assert db_session.query(DashboardImage).count() == 1
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+def test_duplicate_unknown_dashboard_is_404(db_session, client, test_app):
+    response = _duplicate(client, "missing", "d1 (copy)")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Dashboard not found"}
+    assert db_session.query(Dashboard).count() == 0
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+def test_duplicate_other_tenants_dashboard_is_404(db_session, client, test_app):
+    other = _add_tenant(db_session)
+    source_id = _add_dashboard(db_session, "d1", tenant_id=other)
+
+    response = _duplicate(client, source_id, "d1 (copy)")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Dashboard not found"}
+    assert db_session.query(Dashboard).count() == 1
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+def test_duplicate_private_dashboard_of_another_user_is_404(
+    db_session, client, test_app
+):
+    source_id = _add_dashboard(
+        db_session, "d1", is_private=True, created_by="someone@else"
+    )
+
+    response = _duplicate(client, source_id, "d1 (copy)")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Dashboard not found"}
+    assert db_session.query(Dashboard).count() == 1
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+def test_duplicate_keeps_is_private_for_callers_own_private_dashboard(
+    db_session, client, test_app
+):
+    source_id = _add_dashboard(
+        db_session, "d1", is_private=True, created_by=SINGLE_TENANT_EMAIL
+    )
+
+    response = _duplicate(client, source_id, "d1 (copy)")
+
+    assert response.status_code == 200
+    assert _dashboard_row(db_session, response.json()["id"]).is_private is True
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+@pytest.mark.parametrize("name", ["", "   "])
+def test_duplicate_blank_name_is_422(db_session, client, test_app, name):
+    source_id = _add_dashboard(db_session, "d1")
+
+    assert _duplicate(client, source_id, name).status_code == 422
+    assert db_session.query(Dashboard).count() == 1
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+def test_duplicate_trims_name(db_session, client, test_app):
+    source_id = _add_dashboard(db_session, "d1")
+
+    response = _duplicate(client, source_id, "  d1 (copy)  ")
+
+    assert response.status_code == 200
+    assert response.json()["dashboard_name"] == "d1 (copy)"
+    assert _dashboard_row(db_session, response.json()["id"]).dashboard_name == (
+        "d1 (copy)"
+    )
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+def test_duplicate_rolls_back_when_source_references_foreign_image(
+    db_session, client, test_app
+):
+    """A source referencing another dashboard's image is rejected and leaves no copy."""
+    owner_id = _add_dashboard(db_session, "owner")
+    image_id = _add_image(db_session, owner_id)
+    source_id = _add_dashboard(
+        db_session, "d1", dashboard_config=_config(_image_widget(image_id))
+    )
+
+    response = _duplicate(client, source_id, "d1 (copy)")
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "message": "Dashboard references missing or unavailable images",
+        "invalid_image_ids": [image_id],
+    }
+    assert db_session.query(Dashboard).count() == 2
+    assert (
+        db_session.query(Dashboard)
+        .filter(Dashboard.dashboard_name == "d1 (copy)")
+        .count()
+        == 0
+    )
+    assert db_session.query(DashboardImage).count() == 1
+    assert _owner(db_session, image_id) == owner_id
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+def test_duplicate_source_config_stored_as_json_string(db_session, client, test_app):
+    source_id = _add_dashboard(db_session, "d1")
+    image_id = _add_image(db_session, source_id)
+    stored_config = json.dumps(_config(_image_widget(image_id)))
+    _dashboard_row(db_session, source_id).dashboard_config = stored_config
+    db_session.commit()
+
+    response = _duplicate(client, source_id, "d1 (copy)")
+
+    assert response.status_code == 200
+    body = response.json()
+    new_image_id = _first_image_id(body)
+    assert new_image_id != image_id
+    assert body["dashboard_config"] == _config(_image_widget(new_image_id))
+    assert _owner(db_session, new_image_id) == body["id"]
+    assert _dashboard_row(db_session, source_id).dashboard_config == stored_config
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+def test_duplicate_empty_config(db_session, client, test_app):
+    source_id = _add_dashboard(db_session, "d1")
+
+    response = _duplicate(client, source_id, "d1 (copy)")
+
+    assert response.status_code == 200
+    assert response.json()["dashboard_config"] == {}
