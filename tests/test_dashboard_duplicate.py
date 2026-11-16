@@ -1,13 +1,17 @@
 """Dashboard duplication: image-copy helpers and POST /dashboard/{id}/duplicate."""
 
 import json
+from contextlib import contextmanager
 from datetime import datetime, timedelta
+from unittest.mock import patch
 
 import pytest
+from sqlalchemy import event
 
 from src.models.db.dashboard import Dashboard
 from src.models.db.dashboard_image import DashboardImage
 from src.models.db.tenant import Tenant
+from src.repositories import db
 from src.repositories.dashboard_images import (
     DashboardImageReferenceError,
     copy_dashboard_images,
@@ -240,6 +244,25 @@ def _dashboard_row(db_session, dashboard_id):
     return db_session.get(Dashboard, dashboard_id)
 
 
+@contextmanager
+def _sqlite_transactions():
+    """Open a real SQLite transaction on each begin while the block runs.
+
+    The shared SQLite fixture's BEGIN listener fails silently, so every
+    statement autocommits and a flushed row survives a rollback. This makes
+    an uncommitted flush roll back as it does on PostgreSQL and MySQL.
+    """
+
+    def begin(conn):
+        conn.exec_driver_sql("BEGIN")
+
+    event.listen(db.engine, "begin", begin)
+    try:
+        yield
+    finally:
+        event.remove(db.engine, "begin", begin)
+
+
 @pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
 def test_duplicate_copies_config_and_sets_metadata(db_session, client, test_app):
     source_config = {
@@ -278,7 +301,13 @@ def test_duplicate_copies_config_and_sets_metadata(db_session, client, test_app)
         ],
         "appearance": {"backgroundColor": "#f8fafc", "density": "compact"},
     }
-    source_id = _create_dashboard(client, "d1", source_config).json()["id"]
+    source_id = _add_dashboard(
+        db_session,
+        "d1",
+        dashboard_config=source_config,
+        created_by="someone@else",
+        updated_by="someone@else",
+    )
     source_before = _dashboard_row(db_session, source_id).dict()
 
     response = _duplicate(client, source_id, "d1 (copy)")
@@ -291,10 +320,12 @@ def test_duplicate_copies_config_and_sets_metadata(db_session, client, test_app)
 
     copy = _dashboard_row(db_session, body["id"])
     assert copy.tenant_id == SINGLE_TENANT_UUID
-    assert copy.created_by == SINGLE_TENANT_EMAIL
-    assert copy.updated_by == SINGLE_TENANT_EMAIL
+    assert copy.created_by == "admin@keephq"
+    assert copy.updated_by == "admin@keephq"
     assert copy.is_private is False
-    assert _dashboard_row(db_session, source_id).dict() == source_before
+    source = _dashboard_row(db_session, source_id)
+    assert source.created_by == "someone@else"
+    assert source.dict() == source_before
 
 
 @pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
@@ -422,9 +453,7 @@ def test_duplicate_trims_name(db_session, client, test_app):
 
 
 @pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
-def test_duplicate_rolls_back_when_source_references_foreign_image(
-    db_session, client, test_app
-):
+def test_duplicate_rejects_foreign_image_before_any_write(db_session, client, test_app):
     """A source referencing another dashboard's image is rejected and leaves no copy."""
     owner_id = _add_dashboard(db_session, "owner")
     image_id = _add_image(db_session, owner_id)
@@ -448,6 +477,41 @@ def test_duplicate_rolls_back_when_source_references_foreign_image(
     )
     assert db_session.query(DashboardImage).count() == 1
     assert _owner(db_session, image_id) == owner_id
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+def test_duplicate_never_commits_when_image_copy_fails(
+    db_session, client, test_app, monkeypatch
+):
+    """An image-copy failure after the new row is flushed returns 400 and never commits."""
+    image_id = _upload(client).json()["id"]
+    source_id = _create_dashboard(
+        client, "d1", _config(_image_widget(image_id))
+    ).json()["id"]
+
+    def fail_copy(*args, **kwargs):
+        raise DashboardImageReferenceError(["img-x"])
+
+    monkeypatch.setattr(db, "copy_dashboard_images", fail_copy)
+    with _sqlite_transactions(), patch.object(
+        db.Session, "commit", autospec=True, side_effect=db.Session.commit
+    ) as commit:
+        response = _duplicate(client, source_id, "d1 (copy)")
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "message": "Dashboard references missing or unavailable images",
+        "invalid_image_ids": ["img-x"],
+    }
+    commit.assert_not_called()
+    db_session.expire_all()
+    assert (
+        db_session.query(Dashboard)
+        .filter(Dashboard.dashboard_name == "d1 (copy)")
+        .count()
+        == 0
+    )
+    assert _owner(db_session, image_id) == source_id
 
 
 @pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)

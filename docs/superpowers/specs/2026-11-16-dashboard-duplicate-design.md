@@ -123,7 +123,9 @@ tied to it.
     - name clash and empty name
     - submit and navigation
     - 404/409 handling
-  - Extend `e2e/specs/10-create-dashboard.spec.ts` with a duplicate case so the sanity suite covers it.
+  - A live browser check of the full flow on a local stack (sidebar hover, dialog, name clash, copy
+    opened with its images, unsaved-changes note). An e2e-suite case in
+    `e2e/specs/10-create-dashboard.spec.ts` is a follow-up.
 
 ## Proposed Implementation
 
