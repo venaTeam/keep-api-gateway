@@ -163,7 +163,7 @@ class EnrichmentsBl:
         )
         self._add_enrichment_log(
             "Running extraction rules for incoming event",
-            "info",
+            "debug",
             {
                 "tenant_id": self.tenant_id,
                 "fingerprint": fingerprint,
@@ -215,7 +215,7 @@ class EnrichmentsBl:
             if not attribute_value:
                 self._add_enrichment_log(
                     f"Attribute ({rule.attribute}) value is empty, skipping extraction",
-                    "info",
+                    "debug",
                     {"rule_id": rule.id},
                 )
                 self._track_enrichment_event(
@@ -230,7 +230,7 @@ class EnrichmentsBl:
             if rule.condition is None or rule.condition == "*" or rule.condition == "":
                 self._add_enrichment_log(
                     f"No condition specified for rule {rule.name}, enriching...",
-                    "info",
+                    "debug",
                     {
                         "rule_id": rule.id,
                         "tenant_id": self.tenant_id,
@@ -295,7 +295,7 @@ class EnrichmentsBl:
             else:
                 self._add_enrichment_log(
                     "Regex did not match, skipping extraction",
-                    "info",
+                    "debug",
                     {
                         "rule_id": rule.id,
                         "tenant_id": self.tenant_id,
@@ -328,7 +328,7 @@ class EnrichmentsBl:
 
         self._add_enrichment_log(
             "Running mapping rules for incoming alert",
-            "info",
+            "debug",
             {"fingerprint": alert.fingerprint, "tenant_id": self.tenant_id},
         )
 
@@ -397,7 +397,6 @@ class EnrichmentsBl:
                     "fingerprint": alert.fingerprint,
                     "rule_id": rule.id,
                     "matchers": rule.matchers,
-                    "alert": str(alert),
                 },
             )
             self._track_enrichment_event(
@@ -407,7 +406,7 @@ class EnrichmentsBl:
 
         self._add_enrichment_log(
             "Alert matched a mapping rule, enriching...",
-            "info",
+            "debug",
             {"fingerprint": alert.fingerprint, "rule_id": rule.id},
         )
 
@@ -443,7 +442,15 @@ class EnrichmentsBl:
                 # this should be a list of values we need to try and match, and enrich
                 matcher_values = get_nested_attribute(alert, key)
                 if not matcher_values:
-                    self._add_enrichment_log("WTF, should not happen?", "error")
+                    self._add_enrichment_log(
+                        "Multi-level mapping: matcher_values empty",
+                        "error",
+                        {
+                            "rule_id": rule.id,
+                            "fingerprint": alert.fingerprint,
+                            "tenant_id": self.tenant_id,
+                        },
+                    )
                 else:
                     if isinstance(matcher_values, str):
                         matcher_values = json5.loads(matcher_values)
@@ -506,7 +513,7 @@ class EnrichmentsBl:
 
         self._add_enrichment_log(
             "Alert was not enriched by mapping rule",
-            "info",
+            "debug",
             {"rule_id": rule.id, "alert_fingerprint": alert.fingerprint},
         )
         self._track_enrichment_event(
@@ -673,10 +680,6 @@ class EnrichmentsBl:
         strict=True,
         entity_type: str = "alert",
     ):
-        self.logger.debug(
-            "enriching multiple fingerprints",
-            extra={"fingerprints": fingerprints, "tenant_id": self.tenant_id},
-        )
         for fingerprint in fingerprints:
             await self.enrich_entity(
                 fingerprint=fingerprint,
@@ -780,14 +783,6 @@ class EnrichmentsBl:
             fingerprint = UUIDType(binary=False).process_bind_param(
                 fingerprint, self.db_session.bind.dialect
             )
-        self.logger.debug(
-            "enriching entity db",
-            extra={
-                "fingerprint": fingerprint,
-                "tenant_id": self.tenant_id,
-                "entity_type": entity_type,
-            },
-        )
         # Dispose-on-new-alert -> typed status_disposable flag. This is
         # an ALERT-only concept; incidents keep arbitrary JSONB keys untouched.
         if entity_type != "incident":
@@ -824,10 +819,6 @@ class EnrichmentsBl:
             entity_type=entity_type,
         )
 
-        self.logger.debug(
-            "alert enriched in db, enriching elastic",
-            extra={"fingerprint": fingerprint},
-        )
         # enrich elastic only if should exist, since
         #   in elastic the alertdto is being kept which is alert + enrichments
         # so for example, in mapping, the enrichment happens before the alert is indexed in elastic
@@ -843,9 +834,6 @@ class EnrichmentsBl:
                     "Failed to enrich alert in Elastic",
                     extra={"fingerprint": fingerprint, "tenant_id": self.tenant_id},
                 )
-        self.logger.debug(
-            "alert enriched in elastic", extra={"fingerprint": fingerprint}
-        )
 
     def get_total_enrichment_events(
         self, rule_id: int, _type: EnrichmentType = EnrichmentType.MAPPING
@@ -966,7 +954,8 @@ class EnrichmentsBl:
                 "Failed to add enrichment log",
                 extra={
                     "tenant_id": self.tenant_id,
-                    "message": message,
+                    "enrichment_message": message,
+                    "level": level,
                 },
             )
 
