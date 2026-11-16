@@ -176,8 +176,23 @@ def test_redact_headers_hides_secret_headers_any_case():
         "X-Keep-Notify-Token": "t",
         "X-Forwarded-Access-Token": "t",
         "X-Auth-Request-Access-Token": "t",
+        "X-Gitlab-Token": "t",
+        "X-Hub-Signature-256": "sha256=x",
+        "X-Grafana-Token": "t",
         "Content-Type": "application/json",
     }
     redacted = _redact_headers(headers)
     assert redacted.pop("Content-Type") == "application/json"
     assert set(redacted.values()) == {"[REDACTED]"}
+
+
+def test_uvicorn_duplicate_traceback_is_dropped():
+    from src.utils.logging import DropUvicornASGIExceptionFilter
+
+    f = DropUvicornASGIExceptionFilter()
+
+    def rec(msg):
+        return logging.LogRecord("uvicorn.error", logging.ERROR, "", 0, msg, None, None)
+
+    assert not f.filter(rec("Exception in ASGI application\n"))
+    assert f.filter(rec("Started server process"))

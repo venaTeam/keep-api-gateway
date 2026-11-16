@@ -54,6 +54,11 @@ class KeepProvider(BaseProvider):
     Automation on your alerts with Keep.
     """
 
+    @property
+    def _workflow_id(self):
+        # the gateway's ContextManager has no workflow_id
+        return getattr(self.context_manager, "workflow_id", None)
+
     def __init__(
         self, context_manager: ContextManager, provider_id: str, config: ProviderConfig
     ):
@@ -257,7 +262,7 @@ class KeepProvider(BaseProvider):
                         "Alert resolved",
                         extra={
                             "tenant_id": self.context_manager.tenant_id,
-                            "workflow_id": getattr(self.context_manager, "workflow_id", None),
+                            "workflow_id": self._workflow_id,
                             "fingerprint": fingerprint,
                             "last_received": curr_alert.last_received,
                         },
@@ -278,7 +283,7 @@ class KeepProvider(BaseProvider):
                         "Pending alert resolved",
                         extra={
                             "tenant_id": self.context_manager.tenant_id,
-                            "workflow_id": getattr(self.context_manager, "workflow_id", None),
+                            "workflow_id": self._workflow_id,
                             "fingerprint": fingerprint,
                             "last_received": curr_alert.last_received,
                         },
@@ -324,7 +329,7 @@ class KeepProvider(BaseProvider):
                             "Alert transitioned to firing",
                             extra={
                                 "tenant_id": self.context_manager.tenant_id,
-                                "workflow_id": getattr(self.context_manager, "workflow_id", None),
+                                "workflow_id": self._workflow_id,
                                 "fingerprint": fingerprint,
                                 "duration_elapsed": str(now - activeAt),
                             },
@@ -347,7 +352,7 @@ class KeepProvider(BaseProvider):
                         "Resolved alert back to pending",
                         extra={
                             "tenant_id": self.context_manager.tenant_id,
-                            "workflow_id": getattr(self.context_manager, "workflow_id", None),
+                            "workflow_id": self._workflow_id,
                             "fingerprint": fingerprint,
                             "last_received": curr_alert.last_received,
                         },
@@ -364,7 +369,7 @@ class KeepProvider(BaseProvider):
                     "New alert created",
                     extra={
                         "tenant_id": self.context_manager.tenant_id,
-                        "workflow_id": getattr(self.context_manager, "workflow_id", None),
+                        "workflow_id": self._workflow_id,
                         "fingerprint": fingerprint,
                         "activeAt": new_alert.activeAt,
                     },
@@ -374,7 +379,7 @@ class KeepProvider(BaseProvider):
             "Completed state alert handling",
             extra={
                 "tenant_id": self.context_manager.tenant_id,
-                "workflow_id": getattr(self.context_manager, "workflow_id", None),
+                "workflow_id": self._workflow_id,
                 "alerts_to_notify": len(alerts_to_notify),
             },
         )
@@ -417,7 +422,7 @@ class KeepProvider(BaseProvider):
                         "Alert resolved",
                         extra={
                             "tenant_id": self.context_manager.tenant_id,
-                            "workflow_id": getattr(self.context_manager, "workflow_id", None),
+                            "workflow_id": self._workflow_id,
                             "fingerprint": fingerprint,
                             "last_received": curr_alert.last_received,
                         },
@@ -430,7 +435,7 @@ class KeepProvider(BaseProvider):
                 "New alert firing",
                 extra={
                     "tenant_id": self.context_manager.tenant_id,
-                    "workflow_id": getattr(self.context_manager, "workflow_id", None),
+                    "workflow_id": self._workflow_id,
                     "fingerprint": fingerprint,
                     "last_received": new_alert.last_received,
                 },
@@ -440,7 +445,7 @@ class KeepProvider(BaseProvider):
             "Completed stateless alert handling",
             extra={
                 "tenant_id": self.context_manager.tenant_id,
-                "workflow_id": getattr(self.context_manager, "workflow_id", None),
+                "workflow_id": self._workflow_id,
                 "alerts_to_notify": len(alerts_to_notify),
             },
         )
@@ -492,7 +497,7 @@ class KeepProvider(BaseProvider):
                 "No alert results found",
                 extra={
                     "tenant_id": self.context_manager.tenant_id,
-                    "workflow_id": getattr(self.context_manager, "workflow_id", None),
+                    "workflow_id": self._workflow_id,
                 },
             )
             if alert:
@@ -579,7 +584,7 @@ class KeepProvider(BaseProvider):
             "Alerts processed successfully",
             extra={
                 "tenant_id": self.context_manager.tenant_id,
-                "workflow_id": getattr(self.context_manager, "workflow_id", None),
+                "workflow_id": self._workflow_id,
                 "alert_count": len(alerts),
             },
         )
@@ -659,7 +664,7 @@ class KeepProvider(BaseProvider):
                     "Not deleting workflow as it's a test run",
                     extra={
                         "tenant_id": self.context_manager.tenant_id,
-                        "workflow_id": getattr(self.context_manager, "workflow_id", None),
+                        "workflow_id": self._workflow_id,
                     },
                 )
         if workflow_to_update_yaml:
@@ -667,8 +672,7 @@ class KeepProvider(BaseProvider):
                 "Updating workflow YAML",
                 extra={
                     "tenant_id": self.context_manager.tenant_id,
-                    # the gateway's ContextManager has no workflow_id
-                    "workflow_id": getattr(self.context_manager, "workflow_id", None),
+                    "workflow_id": self._workflow_id,
                 },
             )
             workflowstore = WorkflowStore()
@@ -683,7 +687,7 @@ class KeepProvider(BaseProvider):
 
                 workflow = workflowstore.create_workflow(
                     tenant_id=self.context_manager.tenant_id,
-                    created_by=f"workflow id: {self.context_manager.workflow_id}",
+                    created_by=f"workflow id: {self._workflow_id}",
                     workflow=workflow_to_update_yaml,
                     force_update=False,
                     lookup_by_name=True,
@@ -700,7 +704,7 @@ class KeepProvider(BaseProvider):
                     "Failed to create workflow",
                     extra={
                         "tenant_id": self.context_manager.tenant_id,
-                        "workflow": self.context_manager.workflow_id,
+                        "workflow_id": self._workflow_id,
                         "error": str(e),
                     },
                 )

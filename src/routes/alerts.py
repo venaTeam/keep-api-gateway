@@ -187,7 +187,7 @@ def query_alerts_count(
             total_count = query_total_alerts_count(tenant_id=tenant_id, query=query)
         else:
             total_count = query_distinct_alerts_count(tenant_id=tenant_id, query=query)
-        logger.info(
+        logger.debug(
             msg="Fetched alerts count from DB",
             extra={
                 "tenant_id": tenant_id,
@@ -244,7 +244,7 @@ def query_alerts(
     enriched_alerts_dto = convert_db_alerts_to_dto_alerts(
         db_alerts, with_incidents=True
     )
-    logger.info(
+    logger.debug(
         "Fetched alerts from DB",
         extra={
             "tenant_id": tenant_id,
@@ -617,7 +617,6 @@ async def batch_enrich_alerts(
         logger.info(
             "Alerts batch enriched successfully",
             extra={
-                "fingerprints": fingerprints,
                 "tenant_id": tenant_id,
                 "count": len(fingerprints),
                 "action_type": action_type.value,
@@ -647,7 +646,8 @@ async def batch_enrich_alerts(
             "Failed to enrich alerts batch",
             extra={
                 "tenant_id": tenant_id,
-                "fingerprints": fingerprints,
+                "count": len(fingerprints),
+                "fingerprints_sample": fingerprints[:10],
                 "error": str(e),
             },
         )

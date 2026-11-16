@@ -141,6 +141,7 @@ class AuthVerifierBase:
             session=session,
         )
         # verified tenant replaces the unverified one the middleware set
+        request.state.tenant_id = authenticated_entity.tenant_id
         update_log_context(tenant_id=authenticated_entity.tenant_id)
         self.authorize(authenticated_entity)
 
@@ -276,7 +277,7 @@ class AuthVerifierBase:
                 self.logger.warning(
                     "Got an SNS request without any auth",
                     extra={
-                        "url": str(request.url),
+                        "path": request.url.path,
                         "user-agent": request.headers.get("user-agent"),
                     },
                 )
@@ -293,7 +294,7 @@ class AuthVerifierBase:
                 self.logger.error(
                     "Failed to parse Authorization header",
                     extra={
-                        "url": str(request.url),
+                        "path": request.url.path,
                         "user-agent": request.headers.get("user-agent"),
                     },
                 )
@@ -346,14 +347,17 @@ class AuthVerifierBase:
         api_key_role = tenant_api_key.role
 
         try:
-            # skip the update if the key was already updated
-            if f"{tenant_id}:{reference_id}" not in self.key_last_used_updates:
+            # refresh at most once per update_key_interval seconds
+            cache_key = f"{tenant_id}:{reference_id}"
+            now = datetime.datetime.now()
+            last_update = self.key_last_used_updates.get(cache_key)
+            if last_update is None or now - last_update > datetime.timedelta(
+                seconds=float(self.update_key_interval)
+            ):
                 update_key_last_used(
                     tenant_id, reference_id=reference_id, session=session
                 )
-                self.key_last_used_updates[f"{tenant_id}:{reference_id}"] = (
-                    datetime.datetime.now()
-                )
+                self.key_last_used_updates[cache_key] = now
         except Exception:
             self.logger.exception(
                 "Failed to update API Key last used",
