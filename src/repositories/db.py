@@ -2550,6 +2550,19 @@ class DashboardNameTakenError(ValueError):
     """Another dashboard in the tenant already has the requested name."""
 
 
+def _is_dashboard_name_conflict(error: IntegrityError) -> bool:
+    """Whether `error` violates the per-tenant unique dashboard name.
+
+    PostgreSQL and MySQL name the constraint in the message; SQLite names only
+    the columns, as `UNIQUE constraint failed: dashboard.tenant_id,
+    dashboard.dashboard_name`.
+    """
+    message = str(error.orig)
+    return "unique_dashboard_name_per_tenant" in message or (
+        "UNIQUE constraint failed" in message and "dashboard.dashboard_name" in message
+    )
+
+
 def duplicate_dashboard(
     tenant_id: str, dashboard_id: str, dashboard_name: str, created_by: str | None
 ) -> Dashboard | None:
@@ -2597,9 +2610,16 @@ def duplicate_dashboard(
         session.add(dashboard)
         try:
             session.flush()
-        except IntegrityError:
+        except IntegrityError as error:
+            if _is_dashboard_name_conflict(error):
+                session.rollback()
+                raise DashboardNameTakenError(dashboard_name)
+            logger.exception(
+                "Failed to duplicate dashboard",
+                extra={"tenant_id": tenant_id, "source_dashboard_id": dashboard_id},
+            )
             session.rollback()
-            raise DashboardNameTakenError(dashboard_name)
+            raise
         copy_dashboard_images(
             session, tenant_id, source.id, dashboard.id, id_map, created_by
         )

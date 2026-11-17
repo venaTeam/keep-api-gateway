@@ -1,12 +1,16 @@
 """Dashboard duplication: image-copy helpers and POST /dashboard/{id}/duplicate."""
 
 import json
+import logging
+import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import event
+from sqlalchemy.exc import IntegrityError
 
 from src.models.db.dashboard import Dashboard
 from src.models.db.dashboard_image import DashboardImage
@@ -541,3 +545,76 @@ def test_duplicate_empty_config(db_session, client, test_app):
 
     assert response.status_code == 200
     assert response.json()["dashboard_config"] == {}
+
+
+SQLITE_NAME_CONFLICT = (
+    "UNIQUE constraint failed: dashboard.tenant_id, dashboard.dashboard_name"
+)
+
+
+def _integrity_error(message):
+    return IntegrityError("INSERT INTO dashboard", {}, sqlite3.IntegrityError(message))
+
+
+@pytest.mark.parametrize(
+    "message, expected",
+    [
+        (
+            'duplicate key value violates unique constraint "unique_dashboard_name_'
+            'per_tenant"\nDETAIL:  Key (tenant_id, dashboard_name)=(keep, d1) already'
+            " exists.",
+            True,
+        ),
+        (
+            "(1062, \"Duplicate entry 'keep-x' for key "
+            "'dashboard.unique_dashboard_name_per_tenant'\")",
+            True,
+        ),
+        (SQLITE_NAME_CONFLICT, True),
+        (
+            'insert or update on table "dashboard" violates foreign key constraint '
+            '"dashboard_tenant_id_fkey"\nDETAIL:  Key (tenant_id)=(nope) is not'
+            ' present in table "tenant".',
+            False,
+        ),
+        ("FOREIGN KEY constraint failed", False),
+        ("NOT NULL constraint failed: dashboard.dashboard_name", False),
+    ],
+)
+def test_is_dashboard_name_conflict(message, expected):
+    assert db._is_dashboard_name_conflict(_integrity_error(message)) is expected
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+@pytest.mark.parametrize(
+    "message, status, logged",
+    [(SQLITE_NAME_CONFLICT, 409, False), ("FOREIGN KEY constraint failed", 500, True)],
+)
+def test_duplicate_maps_only_the_name_constraint_to_409(
+    db_session, client, test_app, caplog, message, status, logged
+):
+    """A flush failure is 409 only for the name constraint; any other is logged and raised."""
+    source_id = _add_dashboard(db_session, "d1")
+    real_flush = db.Session.flush
+
+    def flush(self, *args, **kwargs):
+        if any(isinstance(obj, Dashboard) for obj in self.new):
+            raise _integrity_error(message)
+        return real_flush(self, *args, **kwargs)
+
+    failing_client = TestClient(client.app, raise_server_exceptions=False)
+    with patch.object(db.Session, "flush", flush), caplog.at_level(
+        logging.ERROR, logger="src.repositories.db"
+    ):
+        response = _duplicate(failing_client, source_id, "d1 (copy)")
+
+    assert response.status_code == status
+    failures = [
+        r for r in caplog.records if r.getMessage() == "Failed to duplicate dashboard"
+    ]
+    assert len(failures) == (1 if logged else 0)
+    if logged:
+        assert failures[0].levelno == logging.ERROR
+        assert failures[0].exc_info[0] is IntegrityError
+        assert failures[0].tenant_id == SINGLE_TENANT_UUID
+        assert failures[0].source_dashboard_id == source_id
