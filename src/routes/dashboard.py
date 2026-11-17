@@ -11,10 +11,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, validator
 
-from src.repositories.dashboard_images import (
-    DashboardImageReferenceError,
-    referenced_image_ids,
-)
+from src.repositories.dashboard_images import DashboardImageReferenceError
 from src.repositories.db import (
     DashboardNameTakenError,
     calc_incidents_mttr,
@@ -196,15 +193,6 @@ def duplicate_dashboard(
         return _invalid_images_response(e)
     if dashboard is None:
         raise HTTPException(status_code=404, detail="Dashboard not found")
-    logger.info(
-        "Duplicated dashboard",
-        extra={
-            "tenant_id": tenant_id,
-            "source_dashboard_id": dashboard_id,
-            "new_dashboard_id": dashboard.id,
-            "copied_images": len(referenced_image_ids(dashboard.dashboard_config)),
-        },
-    )
     return dashboard
 
 

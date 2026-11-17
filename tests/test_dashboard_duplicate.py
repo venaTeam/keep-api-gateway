@@ -700,3 +700,26 @@ def test_duplicate_name_clash_ignores_case(db_session, client, test_app, name, s
         assert response.json() == {
             "detail": "A dashboard with this name already exists"
         }
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+def test_duplicate_is_logged_once_by_the_repository(
+    db_session, client, test_app, caplog
+):
+    image_id = _upload(client).json()["id"]
+    source_id = _create_dashboard(
+        client, "d1", _config(_image_widget(image_id))
+    ).json()["id"]
+
+    with caplog.at_level(logging.INFO):
+        body = _duplicate(client, source_id, "d1 (copy)").json()
+
+    records = [r for r in caplog.records if r.getMessage() == "Duplicated dashboard"]
+    assert len(records) == 1
+    record = records[0]
+    assert record.name == "src.repositories.db"
+    assert record.levelno == logging.INFO
+    assert record.tenant_id == SINGLE_TENANT_UUID
+    assert record.source_dashboard_id == source_id
+    assert record.new_dashboard_id == body["id"]
+    assert record.copied_images == 1
