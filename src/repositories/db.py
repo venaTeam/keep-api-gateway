@@ -2579,11 +2579,13 @@ def duplicate_dashboard(
 
     Checked before any write: every uploaded image the source references must
     already belong to the source, so a missing, pending or foreign image raises
-    DashboardImageReferenceError.
+    DashboardImageReferenceError; and no dashboard in the tenant, of any
+    privacy, may have the name ignoring case, else DashboardNameTakenError.
 
     Checked by the write itself, relying on rollback: the unique name
-    constraint fails the new row's flush and raises DashboardNameTakenError;
-    any other integrity error there is logged and re-raised. The image copy
+    constraint catches a concurrent duplicate with the same exact name, fails
+    the new row's flush and raises DashboardNameTakenError; any other
+    integrity error there is logged and re-raised. The image copy
     re-checks ownership after the new row is flushed, as a backstop for races,
     and raises DashboardImageReferenceError; that flushed row is discarded
     because the session closes without committing.
@@ -2610,6 +2612,13 @@ def duplicate_dashboard(
         check_dashboard_image_references(
             session, tenant_id, source.id, config, allow_pending=False
         )
+        name_taken = session.exec(
+            select(Dashboard.id)
+            .where(Dashboard.tenant_id == tenant_id)
+            .where(func.lower(Dashboard.dashboard_name) == func.lower(dashboard_name))
+        ).first()
+        if name_taken:
+            raise DashboardNameTakenError(dashboard_name)
         id_map = {old_id: str(uuid4()) for old_id in referenced_image_ids(config)}
         dashboard = Dashboard(
             tenant_id=tenant_id,

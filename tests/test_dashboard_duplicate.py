@@ -679,3 +679,24 @@ def test_duplicate_rejects_pending_image_before_any_write(db_session, client, te
     assert db_session.query(Dashboard).count() == 1
     assert db_session.query(DashboardImage).count() == 1
     assert _owner(db_session, image_id) is None
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+@pytest.mark.parametrize(
+    "name, status",
+    [("D1", 409), ("  d1 (COPY) ", 409), ("PRIVATE", 409), ("d1 (copy 2)", 200)],
+)
+def test_duplicate_name_clash_ignores_case(db_session, client, test_app, name, status):
+    """Any tenant dashboard, private ones included, blocks a name differing only in case."""
+    source_id = _add_dashboard(db_session, "d1")
+    _add_dashboard(db_session, "d1 (copy)")
+    _add_dashboard(db_session, "private", is_private=True, created_by="someone@else")
+
+    response = _duplicate(client, source_id, name)
+
+    assert response.status_code == status
+    assert db_session.query(Dashboard).count() == (3 if status == 409 else 4)
+    if status == 409:
+        assert response.json() == {
+            "detail": "A dashboard with this name already exists"
+        }
