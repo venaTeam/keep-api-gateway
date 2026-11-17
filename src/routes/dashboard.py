@@ -9,10 +9,11 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, validator
 
 from src.repositories.dashboard_images import DashboardImageReferenceError
 from src.repositories.db import (
+    DashboardNameTakenError,
     calc_incidents_mttr,
     get_incidents_created_distribution,
     get_provider_distribution,
@@ -21,6 +22,7 @@ from src.repositories.db import (
     create_dashboard as create_dashboard_db,
 )
 from src.repositories.db import delete_dashboard as delete_dashboard_db
+from src.repositories.db import duplicate_dashboard as duplicate_dashboard_db
 from src.repositories.db import get_dashboards as get_dashboards_db
 from src.repositories.db import update_dashboard as update_dashboard_db
 from src.models.time_stamp import TimeStampFilter, _get_time_stamp_filter
@@ -37,6 +39,18 @@ class DashboardCreateDTO(BaseModel):
 class DashboardUpdateDTO(BaseModel):
     dashboard_config: Optional[Dict] = None  # Allow partial updates
     dashboard_name: Optional[str] = None
+
+
+class DashboardDuplicateDTO(BaseModel):
+    dashboard_name: str
+
+    @validator("dashboard_name", allow_reuse=True)
+    def strip_and_require_name(cls, value: str) -> str:
+        """Trim the name and reject one that is empty after trimming."""
+        value = value.strip()
+        if not value:
+            raise ValueError("dashboard_name must not be empty")
+        return value
 
 
 class DashboardResponseDTO(BaseModel):
@@ -151,6 +165,34 @@ def update_dashboard(
         )
     except DashboardImageReferenceError as e:
         return _invalid_images_response(e)
+    return dashboard
+
+
+@router.post("/{dashboard_id}/duplicate", response_model=DashboardResponseDTO)
+def duplicate_dashboard(
+    dashboard_id: str,
+    dashboard_dto: DashboardDuplicateDTO,
+    authenticated_entity: AuthenticatedEntity = Depends(
+        IdentityManagerFactory.get_auth_verifier(["write:dashboards"])
+    ),
+):
+    """Copy a saved dashboard, with its uploaded images, under a new name."""
+    tenant_id = authenticated_entity.tenant_id
+    try:
+        dashboard = duplicate_dashboard_db(
+            tenant_id,
+            dashboard_id,
+            dashboard_dto.dashboard_name,
+            authenticated_entity.email,
+        )
+    except DashboardNameTakenError:
+        raise HTTPException(
+            status_code=409, detail="A dashboard with this name already exists"
+        )
+    except DashboardImageReferenceError as e:
+        return _invalid_images_response(e)
+    if dashboard is None:
+        raise HTTPException(status_code=404, detail="Dashboard not found")
     return dashboard
 
 
