@@ -9,7 +9,7 @@ from uuid import UUID
 
 from fastapi import HTTPException
 from sqlalchemy.orm.exc import StaleDataError
-from sqlmodel import Session, col, select
+from sqlmodel import Session, col, select, update
 
 
 from src.services.enrichments_bl import EnrichmentsBl
@@ -694,6 +694,10 @@ class IncidentBl:
             },
         )
 
+        if target == IncidentStatus.SUPPRESSED:
+            # Before the enrich, so whatever it reindexes sees the cleared row.
+            self._clear_stored_suppression(affected)
+
         await bl.batch_enrich(
             affected,
             enrichments,
@@ -708,6 +712,26 @@ class IncidentBl:
             self.session.commit()
 
         return affected
+
+    def _clear_stored_suppression(self, fingerprints: List[str]) -> None:
+        """Drop a stored status='suppressed' from alerts taking an incident's
+        dismissal.
+
+        The status dropdown can still store 'suppressed' as a plain status. It
+        is not an override anything should revert to: left in place, the alert
+        would read suppressed again the moment the incident's dismissal lapses,
+        instead of returning to firing on the incident's clock. A real override
+        (acknowledged) is kept — that is what the alert comes back as.
+        """
+        self.session.exec(
+            update(LastAlert)
+            .where(
+                LastAlert.tenant_id == self.tenant_id,
+                col(LastAlert.fingerprint).in_(fingerprints),
+                LastAlert.status == IncidentStatus.SUPPRESSED.value,
+            )
+            .values(status=None)
+        )
 
     async def inherit_incident_status(
         self,
