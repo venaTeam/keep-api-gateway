@@ -10,6 +10,7 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import event
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import IntegrityError
 
 from src.models.db.dashboard import Dashboard
@@ -618,3 +619,21 @@ def test_duplicate_maps_only_the_name_constraint_to_409(
         assert failures[0].exc_info[0] is IntegrityError
         assert failures[0].tenant_id == SINGLE_TENANT_UUID
         assert failures[0].source_dashboard_id == source_id
+
+
+def test_duplicate_locks_the_source_row(db_session):
+    """The source lookup is SELECT ... FOR UPDATE, so a concurrent save or delete waits."""
+    source_id = _add_dashboard(db_session, "d1")
+    statements = []
+    real_exec = db.Session.exec
+
+    def exec_spy(self, statement, *args, **kwargs):
+        statements.append(statement)
+        return real_exec(self, statement, *args, **kwargs)
+
+    with patch.object(db.Session, "exec", exec_spy):
+        db.duplicate_dashboard(SINGLE_TENANT_UUID, source_id, "d1 (copy)", "a@b")
+
+    source_lookup = str(statements[0].compile(dialect=postgresql.dialect()))
+    assert "FROM dashboard" in source_lookup
+    assert source_lookup.rstrip().endswith("FOR UPDATE")

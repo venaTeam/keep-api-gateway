@@ -2590,6 +2590,7 @@ def duplicate_dashboard(
                     Dashboard.created_by == created_by,
                 )
             )
+            .with_for_update()
         ).first()
         if not source:
             return None
