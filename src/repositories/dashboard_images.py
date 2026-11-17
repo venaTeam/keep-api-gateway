@@ -1,11 +1,14 @@
 """Keeps dashboardimage rows in step with the dashboards that reference them.
 
 Called from the dashboard write path in src/repositories/db.py with that
-function's session, so claims and deletions commit atomically with the
-dashboard row. Only columns are read here, never image blobs.
+function's session, so claims, copies and deletions commit atomically with the
+dashboard row. Image blobs are never loaded into Python here.
 """
 
-from sqlalchemy import delete, update
+import copy
+from datetime import datetime
+
+from sqlalchemy import delete, insert, literal, update
 from sqlmodel import Session, col, select
 
 from src.models.db.dashboard_image import DashboardImage
@@ -47,6 +50,29 @@ def referenced_image_ids(dashboard_config: dict | None) -> set[str]:
     return ids
 
 
+def rewrite_image_ids(dashboard_config: dict | None, id_map: dict[str, str]) -> dict:
+    """A deep copy of `dashboard_config` with uploaded-image ids swapped per `id_map`.
+
+    Only IMAGE widgets with an upload source whose id is in `id_map` change;
+    every other widget and key is copied as is. The input is never mutated.
+    """
+    config = copy.deepcopy(dashboard_config or {})
+    for widget in config.get("widget_data") or []:
+        if (
+            not isinstance(widget, dict)
+            or widget.get("widgetType") != IMAGE_WIDGET_TYPE
+        ):
+            continue
+        image = widget.get("image")
+        if (
+            isinstance(image, dict)
+            and image.get("source") == UPLOAD_SOURCE
+            and image.get("imageId") in id_map
+        ):
+            image["imageId"] = id_map[image["imageId"]]
+    return config
+
+
 def _current_owners(session: Session, tenant_id: str, ids: set[str]) -> dict:
     """{image id -> dashboard_id or None} for the tenant's images among `ids`."""
     rows = session.exec(
@@ -58,21 +84,30 @@ def _current_owners(session: Session, tenant_id: str, ids: set[str]) -> dict:
 
 
 def check_dashboard_image_references(
-    session: Session, tenant_id: str, dashboard_id: str, dashboard_config: dict | None
+    session: Session,
+    tenant_id: str,
+    dashboard_id: str,
+    dashboard_config: dict | None,
+    *,
+    allow_pending: bool = True,
 ) -> dict:
     """Validate dashboard image references without writing.
 
     Reads image ownership and raises DashboardImageReferenceError if a referenced
-    id does not exist for this tenant or belongs to another dashboard. Returns the
-    owners dict so sync_dashboard_images can avoid re-reading.
+    id does not exist for this tenant or belongs to another dashboard. Pending
+    images (no dashboard yet) are valid by default, as the save path claims
+    them; with `allow_pending=False` they are invalid too, so only images
+    `dashboard_id` already owns pass. Returns the owners dict so
+    sync_dashboard_images can avoid re-reading.
 
     Use this before adding the dashboard to the session to ensure bad references
     are rejected before any database writes.
     """
     wanted = referenced_image_ids(dashboard_config)
     owners = _current_owners(session, tenant_id, wanted) if wanted else {}
+    allowed_owners = (None, dashboard_id) if allow_pending else (dashboard_id,)
     invalid = sorted(
-        i for i in wanted if i not in owners or owners[i] not in (None, dashboard_id)
+        i for i in wanted if i not in owners or owners[i] not in allowed_owners
     )
     if invalid:
         raise DashboardImageReferenceError(invalid)
@@ -127,6 +162,56 @@ def sync_dashboard_images(
     if wanted:
         released = released.where(col(DashboardImage.id).not_in(wanted))
     session.execute(released.execution_options(synchronize_session=False))
+
+
+def copy_dashboard_images(
+    session: Session,
+    tenant_id: str,
+    source_dashboard_id: str,
+    new_dashboard_id: str,
+    id_map: dict[str, str],
+    created_by: str | None,
+) -> None:
+    """Copy the source dashboard's images under new ids owned by the new dashboard.
+
+    `id_map` maps each source image id to its copy's id. Each copy is one
+    INSERT ... SELECT, so the bytes are copied inside the database and never
+    loaded into Python. Raises DashboardImageReferenceError for an id the source
+    does not own in this tenant; the caller's transaction must then be rolled back.
+    """
+    for old_id, new_id in id_map.items():
+        copied = session.execute(
+            insert(DashboardImage).from_select(
+                [
+                    "id",
+                    "tenant_id",
+                    "dashboard_id",
+                    "name",
+                    "content_type",
+                    "size_bytes",
+                    "image_blob",
+                    "created_by",
+                    "created_at",
+                ],
+                select(
+                    literal(new_id),
+                    DashboardImage.tenant_id,
+                    literal(new_dashboard_id),
+                    DashboardImage.name,
+                    DashboardImage.content_type,
+                    DashboardImage.size_bytes,
+                    DashboardImage.image_blob,
+                    literal(created_by),
+                    literal(datetime.utcnow()),
+                ).where(
+                    DashboardImage.tenant_id == tenant_id,
+                    DashboardImage.id == old_id,
+                    DashboardImage.dashboard_id == source_dashboard_id,
+                ),
+            )
+        )
+        if copied.rowcount != 1:
+            raise DashboardImageReferenceError([old_id])
 
 
 def delete_dashboard_images(
