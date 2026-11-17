@@ -461,6 +461,41 @@ async def test_a_new_alert_inherits_an_acknowledged_incident(db_session):
 
 
 @pytest.mark.asyncio
+async def test_a_new_alert_inherits_a_self_assigned_incidents_status_and_assignee(
+    db_session,
+):
+    incident = _incident(db_session)
+    bl = _bl(db_session)
+    await bl.change_status(
+        incident.id, IncidentStatus.ACKNOWLEDGED, ACTOR, assign=True
+    )
+
+    late = _alert(db_session, "prop-late-claimed")
+    await bl.add_alerts_to_incident(incident.id, [late], change_by=ACTOR)
+
+    state = _state(db_session, late)
+    assert state["effective"] == "acknowledged"
+    assert state["assignee"] == ACTOR.email
+
+
+@pytest.mark.asyncio
+async def test_a_new_alert_inherits_the_assignee_of_a_firing_incident(db_session):
+    """Claimed and then set back to firing: no status to hand over, but the
+    incident still has an owner, and so does an alert that joins it."""
+    incident = _incident(db_session, assignee="owner@keep")
+
+    late = _alert(db_session, "prop-late-owned")
+    await _bl(db_session).add_alerts_to_incident(
+        incident.id, [late], change_by=ACTOR
+    )
+
+    state = _state(db_session, late)
+    assert state["effective"] == "firing"
+    assert state["override"] is None
+    assert state["assignee"] == "owner@keep"
+
+
+@pytest.mark.asyncio
 async def test_a_new_resolved_alert_is_not_dragged_out_of_resolved(db_session):
     incident = _incident(db_session)
     bl = _bl(db_session)

@@ -750,11 +750,16 @@ class IncidentBl:
         inherited deadline and all, so the new alert comes back on the same clock
         as the incident.
 
-        Only suppressed and acknowledged are inherited; a firing or resolved
-        incident has nothing to impose on an alert that just arrived.
+        Only suppressed and acknowledged statuses are inherited; a firing or
+        resolved incident has no status to impose on an alert that just arrived.
+
+        The incident's assignee is inherited whatever its status: an alert that
+        joins a claimed incident belongs to whoever claimed it, the same as the
+        alerts it already held when it was claimed.
         """
         effective = incident.get_effective_status()
-        if effective not in (
+        assignee = incident.assignee or None
+        if assignee is None and effective not in (
             IncidentStatus.SUPPRESSED.value,
             IncidentStatus.ACKNOWLEDGED.value,
         ):
@@ -778,6 +783,7 @@ class IncidentBl:
             change_by=actor,
             enrichment_bl=enrichment_bl,
             fingerprints=alert_fingerprints,
+            assignee=assignee,
             commit=True,
         )
 
