@@ -442,8 +442,14 @@ class IncidentBl:
         dismissed_until: Optional[datetime] = None,
         commit: bool = True,
         enrichment_bl: Optional[EnrichmentsBl] = None,
+        assign: bool = False,
     ) -> IncidentDto:
         """Move an incident to `new_status`, carrying its alerts along.
+
+        A status change is only a status change: it never touches who the
+        incident or its alerts are assigned to. `assign=True` is for
+        self-assign alone, which claims the incident by acknowledging it — the
+        incident and its non-resolved alerts are assigned to `change_by`.
 
         SUPPRESSED is the odd one out: it is never written to `incident.status`,
         because a time-boxed dismissal has to be able to lapse without anything
@@ -483,7 +489,7 @@ class IncidentBl:
             end_time = datetime.now(tz=timezone.utc)
             incident.end_time = end_time
 
-        if incident.assignee != change_by.email:
+        if assign and incident.assignee != change_by.email:
             incident.assignee = change_by.email
             add_audit(
                 self.tenant_id,
@@ -531,15 +537,9 @@ class IncidentBl:
         )
         self.session.add(incident)
 
-        # Acknowledging is claiming: whoever the incident is now assigned to is
-        # assigned its alerts too. This is a property of the transition, not of
-        # the endpoint — it applies equally to the status modal and to
-        # self-assign, which reaches this method as an acknowledge.
-        assignee = (
-            incident.assignee
-            if new_status == IncidentStatus.ACKNOWLEDGED
-            else None
-        )
+        # Self-assign claims the alerts along with the incident. A plain status
+        # change leaves every assignee alone.
+        assignee = change_by.email if assign else None
 
         await self.propagate_status_to_alerts(
             incident,
@@ -609,12 +609,16 @@ class IncidentBl:
         incidents do, so copying the incident's deadline is what makes the alert
         come back on the same clock. Writing a status would strand it suppressed.
 
-        Leaving acknowledged or suppressed takes back what entering it wrote: the
-        claim and the dismissal belong to the incident, so they do not outlive
-        the incident holding them. Whichever status the incident moves to, the
-        alerts end up with `assignee`, `dismiss_mode` and `dismissed_until` NULL
-        unless the new status writes them again. That includes resolved — the one
-        transition where no status travels, but the leftovers still go.
+        Leaving acknowledged or suppressed takes back the dismissal entering
+        suppressed wrote: it belongs to the incident, so it does not outlive the
+        incident holding it. Whichever status the incident moves to, the alerts
+        end up with `dismiss_mode` and `dismissed_until` NULL unless the new
+        status writes them again. That includes resolved — the one transition
+        where no status travels, but the leftovers still go.
+
+        Assignees are never taken back: `assignee` is only written when the
+        caller passes one (self-assign), and a status change says nothing about
+        who owns an alert.
 
         Returns the fingerprints actually written, for logging and tests.
 
@@ -671,9 +675,6 @@ class IncidentBl:
 
         if assignee is not None:
             enrichments["assignee"] = assignee
-        elif undo:
-            # The claim was the acknowledgement's; the acknowledgement is over.
-            enrichments["assignee"] = None
 
         bl = enrichment_bl or EnrichmentsBl(self.tenant_id, db=self.session)
         action_type, action_description, _ = bl.get_enrichment_metadata(

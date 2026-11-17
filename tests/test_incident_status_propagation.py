@@ -508,7 +508,7 @@ async def test_self_assign_acknowledges_and_assigns_alerts(db_session):
         _link(db_session, incident, fp)
 
     await _bl(db_session).change_status(
-        incident.id, IncidentStatus.ACKNOWLEDGED, ACTOR
+        incident.id, IncidentStatus.ACKNOWLEDGED, ACTOR, assign=True
     )
 
     db_session.expire_all()
@@ -525,33 +525,39 @@ async def test_self_assign_acknowledges_and_assigns_alerts(db_session):
 
 
 @pytest.mark.asyncio
-async def test_acknowledging_via_status_also_assigns_the_alerts(db_session):
-    """Acknowledging is claiming, whichever endpoint it arrives through."""
-    incident = _incident(db_session)
-    fp = _alert(db_session, "prop-ackassign")
-    _link(db_session, incident, fp)
-
-    await _bl(db_session).change_status(
-        incident.id, IncidentStatus.ACKNOWLEDGED, ACTOR
-    )
-
-    assert _state(db_session, fp)["assignee"] == ACTOR.email
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "new_status", [IncidentStatus.SUPPRESSED, IncidentStatus.FIRING]
+    "new_status",
+    [
+        IncidentStatus.ACKNOWLEDGED,
+        IncidentStatus.SUPPRESSED,
+        IncidentStatus.FIRING,
+        IncidentStatus.RESOLVED,
+    ],
 )
-async def test_other_status_changes_do_not_assign_alerts(db_session, new_status):
-    # Only acknowledging claims an alert; suppressing or re-firing says nothing
-    # about who owns it.
+async def test_a_status_change_assigns_no_one(db_session, new_status):
+    """A status change is only a status change — acknowledging included. Only
+    self-assign claims the incident and its alerts."""
     incident = _incident(db_session)
     fp = _alert(db_session, f"prop-noassign-{new_status.value}")
     _link(db_session, incident, fp)
 
     await _bl(db_session).change_status(incident.id, new_status, ACTOR)
 
+    db_session.expire_all()
+    assert db_session.get(Incident, incident.id).assignee is None
     assert _state(db_session, fp)["assignee"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_status_change_keeps_the_incidents_existing_assignee(db_session):
+    incident = _incident(db_session, assignee="owner@keep")
+
+    await _bl(db_session).change_status(
+        incident.id, IncidentStatus.ACKNOWLEDGED, ACTOR
+    )
+
+    db_session.expire_all()
+    assert db_session.get(Incident, incident.id).assignee == "owner@keep"
 
 
 # === leaving a propagated state takes back what it wrote ===
@@ -562,20 +568,24 @@ async def test_other_status_changes_do_not_assign_alerts(db_session, new_status)
     "new_status",
     [IncidentStatus.FIRING, IncidentStatus.RESOLVED, IncidentStatus.SUPPRESSED],
 )
-async def test_moving_off_acknowledged_unassigns_the_alerts(db_session, new_status):
-    """The claim is the acknowledgement's. Whatever status the incident moves
-    to next, the alerts stop carrying the assignee it gave them."""
+async def test_moving_off_acknowledged_keeps_a_self_assigned_claim(
+    db_session, new_status
+):
+    """Changing status says nothing about who owns the alerts, so a claim made
+    by self-assign survives the incident moving on."""
     incident = _incident(db_session)
-    fp = _alert(db_session, f"prop-unassign-{new_status.value}")
+    fp = _alert(db_session, f"prop-keepclaim-{new_status.value}")
     _link(db_session, incident, fp)
     bl = _bl(db_session)
 
-    await bl.change_status(incident.id, IncidentStatus.ACKNOWLEDGED, ACTOR)
+    await bl.change_status(
+        incident.id, IncidentStatus.ACKNOWLEDGED, ACTOR, assign=True
+    )
     assert _state(db_session, fp)["assignee"] == ACTOR.email
 
     await bl.change_status(incident.id, new_status, ACTOR)
 
-    assert _state(db_session, fp)["assignee"] is None
+    assert _state(db_session, fp)["assignee"] == ACTOR.email
 
 
 @pytest.mark.asyncio
@@ -604,7 +614,7 @@ async def test_moving_off_suppressed_to_resolved_clears_the_dismiss_fields(db_se
 
 
 @pytest.mark.asyncio
-async def test_acknowledging_after_suppressing_clears_the_dismissal_and_claims(
+async def test_self_assigning_after_suppressing_clears_the_dismissal_and_claims(
     db_session,
 ):
     """Both halves at once: the dismissal goes, the claim arrives."""
@@ -614,7 +624,9 @@ async def test_acknowledging_after_suppressing_clears_the_dismissal_and_claims(
     bl = _bl(db_session)
 
     await bl.change_status(incident.id, IncidentStatus.SUPPRESSED, ACTOR)
-    await bl.change_status(incident.id, IncidentStatus.ACKNOWLEDGED, ACTOR)
+    await bl.change_status(
+        incident.id, IncidentStatus.ACKNOWLEDGED, ACTOR, assign=True
+    )
 
     state = _state(db_session, fp)
     assert state["effective"] == "acknowledged"
@@ -624,21 +636,21 @@ async def test_acknowledging_after_suppressing_clears_the_dismissal_and_claims(
 
 
 @pytest.mark.asyncio
-async def test_re_acknowledging_reassigns_rather_than_unassigns(db_session):
-    """Acknowledging an already-acknowledged incident is not leaving it: the
-    alerts move to the new owner instead of being unassigned."""
+async def test_a_second_self_assign_moves_the_claim(db_session):
+    """Self-assigning an already-acknowledged incident hands it and its alerts
+    to the new owner."""
     incident = _incident(db_session)
     fp = _alert(db_session, "prop-reack")
     _link(db_session, incident, fp)
 
     await _bl(db_session).change_status(
-        incident.id, IncidentStatus.ACKNOWLEDGED, ACTOR
+        incident.id, IncidentStatus.ACKNOWLEDGED, ACTOR, assign=True
     )
     assert _state(db_session, fp)["assignee"] == ACTOR.email
 
     other = AuthenticatedEntity(tenant_id=SINGLE_TENANT_UUID, email="second@keep")
     await IncidentBl(SINGLE_TENANT_UUID, db_session, user=other.email).change_status(
-        incident.id, IncidentStatus.ACKNOWLEDGED, other
+        incident.id, IncidentStatus.ACKNOWLEDGED, other, assign=True
     )
 
     assert _state(db_session, fp)["assignee"] == other.email

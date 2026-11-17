@@ -136,7 +136,8 @@ async def test_change_status_without_commit_lands_on_the_callers_commit(db_sessi
 
     last_alert = _last_alert(db_session, fp)
     assert last_alert.status == "acknowledged"
-    assert last_alert.assignee == ACTOR.email
+    # A status change assigns no one; only self-assign claims the alerts.
+    assert last_alert.assignee is None
 
 
 @pytest.mark.asyncio
@@ -167,4 +168,5 @@ async def test_enrich_and_change_status_writes_incident_and_alerts(db_session):
 
     last_alert = _last_alert(db_session, fp)
     assert last_alert.status == "acknowledged"
-    assert last_alert.assignee == ACTOR.email
+    # A status change assigns no one; only self-assign claims the alerts.
+    assert last_alert.assignee is None

@@ -795,8 +795,8 @@ async def assign_incident(
         raise HTTPException(status_code=404, detail="Incident not found")
 
     # Claiming an incident acknowledges it, and the acknowledgement plus the
-    # assignee both reach its non-resolved alerts — `change_status` handles the
-    # status half, and `assignee` rides along on the same enrichment write.
+    # assignee both reach its non-resolved alerts. `assign=True` is what makes
+    # this a claim — a plain status change never assigns anyone.
     incident_bl = IncidentBl(tenant_id, session, user=authenticated_entity.email)
     enrichment_bl = EnrichmentsBl(tenant_id, session)
 
@@ -805,6 +805,7 @@ async def assign_incident(
         IncidentStatus.ACKNOWLEDGED,
         authenticated_entity,
         enrichment_bl=enrichment_bl,
+        assign=True,
     )
     record_user_action(
         tenant_id=tenant_id, feature="incidents", action="assign"
