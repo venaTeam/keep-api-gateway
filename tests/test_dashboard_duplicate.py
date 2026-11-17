@@ -19,6 +19,7 @@ from src.models.db.tenant import Tenant
 from src.repositories import db
 from src.repositories.dashboard_images import (
     DashboardImageReferenceError,
+    check_dashboard_image_references,
     copy_dashboard_images,
     rewrite_image_ids,
 )
@@ -637,3 +638,44 @@ def test_duplicate_locks_the_source_row(db_session):
     source_lookup = str(statements[0].compile(dialect=postgresql.dialect()))
     assert "FROM dashboard" in source_lookup
     assert source_lookup.rstrip().endswith("FOR UPDATE")
+
+
+def test_check_references_without_pending_rejects_pending_images(db_session):
+    dashboard_id = _add_dashboard(db_session, "d1")
+    pending_id = _add_image(db_session, None)
+    owned_id = _add_image(db_session, dashboard_id)
+    config = _config(_image_widget(pending_id, "w-1"), _image_widget(owned_id, "w-2"))
+
+    check_dashboard_image_references(
+        db_session, SINGLE_TENANT_UUID, dashboard_id, config
+    )
+    with pytest.raises(DashboardImageReferenceError) as exc:
+        check_dashboard_image_references(
+            db_session, SINGLE_TENANT_UUID, dashboard_id, config, allow_pending=False
+        )
+
+    assert exc.value.invalid_image_ids == [pending_id]
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+def test_duplicate_rejects_pending_image_before_any_write(db_session, client, test_app):
+    """A source referencing a pending upload is rejected before the new row is written.
+
+    Runs without _sqlite_transactions: the fixture autocommits, so any flushed
+    copy would survive and fail the row count.
+    """
+    image_id = _add_image(db_session, None)
+    source_id = _add_dashboard(
+        db_session, "d1", dashboard_config=_config(_image_widget(image_id))
+    )
+
+    response = _duplicate(client, source_id, "d1 (copy)")
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "message": "Dashboard references missing or unavailable images",
+        "invalid_image_ids": [image_id],
+    }
+    assert db_session.query(Dashboard).count() == 1
+    assert db_session.query(DashboardImage).count() == 1
+    assert _owner(db_session, image_id) is None

@@ -2570,14 +2570,23 @@ def duplicate_dashboard(
 
     The copy gets the source's saved config with each uploaded image copied
     under a new id, the source's `is_private`, and the caller as creator and
-    last editor. Everything happens in one transaction.
+    last editor. Everything happens in one transaction, with the source row
+    locked (SELECT ... FOR UPDATE) until it ends; nothing is committed on any
+    error.
 
     Returns None when the source is missing, in another tenant, or another
-    user's private dashboard. Raises DashboardNameTakenError when the name is
-    in use, and DashboardImageReferenceError when the source references an
-    image it does not own; nothing is written in either case. As on the save
-    path, references to missing or foreign images are rejected before any
-    write; the image copy re-checks ownership inside the transaction.
+    user's private dashboard.
+
+    Checked before any write: every uploaded image the source references must
+    already belong to the source, so a missing, pending or foreign image raises
+    DashboardImageReferenceError.
+
+    Checked by the write itself, relying on rollback: the unique name
+    constraint fails the new row's flush and raises DashboardNameTakenError;
+    any other integrity error there is logged and re-raised. The image copy
+    re-checks ownership after the new row is flushed, as a backstop for races,
+    and raises DashboardImageReferenceError; that flushed row is discarded
+    because the session closes without committing.
     """
     with Session(engine) as session:
         source = session.exec(
@@ -2598,7 +2607,9 @@ def duplicate_dashboard(
         config = source.dashboard_config
         if isinstance(config, str):
             config = json.loads(config)
-        check_dashboard_image_references(session, tenant_id, source.id, config)
+        check_dashboard_image_references(
+            session, tenant_id, source.id, config, allow_pending=False
+        )
         id_map = {old_id: str(uuid4()) for old_id in referenced_image_ids(config)}
         dashboard = Dashboard(
             tenant_id=tenant_id,
