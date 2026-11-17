@@ -2645,6 +2645,7 @@ def duplicate_dashboard(
             session, tenant_id, source.id, dashboard.id, id_map, created_by
         )
         session.commit()
+        session.refresh(dashboard)
         logger.info(
             "Duplicated dashboard",
             extra={
@@ -2654,7 +2655,6 @@ def duplicate_dashboard(
                 "copied_images": len(id_map),
             },
         )
-        session.refresh(dashboard)
         return dashboard
 
 
