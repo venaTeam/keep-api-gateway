@@ -2,6 +2,7 @@ import datetime
 import json
 import logging
 import os
+import re
 from typing import Tuple
 
 from sqlalchemy import and_, bindparam, func, select
@@ -18,7 +19,7 @@ from src.repositories.cel_to_sql.properties_metadata import (
 from src.repositories.cel_to_sql.sql_providers.get_cel_to_sql_provider_for_dialect import (
     get_cel_to_sql_provider,
 )
-from src.repositories.db import engine
+from src.repositories.db import engine, hidden_by_maintenance_window_filter
 
 # This import is required to create the tables
 from src.repositories.facets import get_facet_options, get_facets
@@ -112,6 +113,21 @@ alert_field_configurations = [
             "incident.user_generated_name",
             "incident.ai_generated_name",
         ],
+        data_type=DataType.STRING,
+    ),
+    # The alerts table's "incident" column shows the incident name.
+    FieldMappingConfiguration(
+        map_from_pattern="incident",
+        map_to=[
+            "incident.user_generated_name",
+            "incident.ai_generated_name",
+        ],
+        data_type=DataType.STRING,
+    ),
+    # AlertDto's alias for the object column.
+    FieldMappingConfiguration(
+        map_from_pattern="component",
+        map_to=["alert.object"],
         data_type=DataType.STRING,
     ),
     FieldMappingConfiguration(
@@ -259,6 +275,12 @@ _STRICT_SCHEMA_FIELD_CONFIGS = [
         map_to=["lastalert.last_received"],
         data_type=DataType.DATETIME,
     ),
+    # The camelCase name the UI shows.
+    FieldMappingConfiguration(
+        map_from_pattern="lastReceived",
+        map_to=["lastalert.last_received"],
+        data_type=DataType.DATETIME,
+    ),
     FieldMappingConfiguration(
         map_from_pattern="firing_counter",
         map_to=["lastalert.firing_counter"],
@@ -354,6 +376,14 @@ static_facets = [
 static_facets_dict = {facet.id: facet for facet in static_facets}
 
 
+_INCIDENT_FIELD = re.compile(r"\bincident\b")
+
+
+def _is_incident_field(field_name: str) -> bool:
+    field_name = field_name.removeprefix("alert.")
+    return field_name == "incident" or field_name.startswith("incident.")
+
+
 def get_threeshold_query(tenant_id: str):
     return func.coalesce(
         select(LastAlert.timestamp)
@@ -426,7 +456,7 @@ def __build_query_for_filtering(
     force_fetch=False,
     incident_statuses: list[str] | None = None,
 ):
-    fetch_incidents = fetch_incidents or (cel and "incident." in cel)
+    fetch_incidents = fetch_incidents or bool(cel and _INCIDENT_FIELD.search(cel))
     cel_to_sql_instance = get_cel_to_sql_provider(properties_metadata)
     sql_filter = None
     involved_fields = []
@@ -439,7 +469,7 @@ def __build_query_for_filtering(
             (
                 True
                 for field in involved_fields
-                if field.field_name.startswith("incident.")
+                if _is_incident_field(field.field_name)
             ),
             False,
         )
@@ -486,8 +516,10 @@ def __build_query_for_filtering(
             ),
         )
 
-    sql_query = sql_query.filter(LastAlert.tenant_id == tenant_id).filter(
-        LastAlert.timestamp >= get_threeshold_query(tenant_id)
+    sql_query = (
+        sql_query.filter(LastAlert.tenant_id == tenant_id)
+        .filter(LastAlert.timestamp >= get_threeshold_query(tenant_id))
+        .filter(hidden_by_maintenance_window_filter())
     )
     involved_fields = []
 
@@ -501,7 +533,7 @@ def __build_query_for_filtering(
 
 
 def build_total_alerts_query(tenant_id, query: QueryDto):
-    fetch_incidents = query.cel and "incident." in query.cel
+    fetch_incidents = bool(query.cel and _INCIDENT_FIELD.search(query.cel))
     fetch_alerts_data = query.cel is not None or query.cel != ""
 
     count_funct = (
@@ -617,6 +649,69 @@ def query_distinct_alerts_count(tenant_id, query: CountQueryDto) -> int:
             raise
 
 
+def build_missing_count_query(tenant_id: str, query: CountQueryDto):
+    """Count the matching alerts that ``group_by`` leaves out.
+
+    For incidents that is an alert with no live link to a visible, non-candidate
+    incident that has not been deleted, whatever its other status. For a field it
+    is an alert whose value is empty, the rule the distinct count uses to skip
+    blanks. Links and incidents are aliased so a CEL filter that joins them cannot
+    correlate with this check.
+    """
+    if query.group_by is None:
+        raise ValueError("group_by is required")
+
+    sql_query = __build_query_for_filtering(
+        tenant_id=tenant_id,
+        cel=query.cel,
+        select_args=[func.count(func.distinct(LastAlert.alert_id))],
+        limit=query.limit,
+    )["query"]
+
+    if query.group_by == CountGroupBy.INCIDENT:
+        live_link = aliased(LastAlertToIncident)
+        shown_incident = aliased(Incident)
+        linked = (
+            select(1)
+            .select_from(live_link)
+            .join(
+                shown_incident,
+                and_(
+                    live_link.tenant_id == shown_incident.tenant_id,
+                    live_link.incident_id == shown_incident.id,
+                ),
+            )
+            .where(
+                live_link.tenant_id == LastAlert.tenant_id,
+                live_link.fingerprint == LastAlert.fingerprint,
+                live_link.deleted_at == NULL_FOR_DELETED_AT,
+                shown_incident.is_visible == True,
+                shown_incident.is_candidate == False,
+            )
+            .correlate(LastAlert)
+        )
+        return sql_query.where(~linked.exists())
+
+    field_expression = get_cel_to_sql_provider(
+        properties_metadata
+    ).get_field_expression(query.group_by.value)
+    return sql_query.where(func.nullif(text(field_expression), "").is_(None))
+
+
+def query_missing_alerts_count(tenant_id, query: CountQueryDto) -> int:
+    with Session(engine) as session:
+        try:
+            missing_count_query = build_missing_count_query(
+                tenant_id=tenant_id, query=query
+            )
+            return session.exec(missing_count_query).one()[0]
+        except OperationalError as e:
+            logger.exception(
+                f"Failed to query missing alerts count for query object '{json.dumps(query.dict(exclude_unset=True), default=str)}': {e}"
+            )
+            raise
+
+
 def query_last_alerts(tenant_id, query: QueryDto) -> list[Alert]:
     query_with_defaults = query.copy()
 
@@ -676,8 +771,8 @@ def get_alert_facets_data(
         involved_fields: PropertyMetadataInfo,
         select_statement,
     ):
-        fetch_incidents = "incident." in facet_property_path or next(
-            (True for item in involved_fields if "incident." in item.field_name),
+        fetch_incidents = _is_incident_field(facet_property_path) or next(
+            (True for item in involved_fields if _is_incident_field(item.field_name)),
             False,
         )
         return __build_query_for_filtering(

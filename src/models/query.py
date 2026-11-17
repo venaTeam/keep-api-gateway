@@ -43,11 +43,13 @@ class CountQueryDto(QueryDto):
 
     Without ``group_by`` it counts alerts. With ``group_by`` it counts distinct
     values of that field; ``incident_status`` applies only to ``group_by=incident``
-    and defaults to ``active`` there.
+    and defaults to ``active`` there. ``include_missing`` also asks for the number
+    of matching alerts with no incident, or no value for the field.
     """
 
     group_by: Optional[CountGroupBy] = None
     incident_status: Optional[CountIncidentStatus] = None
+    include_missing: bool = False
 
     @root_validator(skip_on_failure=True)
     def validate_incident_status(cls, values):
@@ -56,6 +58,9 @@ class CountQueryDto(QueryDto):
 
         if incident_status is not None and group_by != CountGroupBy.INCIDENT:
             raise ValueError("incident_status is only valid with group_by=incident")
+
+        if values.get("include_missing") and group_by is None:
+            raise ValueError("include_missing is only valid with group_by")
 
         if group_by == CountGroupBy.INCIDENT and incident_status is None:
             values["incident_status"] = CountIncidentStatus.ACTIVE
