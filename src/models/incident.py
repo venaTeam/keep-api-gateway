@@ -145,12 +145,45 @@ class IncidentSeverityChangeDto(BaseModel):
     comment: str | None
 
 
+# Statuses a caller may write directly through create/update. Suppressed and
+# merged have their own flows (dismissal via /status, the merge action): stored
+# straight into `status`, a suppressed incident would never lapse and a merged
+# one would point nowhere. Anything else (e.g. the removed 'deleted') is not a
+# status at all.
+SETTABLE_INCIDENT_STATUSES = (
+    IncidentStatus.FIRING.value,
+    IncidentStatus.ACKNOWLEDGED.value,
+    IncidentStatus.RESOLVED.value,
+)
+
+
 class IncidentDtoIn(BaseModel):
     user_generated_name: str | None
     assignee: str | None
     user_summary: str | None
     same_incident_in_the_past_id: UUID | None
     severity: IncidentSeverity | None
+
+    @root_validator(pre=True)
+    def reject_unsettable_status(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+        """`status` is not a declared field, so with extra=allow anything a caller
+        sent used to be stored as-is: 'deleted' was saved, read back as firing,
+        and showed up under its own 'deleted' facet. Request bodies only — the
+        IncidentDto subclass reads every stored status back, so it is skipped."""
+        if cls is not IncidentDtoIn or "status" not in values:
+            return values
+        status = values["status"]
+        if isinstance(status, IncidentStatus):
+            status = status.value
+        if isinstance(status, str):
+            status = status.strip().lower()
+        if status not in SETTABLE_INCIDENT_STATUSES:
+            raise ValueError(
+                f"Invalid status {values['status']!r}: must be one of "
+                f"{', '.join(SETTABLE_INCIDENT_STATUSES)}"
+            )
+        values["status"] = status
+        return values
 
     class Config:
         extra = Extra.allow
