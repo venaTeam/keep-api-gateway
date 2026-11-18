@@ -457,8 +457,10 @@ def test_extraction_mapping_nonstrict_discards_unknown_keys(db_session):
         strict=False,
     )
     la = get_last_alert_by_fingerprint(SINGLE_TENANT_UUID, "fp-extract", db_session)
-    # the known key was written; the unknown key was discarded silently
-    assert la.status == "suppressed"
+    # the known key was written (a requested 'suppressed' is saved as a permanent
+    # dismissal, over the untouched override); the unknown key was discarded
+    assert la.dismiss_mode == "permanent"
+    assert la.status == "acknowledged"
 
 
 def test_last_alert_enrichments_dict_emits_iso_dismissed_until(db_session):

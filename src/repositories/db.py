@@ -338,7 +338,8 @@ def normalize_enrichments(enrichments: dict, strict: bool = True) -> dict:
     (`LastAlert.get_effective_status`), so `status` is left holding the override
     the alert reverts to when the dismissal lapses. An explicit `status` in the
     same payload is still honoured — it is a status change that happens to travel
-    with a dismissal, not part of the dismissal.
+    with a dismissal, not part of the dismissal — except `status='suppressed'`,
+    which is saved as a permanent dismissal so it is never stored as a status.
 
     Unknown keys (e.g. arbitrary extraction/mapping fields, which have no
     destination in the strict schema):
@@ -376,6 +377,16 @@ def normalize_enrichments(enrichments: dict, strict: bool = True) -> dict:
         # Clearing dismiss_mode directly also clears the deadline, so a stale
         # timestamp can't outlive the dismissal it belonged to.
         normalized.setdefault("dismissed_until", None)
+
+    # The status dropdown's "suppressed" is a dismissal, not a status. Stored as a
+    # status it never lapses and becomes what the alert "reverts" to, so save it as
+    # a permanent dismissal (or let a dismissal sent with it carry it). `status`
+    # then only ever holds something the alert can come back as.
+    if normalized.get("status") == AlertStatus.SUPPRESSED.value:
+        normalized.pop("status")
+        if not normalized.get("dismiss_mode"):
+            normalized["dismiss_mode"] = DismissMode.PERMANENT.value
+            normalized["dismissed_until"] = None
 
     unknown = set(normalized) - LASTALERT_ENRICHMENT_COLUMNS
     if unknown:

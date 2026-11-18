@@ -31,6 +31,8 @@ import pytest
 
 from src.models.db.alert import Alert, LastAlert, LastAlertToIncident
 from src.models.db.incident import Incident, IncidentDismissMode, IncidentStatus
+from src.models.action_type import ActionType
+from src.repositories.db import enrich_entity
 from src.repositories.dependencies import SINGLE_TENANT_UUID
 from src.services.identity_manager.authenticatedentity import AuthenticatedEntity
 from src.services.incidents_bl import IncidentBl
@@ -387,6 +389,19 @@ async def test_a_new_alert_inherits_a_suppressed_incidents_dismissal(db_session)
     assert state["dismissed_until"] is not None
 
 
+def _suppress_from_status_dropdown(db_session, fingerprint):
+    """What the alert status dropdown sends for "Suppressed"."""
+    enrich_entity(
+        SINGLE_TENANT_UUID,
+        fingerprint,
+        {"status": "suppressed"},
+        action_type=ActionType.GENERIC_ENRICH,
+        action_callee=ACTOR.email,
+        action_description="status dropdown",
+        session=db_session,
+    )
+
+
 def _lapse(db_session, incident, fingerprint):
     """Move both deadlines into the past, as if the dismissal had run out."""
     db_session.expire_all()
@@ -401,9 +416,9 @@ def _lapse(db_session, incident, fingerprint):
 async def test_a_status_suppressed_alert_joining_a_dismissed_incident_lapses_with_it(
     db_session,
 ):
-    """The status dropdown stores 'suppressed' as a plain status. Inheriting the
-    incident's dismissal must drop it, or the alert reads suppressed forever
-    after the incident's deadline instead of returning to firing."""
+    """The status dropdown's "suppressed" is saved as a permanent dismissal, not as
+    the alert's status, so inheriting the incident's dismissal replaces it and the
+    alert comes back firing on the incident's clock."""
     incident = _incident(db_session)
     bl = _bl(db_session)
     await bl.change_status(
@@ -414,7 +429,11 @@ async def test_a_status_suppressed_alert_joining_a_dismissed_incident_lapses_wit
         dismissed_until=_future(90),
     )
 
-    fp = _alert(db_session, "prop-late-status-sup", status="suppressed")
+    fp = _alert(db_session, "prop-late-status-sup")
+    _suppress_from_status_dropdown(db_session, fp)
+    assert _state(db_session, fp)["dismiss_mode"] == "permanent"
+    assert _state(db_session, fp)["override"] is None
+
     await bl.add_alerts_to_incident(incident.id, [fp], change_by=ACTOR)
 
     state = _state(db_session, fp)
@@ -432,7 +451,8 @@ async def test_dismissing_an_incident_lapses_its_status_suppressed_alerts_too(
     db_session,
 ):
     incident = _incident(db_session)
-    fp = _alert(db_session, "prop-held-status-sup", status="suppressed")
+    fp = _alert(db_session, "prop-held-status-sup")
+    _suppress_from_status_dropdown(db_session, fp)
     _link(db_session, incident, fp)
 
     await _bl(db_session).change_status(
