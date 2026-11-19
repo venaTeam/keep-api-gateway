@@ -7,6 +7,7 @@ from sqlalchemy.exc import OperationalError
 from src.models.db.incident import IncidentStatus
 from src.models.query import CountQueryDto
 from src.repositories.alerts import query_missing_alerts_count
+from src.repositories.db import delete_incident_by_id
 from src.repositories.dependencies import SINGLE_TENANT_UUID
 from tests.fixtures.alert_graph import link, seed_alert, seed_incident
 
@@ -73,9 +74,10 @@ def test_an_alert_only_in_a_resolved_incident_is_not_missing(db_session):
 
 
 def test_a_deleted_incident_does_not_count_as_an_incident(db_session):
-    deleted = seed_incident(db_session, "deleted", IncidentStatus.DELETED)
+    deleted = seed_incident(db_session, "deleted")
     seed_alert(db_session, "fp-1")
     link(db_session, "fp-1", deleted)
+    assert delete_incident_by_id(SINGLE_TENANT_UUID, deleted.id, db_session)
 
     assert missing(group_by="incident") == 1
 

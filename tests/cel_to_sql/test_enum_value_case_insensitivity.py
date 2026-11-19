@@ -11,10 +11,7 @@ import pytest
 
 from src.models.db.incident import IncidentStatus
 from src.repositories.alerts import properties_metadata as alert_properties_metadata
-from src.repositories.cel_to_sql.properties_metadata import (
-    JsonFieldMapping,
-    SimpleFieldMapping,
-)
+from src.repositories.cel_to_sql.properties_metadata import SimpleFieldMapping
 from src.repositories.cel_to_sql.sql_providers.get_cel_to_sql_provider_for_dialect import (
     get_cel_to_sql_provider_for_dialect,
 )
@@ -24,21 +21,23 @@ from src.repositories.incidents import (
 
 DIALECTS = ["sqlite", "mysql", "postgresql"]
 
-ALERT_STATUS_COLUMN = "COALESCE(lastalert.status, alert.status)"
-INCIDENT_STATUS_COLUMN = {
-    "sqlite": (
-        "CAST(COALESCE(json_extract(incidentenrichment.enrichments, '$.\"status\"'), "
-        "CAST(incident.status AS TEXT)) as TEXT)"
-    ),
-    "mysql": (
-        "COALESCE(JSON_UNQUOTE(JSON_EXTRACT(incidentenrichment.enrichments, "
-        "'$.\"status\"')), CAST(incident.status AS TEXT))"
-    ),
-    "postgresql": (
-        "(COALESCE((incidentenrichment.enrichments) ->> 'status', "
-        "CAST(incident.status AS TEXT)))::TEXT"
-    ),
-}
+def _suppressed_if_dismiss_active(table: str) -> str:
+    """The derived-suppression CASE that heads both status COALESCE chains."""
+    return (
+        f"CASE WHEN {table}.dismiss_mode = 'permanent' THEN 'suppressed'"
+        f" WHEN {table}.dismiss_mode = 'dismiss_until'"
+        f" AND {table}.dismissed_until > CURRENT_TIMESTAMP THEN 'suppressed'"
+        " ELSE NULL END"
+    )
+
+
+ALERT_STATUS_COLUMN = (
+    f"COALESCE({_suppressed_if_dismiss_active('lastalert')}, "
+    "lastalert.status, alert.status)"
+)
+INCIDENT_STATUS_COLUMN = (
+    f"COALESCE({_suppressed_if_dismiss_active('incident')}, incident.status)"
+)
 
 
 def _all_dialects(expected_sql: str) -> dict:
@@ -46,9 +45,7 @@ def _all_dialects(expected_sql: str) -> dict:
 
 
 def _incident_status(suffix: str) -> dict:
-    return {
-        dialect: f"{INCIDENT_STATUS_COLUMN[dialect]} {suffix}" for dialect in DIALECTS
-    }
+    return _all_dialects(f"{INCIDENT_STATUS_COLUMN} {suffix}")
 
 
 ALERT_CASES = {
@@ -163,9 +160,13 @@ INCIDENT_CASES = {
         "status == 'Acknowledged'",
         _incident_status("= 'acknowledged'"),
     ),
-    "eq titlecase deleted status": (
+    "eq titlecase suppressed status": (
+        "status == 'Suppressed'",
+        _incident_status("= 'suppressed'"),
+    ),
+    "deleted is no longer a status and passes through": (
         "status == 'Deleted'",
-        _incident_status("= 'deleted'"),
+        _incident_status("= 'Deleted'"),
     ),
     "free text name keeps its casing": (
         "name == 'Firing'",
@@ -215,7 +216,11 @@ def test_incident_status_enum_literal_is_canonicalized(case_name, dialect):
 
 
 def test_incident_status_declares_the_full_canonical_value_set():
-    """The enrichment-override source and the column source share one enum set."""
+    """The derived-suppression source and the column source share one enum set.
+
+    The enrichment JSON is deliberately not a source: a `status` key written
+    through enrich must not shadow the incident's real status.
+    """
     status_metadata = incident_properties_metadata.get_property_metadata(["status"])
 
     assert status_metadata.enum_values is not None
@@ -223,8 +228,10 @@ def test_incident_status_declares_the_full_canonical_value_set():
         [status.value for status in IncidentStatus]
     )
     assert len(status_metadata.field_mappings) == 2
-    assert isinstance(status_metadata.field_mappings[0], JsonFieldMapping)
-    assert isinstance(status_metadata.field_mappings[1], SimpleFieldMapping)
+    assert all(
+        isinstance(mapping, SimpleFieldMapping)
+        for mapping in status_metadata.field_mappings
+    )
 
 
 def test_incident_status_facet_lists_firing_first():

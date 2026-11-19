@@ -26,6 +26,7 @@ from src.repositories.db import (
     DestinationIncidentNotFound,
     add_audit,
     confirm_predicted_incident_by_id,
+    get_linked_fingerprints,
     get_enrichment,
     get_future_incidents_by_incident_id,
     get_incident_alerts_and_links_by_incident_id,
@@ -64,6 +65,7 @@ from src.models.incident import (
     IncidentSeverityChangeDto,
     IncidentSorting,
     IncidentStatusChangeDto,
+    split_incident_status_keys,
     MergeIncidentsRequestDto,
     MergeIncidentsResponseDto,
     SplitIncidentRequestDto,
@@ -379,7 +381,7 @@ def get_incident(
     "/{incident_id}",
     description="Update incident by id",
 )
-def update_incident(
+async def update_incident(
     incident_id: UUID,
     updated_incident_dto: IncidentDtoIn,
     generated_by_ai: bool = Query(
@@ -399,6 +401,16 @@ def update_incident(
     if not current_incident:
         raise HTTPException(status_code=404, detail="Incident not found")
 
+    # A status sent here is a status change like any other, so it goes through
+    # change_status: that clears a dismissal, reaches the incident's alerts, sets
+    # end_time on resolve and writes the audit row. Setting the column directly,
+    # as the generic update below would, skipped all of it.
+    requested_status = getattr(updated_incident_dto, "status", None)
+    if requested_status is not None:
+        updated_incident_dto = IncidentDtoIn.parse_obj(
+            updated_incident_dto.dict(exclude={"status"})
+        )
+
     if (
         updated_incident_dto.assignee
         and current_incident.assignee != updated_incident_dto.assignee
@@ -414,6 +426,16 @@ def update_incident(
     new_incident_dto = incident_bl.update_incident(
         incident_id, updated_incident_dto, generated_by_ai
     )
+    if (
+        requested_status is not None
+        and requested_status != current_incident.get_effective_status()
+    ):
+        new_incident_dto = await incident_bl.change_status(
+            incident_id,
+            IncidentStatus(requested_status),
+            authenticated_entity,
+            enrichment_bl=EnrichmentsBl(tenant_id, session),
+        )
     record_user_action(tenant_id=tenant_id, feature="incidents", action="update")
     return new_incident_dto
 
@@ -660,9 +682,16 @@ async def add_alerts_to_incident(
     session: Session = Depends(get_session),
 ):
     tenant_id = authenticated_entity.tenant_id
-    incident_bl = IncidentBl(tenant_id, session)
+    incident_bl = IncidentBl(tenant_id, session, user=authenticated_entity.email)
+    # A suppressed/acknowledged incident imposes its state on alerts joining it,
+    # which is an enrichment write — hence the producer and the acting user.
+    enrichment_bl = EnrichmentsBl(tenant_id, session)
     await incident_bl.add_alerts_to_incident(
-        incident_id, alert_fingerprints, is_created_by_ai
+        incident_id,
+        alert_fingerprints,
+        is_created_by_ai,
+        change_by=authenticated_entity,
+        enrichment_bl=enrichment_bl,
     )
     return Response(status_code=202)
 
@@ -765,36 +794,44 @@ async def receive_event(
     return Response(status_code=202)
 
 
-@router.post("/{incident_id}/assign", description="Assign incident to user")
-def assign_incident(
+@router.post(
+    "/{incident_id}/assign",
+    description="Self-assign an incident, acknowledging it and its alerts",
+    response_model=IncidentDto,
+)
+async def assign_incident(
     incident_id: UUID,
     authenticated_entity: AuthenticatedEntity = Depends(
         IdentityManagerFactory.get_auth_verifier(["write:incident"])
     ),
     session: Session = Depends(get_session),
-):
+) -> IncidentDto:
     logger.info(
         "Assigning incident to user",
         extra={"incident_id": incident_id, "assignee": authenticated_entity.email},
     )
-    incident = get_incident_by_id(
-        authenticated_entity.tenant_id, incident_id, session=session
-    )
+    tenant_id = authenticated_entity.tenant_id
+    incident = get_incident_by_id(tenant_id, incident_id, session=session)
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
-    incident.assignee = authenticated_entity.email
-    add_audit(
-        authenticated_entity.tenant_id,
-        str(incident_id),
-        authenticated_entity.email,
-        ActionType.INCIDENT_ASSIGN,
-        f"Incident self-assigned to {authenticated_entity.email}",
+
+    # Claiming an incident acknowledges it, and the acknowledgement plus the
+    # assignee both reach its non-resolved alerts. `assign=True` is what makes
+    # this a claim — a plain status change never assigns anyone.
+    incident_bl = IncidentBl(tenant_id, session, user=authenticated_entity.email)
+    enrichment_bl = EnrichmentsBl(tenant_id, session)
+
+    incident_dto = await incident_bl.change_status(
+        incident_id,
+        IncidentStatus.ACKNOWLEDGED,
+        authenticated_entity,
+        enrichment_bl=enrichment_bl,
+        assign=True,
     )
-    session.commit()
     record_user_action(
-        tenant_id=authenticated_entity.tenant_id, feature="incidents", action="assign"
+        tenant_id=tenant_id, feature="incidents", action="assign"
     )
-    return Response(status_code=202)
+    return incident_dto
 
 
 @router.post(
@@ -802,7 +839,7 @@ def assign_incident(
     description="Change incident status",
     response_model=IncidentDto,
 )
-def change_incident_status(
+async def change_incident_status(
     incident_id: UUID,
     change: IncidentStatusChangeDto,
     authenticated_entity: AuthenticatedEntity = Depends(
@@ -812,10 +849,19 @@ def change_incident_status(
 ) -> IncidentDto:
     tenant_id = authenticated_entity.tenant_id
 
-    incident_bl = IncidentBl(tenant_id, session)
+    incident_bl = IncidentBl(tenant_id, session, user=authenticated_entity.email)
+    # The status change propagates to the incident's alerts, which is an
+    # enrichment write — so the producer has to come along for the ride.
+    enrichment_bl = EnrichmentsBl(tenant_id, session)
 
-    new_incident_dto = incident_bl.change_status(
-        incident_id, change.status, authenticated_entity, change.dispose_on_new_alert
+    new_incident_dto = await incident_bl.change_status(
+        incident_id,
+        change.status,
+        authenticated_entity,
+        change.dispose_on_new_alert,
+        dismiss_mode=change.dismiss_mode,
+        dismissed_until=change.dismissed_until,
+        enrichment_bl=enrichment_bl,
     )
     record_user_action(
         tenant_id=tenant_id, feature="incidents", action="change_status"
@@ -987,11 +1033,12 @@ async def commit_with_ai(
     description="Confirm predicted incident by id",
     response_model=IncidentDto,
 )
-def confirm_incident(
+async def confirm_incident(
     incident_id: UUID,
     authenticated_entity: AuthenticatedEntity = Depends(
         IdentityManagerFactory.get_auth_verifier(["write:incident"])
     ),
+    session: Session = Depends(get_session),
 ) -> IncidentDto:
     tenant_id = authenticated_entity.tenant_id
     logger.info(
@@ -1006,6 +1053,18 @@ def confirm_incident(
     if not incident:
         raise HTTPException(status_code=404, detail="Incident candidate not found")
 
+    # As a candidate it handed nothing to the alerts grouped into it; now that
+    # the grouping is approved, they take its state (status, assignee) the same
+    # way alerts linked to a real incident do.
+    incident_bl = IncidentBl(tenant_id, session, user=authenticated_entity.email)
+    await incident_bl.inherit_incident_status(
+        incident,
+        sorted(get_linked_fingerprints(tenant_id, incident.id, session)),
+        change_by=authenticated_entity,
+        enrichment_bl=EnrichmentsBl(tenant_id, session),
+    )
+    incident_bl.update_client_on_incident_change(incident.id)
+
     new_incident_dto = IncidentDto.from_db_incident(incident)
 
     return new_incident_dto
@@ -1013,8 +1072,8 @@ def confirm_incident(
 
 @router.post(
     "/{incident_id}/enrich",
-    description="Enrich incident with additional data",
-    status_code=202,
+    description="Enrich incident with additional data, and optionally change its status",
+    response_model=IncidentDto,
 )
 async def enrich_incident(
     incident_id: UUID,
@@ -1023,8 +1082,16 @@ async def enrich_incident(
         IdentityManagerFactory.get_auth_verifier(["write:incident"])
     ),
     db_session: Session = Depends(get_session),
-) -> Response:
-    """Enrich incident with additional data."""
+) -> IncidentDto:
+    """Enrich an incident, and change its status in the same request.
+
+    `status`, `dismiss_mode` and `dismissed_until` in the body are applied to the
+    incident's typed columns rather than stored as enrichments; everything else
+    goes to the enrichment JSONB. Both land in one transaction, so dismissing an
+    incident and attaching a note cannot half-succeed.
+
+    Returns the updated incident, so a caller does not need a follow-up read.
+    """
     tenant_id = authenticated_entity.tenant_id
 
     # Get incident to verify it exists
@@ -1032,29 +1099,22 @@ async def enrich_incident(
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
 
-    # Use the existing enrichment infrastructure
-    enrichment_bl = EnrichmentsBl(tenant_id, db_session)
-
-    await enrichment_bl.enrich_entity(
-        fingerprint=incident_id,
-        enrichments=enrichment.enrichments,
-        action_type=ActionType.INCIDENT_ENRICH,
-        action_callee=authenticated_entity.email,
-        action_description=f"Incident enriched by {authenticated_entity.email}",
-        force=enrichment.force,
-        entity_type="incident",
-    )
-
-    # Notify clients about incident change
     try:
-        notify_sse(tenant_id, "incident-change", {"incident_id": str(incident_id)})
-    except Exception as e:
-        logger.exception(
-            "Failed to notify clients about incident change",
-            extra={"error": str(e)},
-        )
+        status_change, enrichments = split_incident_status_keys(enrichment.enrichments)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
 
-    return Response(status_code=202)
+    enrichment_bl = EnrichmentsBl(tenant_id, db_session)
+    incident_bl = IncidentBl(tenant_id, db_session, user=authenticated_entity.email)
+
+    return await incident_bl.enrich_and_change_status(
+        incident_id=incident_id,
+        change=status_change,
+        enrichments=enrichments,
+        change_by=authenticated_entity,
+        enrichment_bl=enrichment_bl,
+        force=enrichment.force,
+    )
 
 
 @router.post(
