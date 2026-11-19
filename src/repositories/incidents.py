@@ -110,6 +110,18 @@ incident_field_configurations = [
         map_to="incident.last_seen_time",
         data_type=DataType.DATETIME,
     ),
+    # The stored dismissal. `dismissed_until` stays set after a time-boxed
+    # dismissal lapses; combine with `status == 'suppressed'` for live ones.
+    FieldMappingConfiguration(
+        map_from_pattern="dismiss_mode",
+        map_to="incident.dismiss_mode",
+        data_type=DataType.STRING,
+    ),
+    FieldMappingConfiguration(
+        map_from_pattern="dismissed_until",
+        map_to="incident.dismissed_until",
+        data_type=DataType.DATETIME,
+    ),
     FieldMappingConfiguration(
         map_from_pattern="is_predicted",
         map_to="incident.is_predicted",

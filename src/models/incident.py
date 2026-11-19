@@ -461,6 +461,7 @@ class IncidentSorting(Enum):
     severity = "severity"
     status = "status"
     alerts_count = "alerts_count"
+    dismissed_until = "dismissed_until"
 
     creation_time_desc = "-creation_time"
     start_time_desc = "-start_time"
@@ -468,6 +469,7 @@ class IncidentSorting(Enum):
     severity_desc = "-severity"
     status_desc = "-status"
     alerts_count_desc = "-alerts_count"
+    dismissed_until_desc = "-dismissed_until"
 
     def get_order_by(self, model):
         if self.value.startswith("-"):
