@@ -26,6 +26,7 @@ from src.repositories.db import (
     DestinationIncidentNotFound,
     add_audit,
     confirm_predicted_incident_by_id,
+    get_linked_fingerprints,
     get_enrichment,
     get_future_incidents_by_incident_id,
     get_incident_alerts_and_links_by_incident_id,
@@ -1032,11 +1033,12 @@ async def commit_with_ai(
     description="Confirm predicted incident by id",
     response_model=IncidentDto,
 )
-def confirm_incident(
+async def confirm_incident(
     incident_id: UUID,
     authenticated_entity: AuthenticatedEntity = Depends(
         IdentityManagerFactory.get_auth_verifier(["write:incident"])
     ),
+    session: Session = Depends(get_session),
 ) -> IncidentDto:
     tenant_id = authenticated_entity.tenant_id
     logger.info(
@@ -1050,6 +1052,18 @@ def confirm_incident(
     incident = confirm_predicted_incident_by_id(tenant_id, incident_id)
     if not incident:
         raise HTTPException(status_code=404, detail="Incident candidate not found")
+
+    # As a candidate it handed nothing to the alerts grouped into it; now that
+    # the grouping is approved, they take its state (status, assignee) the same
+    # way alerts linked to a real incident do.
+    incident_bl = IncidentBl(tenant_id, session, user=authenticated_entity.email)
+    await incident_bl.inherit_incident_status(
+        incident,
+        sorted(get_linked_fingerprints(tenant_id, incident.id, session)),
+        change_by=authenticated_entity,
+        enrichment_bl=EnrichmentsBl(tenant_id, session),
+    )
+    incident_bl.update_client_on_incident_change(incident.id)
 
     new_incident_dto = IncidentDto.from_db_incident(incident)
 
