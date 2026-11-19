@@ -10,7 +10,10 @@ status at all.
 import pytest
 from sqlmodel import select
 
-from src.models.db.incident import Incident
+from src.models.action_type import ActionType
+from src.models.db.alert import AlertAudit, LastAlert
+from src.models.db.incident import Incident, IncidentDismissMode
+from tests.fixtures.alert_graph import link, seed_alert, seed_incident
 from tests.fixtures.client import client, setup_api_key, test_app  # noqa
 
 AUTH = {"x-api-key": "some-key"}
@@ -91,3 +94,83 @@ def test_update_still_sets_a_settable_status(db_session, client, test_app, statu
     assert response.status_code == 200
     db_session.expire_all()
     assert db_session.exec(select(Incident)).one().status == status
+
+
+# === a status sent through PUT is a real status change ===
+
+
+def _put_status(client, incident_id, status):
+    return client.put(
+        f"/incidents/{incident_id}",
+        headers=AUTH,
+        json={"user_generated_name": "status input", "status": status},
+    )
+
+
+def _status_audits(db_session, incident_id):
+    return db_session.exec(
+        select(AlertAudit).where(
+            AlertAudit.fingerprint == str(incident_id),
+            AlertAudit.action == ActionType.INCIDENT_STATUS_CHANGE.value,
+        )
+    ).all()
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+def test_update_to_firing_lifts_a_dismissal(db_session, client, test_app):
+    incident = seed_incident(db_session, "dismissed")
+    incident.dismiss_mode = IncidentDismissMode.PERMANENT.value
+    db_session.add(incident)
+    db_session.commit()
+
+    response = _put_status(client, incident.id, "firing")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "firing"
+    db_session.expire_all()
+    stored = db_session.get(Incident, incident.id)
+    assert stored.dismiss_mode is None
+    assert stored.get_effective_status() == "firing"
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+def test_update_to_acknowledged_reaches_the_alerts(db_session, client, test_app):
+    incident = seed_incident(db_session, "ack via put")
+    seed_alert(db_session, "fp-put-ack")
+    link(db_session, "fp-put-ack", incident)
+
+    response = _put_status(client, incident.id, "acknowledged")
+
+    assert response.status_code == 200
+    db_session.expire_all()
+    last_alert = db_session.exec(
+        select(LastAlert).where(LastAlert.fingerprint == "fp-put-ack")
+    ).one()
+    assert last_alert.status == "acknowledged"
+    # A status change assigns no one, whichever route it comes through.
+    assert last_alert.assignee is None
+    assert db_session.get(Incident, incident.id).assignee is None
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+def test_update_to_resolved_sets_end_time_and_audits(db_session, client, test_app):
+    incident = seed_incident(db_session, "resolve via put")
+
+    response = _put_status(client, incident.id, "resolved")
+
+    assert response.status_code == 200
+    db_session.expire_all()
+    stored = db_session.get(Incident, incident.id)
+    assert stored.status == "resolved"
+    assert stored.end_time is not None
+    assert len(_status_audits(db_session, incident.id)) == 1
+
+
+@pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
+def test_update_to_the_current_status_changes_nothing(db_session, client, test_app):
+    incident = seed_incident(db_session, "already firing")
+
+    response = _put_status(client, incident.id, "firing")
+
+    assert response.status_code == 200
+    assert _status_audits(db_session, incident.id) == []

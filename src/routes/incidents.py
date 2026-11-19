@@ -380,7 +380,7 @@ def get_incident(
     "/{incident_id}",
     description="Update incident by id",
 )
-def update_incident(
+async def update_incident(
     incident_id: UUID,
     updated_incident_dto: IncidentDtoIn,
     generated_by_ai: bool = Query(
@@ -400,6 +400,16 @@ def update_incident(
     if not current_incident:
         raise HTTPException(status_code=404, detail="Incident not found")
 
+    # A status sent here is a status change like any other, so it goes through
+    # change_status: that clears a dismissal, reaches the incident's alerts, sets
+    # end_time on resolve and writes the audit row. Setting the column directly,
+    # as the generic update below would, skipped all of it.
+    requested_status = getattr(updated_incident_dto, "status", None)
+    if requested_status is not None:
+        updated_incident_dto = IncidentDtoIn.parse_obj(
+            updated_incident_dto.dict(exclude={"status"})
+        )
+
     if (
         updated_incident_dto.assignee
         and current_incident.assignee != updated_incident_dto.assignee
@@ -415,6 +425,16 @@ def update_incident(
     new_incident_dto = incident_bl.update_incident(
         incident_id, updated_incident_dto, generated_by_ai
     )
+    if (
+        requested_status is not None
+        and requested_status != current_incident.get_effective_status()
+    ):
+        new_incident_dto = await incident_bl.change_status(
+            incident_id,
+            IncidentStatus(requested_status),
+            authenticated_entity,
+            enrichment_bl=EnrichmentsBl(tenant_id, session),
+        )
     record_user_action(tenant_id=tenant_id, feature="incidents", action="update")
     return new_incident_dto
 
