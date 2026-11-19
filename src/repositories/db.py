@@ -3535,6 +3535,29 @@ def get_alerts_data_for_incident(
         }
 
 
+def get_linked_fingerprints(
+    tenant_id: str, incident_id: UUID, session: Session
+) -> set[str]:
+    """Fingerprints currently linked to the incident (a removed link doesn't count)."""
+    return set(
+        session.exec(
+            select(LastAlert.fingerprint)
+            .join(
+                LastAlertToIncident,
+                and_(
+                    LastAlertToIncident.tenant_id == LastAlert.tenant_id,
+                    LastAlertToIncident.fingerprint == LastAlert.fingerprint,
+                ),
+            )
+            .where(
+                LastAlertToIncident.deleted_at == NULL_FOR_DELETED_AT,
+                LastAlertToIncident.tenant_id == tenant_id,
+                LastAlertToIncident.incident_id == incident_id,
+            )
+        ).all()
+    )
+
+
 @retry_on_db_error
 def add_alerts_to_incident(
     tenant_id: str,
@@ -3554,22 +3577,8 @@ def add_alerts_to_incident(
     with existed_or_new_session(session) as session:
         with session.no_autoflush:
             # Use a set for faster membership checks
-            existing_fingerprints = set(
-                session.exec(
-                    select(LastAlert.fingerprint)
-                    .join(
-                        LastAlertToIncident,
-                        and_(
-                            LastAlertToIncident.tenant_id == LastAlert.tenant_id,
-                            LastAlertToIncident.fingerprint == LastAlert.fingerprint,
-                        ),
-                    )
-                    .where(
-                        LastAlertToIncident.deleted_at == NULL_FOR_DELETED_AT,
-                        LastAlertToIncident.tenant_id == tenant_id,
-                        LastAlertToIncident.incident_id == incident.id,
-                    )
-                ).all()
+            existing_fingerprints = get_linked_fingerprints(
+                tenant_id, incident.id, session
             )
 
             new_fingerprints = {

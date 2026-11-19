@@ -15,6 +15,7 @@ from sqlmodel import Session, col, select
 from src.services.enrichments_bl import EnrichmentsBl
 from src.repositories.db import (
     add_alerts_to_incident,
+    get_linked_fingerprints,
     add_audit,
     create_incident_from_dto,
     delete_incident_by_id,
@@ -151,6 +152,18 @@ class IncidentBl:
         if not incident:
             raise HTTPException(status_code=404, detail="Incident not found")
 
+        # Only alerts this call actually links inherit the incident's state.
+        # Re-associating an alert that is already in the incident must not
+        # overwrite whatever it has been given since (an assignee, a status).
+        already_linked = get_linked_fingerprints(
+            self.tenant_id, incident.id, self.session
+        )
+        newly_linked = [
+            fingerprint
+            for fingerprint in dict.fromkeys(alert_fingerprints)
+            if fingerprint not in already_linked
+        ]
+
         add_alerts_to_incident(
             self.tenant_id,
             incident,
@@ -168,7 +181,7 @@ class IncidentBl:
         )
         await self.inherit_incident_status(
             incident,
-            alert_fingerprints,
+            newly_linked,
             change_by=change_by,
             enrichment_bl=enrichment_bl,
         )
@@ -732,12 +745,32 @@ class IncidentBl:
         The incident's assignee is inherited whatever its status: an alert that
         joins a claimed incident belongs to whoever claimed it, the same as the
         alerts it already held when it was claimed.
+
+        A candidate incident (from a "require approval" rule) hands over nothing:
+        nobody has approved the grouping yet.
         """
+        if incident.is_candidate:
+            return []
+
         effective = incident.get_effective_status()
+        try:
+            status = IncidentStatus(effective)
+        except ValueError:
+            # Create/update used to store any string; such a row has no status to
+            # hand over, but its assignee still applies.
+            self.logger.warning(
+                "Incident has an unknown stored status, inheriting none",
+                extra={
+                    "incident_id": str(incident.id),
+                    "tenant_id": self.tenant_id,
+                    "status": effective,
+                },
+            )
+            status = IncidentStatus.FIRING
         assignee = incident.assignee or None
-        if assignee is None and effective not in (
-            IncidentStatus.SUPPRESSED.value,
-            IncidentStatus.ACKNOWLEDGED.value,
+        if assignee is None and status not in (
+            IncidentStatus.SUPPRESSED,
+            IncidentStatus.ACKNOWLEDGED,
         ):
             return []
 
@@ -755,7 +788,7 @@ class IncidentBl:
         return await self.propagate_status_to_alerts(
             incident,
             previous_status=IncidentStatus.FIRING.value,
-            new_status=IncidentStatus(effective),
+            new_status=status,
             change_by=actor,
             enrichment_bl=enrichment_bl,
             fingerprints=alert_fingerprints,

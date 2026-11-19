@@ -516,6 +516,68 @@ async def test_a_new_alert_inherits_the_assignee_of_a_firing_incident(db_session
 
 
 @pytest.mark.asyncio
+async def test_re_associating_a_linked_alert_keeps_what_it_was_given_since(
+    db_session,
+):
+    """Only the alerts a call actually links inherit; one already in the incident
+    keeps an assignee it was given after joining."""
+    incident = _incident(db_session, assignee="owner@keep")
+    bl = _bl(db_session)
+    fp = _alert(db_session, "prop-relink")
+    await bl.add_alerts_to_incident(incident.id, [fp], change_by=ACTOR)
+    assert _state(db_session, fp)["assignee"] == "owner@keep"
+
+    last_alert = (
+        db_session.query(LastAlert).filter(LastAlert.fingerprint == fp).one()
+    )
+    last_alert.assignee = "someone-else@keep"
+    db_session.commit()
+
+    await bl.add_alerts_to_incident(incident.id, [fp], change_by=ACTOR)
+
+    assert _state(db_session, fp)["assignee"] == "someone-else@keep"
+
+
+@pytest.mark.asyncio
+async def test_a_candidate_incident_hands_over_nothing(db_session):
+    """A "require approval" rule's candidate: nobody has approved the grouping."""
+    incident = _incident(
+        db_session,
+        status=IncidentStatus.ACKNOWLEDGED,
+        assignee="rule-owner@keep",
+        is_candidate=True,
+    )
+
+    late = _alert(db_session, "prop-late-candidate")
+    await _bl(db_session).add_alerts_to_incident(
+        incident.id, [late], change_by=ACTOR
+    )
+
+    state = _state(db_session, late)
+    assert state["effective"] == "firing"
+    assert state["assignee"] is None
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_stored_status_still_hands_over_the_assignee(db_session):
+    """Create/update used to store any string. Linking to such an incident must
+    not fail (the links are already committed by then); it inherits no status."""
+    incident = _incident(db_session, assignee="owner@keep")
+    incident.status = "FIRING"
+    db_session.add(incident)
+    db_session.commit()
+
+    late = _alert(db_session, "prop-late-bad-status")
+    await _bl(db_session).add_alerts_to_incident(
+        incident.id, [late], change_by=ACTOR
+    )
+
+    state = _state(db_session, late)
+    assert state["effective"] == "firing"
+    assert state["assignee"] == "owner@keep"
+
+
+@pytest.mark.asyncio
 async def test_a_new_resolved_alert_is_not_dragged_out_of_resolved(db_session):
     incident = _incident(db_session)
     bl = _bl(db_session)
