@@ -61,7 +61,10 @@ from src.repositories.db_utils import (
 from src.repositories.dependencies import GENERIC_TENANT_UUID
 from src.repositories.dashboard_images import (
     check_dashboard_image_references,
+    copy_dashboard_images,
     delete_dashboard_images,
+    referenced_image_ids,
+    rewrite_image_ids,
     sync_dashboard_images,
 )
 
@@ -2540,6 +2543,118 @@ def create_dashboard(
         sync_dashboard_images(session, tenant_id, dashboard.id, dashboard_config)
         session.commit()
         session.refresh(dashboard)
+        return dashboard
+
+
+class DashboardNameTakenError(ValueError):
+    """Another dashboard in the tenant already has the requested name."""
+
+
+def _is_dashboard_name_conflict(error: IntegrityError) -> bool:
+    """Whether `error` violates the per-tenant unique dashboard name.
+
+    PostgreSQL and MySQL name the constraint in the message; SQLite names only
+    the columns, as `UNIQUE constraint failed: dashboard.tenant_id,
+    dashboard.dashboard_name`.
+    """
+    message = str(error.orig)
+    return "unique_dashboard_name_per_tenant" in message or (
+        "UNIQUE constraint failed" in message and "dashboard.dashboard_name" in message
+    )
+
+
+def duplicate_dashboard(
+    tenant_id: str, dashboard_id: str, dashboard_name: str, created_by: str | None
+) -> Dashboard | None:
+    """Copy a dashboard the caller can see, with its uploaded images, under a new name.
+
+    The copy gets the source's saved config with each uploaded image copied
+    under a new id, the source's `is_private`, and the caller as creator and
+    last editor. Everything happens in one transaction, with the source row
+    locked (SELECT ... FOR UPDATE) until it ends; nothing is committed on any
+    error.
+
+    Returns None when the source is missing, in another tenant, or another
+    user's private dashboard.
+
+    Checked before any write: every uploaded image the source references must
+    already belong to the source, so a missing, pending or foreign image raises
+    DashboardImageReferenceError; and no dashboard in the tenant, of any
+    privacy, may have the name ignoring case, else DashboardNameTakenError.
+
+    Checked by the write itself, relying on rollback: the unique name
+    constraint catches a concurrent duplicate with the same exact name, fails
+    the new row's flush and raises DashboardNameTakenError; any other
+    integrity error there is logged and re-raised. The image copy
+    re-checks ownership after the new row is flushed, as a backstop for races,
+    and raises DashboardImageReferenceError; that flushed row is discarded
+    because the session closes without committing.
+    """
+    with Session(engine) as session:
+        source = session.exec(
+            select(Dashboard)
+            .where(Dashboard.tenant_id == tenant_id)
+            .where(Dashboard.id == dashboard_id)
+            .where(
+                or_(
+                    Dashboard.is_private == False,
+                    Dashboard.created_by == created_by,
+                )
+            )
+            .with_for_update()
+        ).first()
+        if not source:
+            return None
+
+        config = source.dashboard_config
+        if isinstance(config, str):
+            config = json.loads(config)
+        check_dashboard_image_references(
+            session, tenant_id, source.id, config, allow_pending=False
+        )
+        name_taken = session.exec(
+            select(Dashboard.id)
+            .where(Dashboard.tenant_id == tenant_id)
+            .where(func.lower(Dashboard.dashboard_name) == func.lower(dashboard_name))
+        ).first()
+        if name_taken:
+            raise DashboardNameTakenError(dashboard_name)
+        id_map = {old_id: str(uuid4()) for old_id in referenced_image_ids(config)}
+        dashboard = Dashboard(
+            tenant_id=tenant_id,
+            dashboard_name=dashboard_name,
+            dashboard_config=rewrite_image_ids(config, id_map),
+            created_by=created_by,
+            updated_by=created_by,
+            is_private=source.is_private,
+        )
+        session.add(dashboard)
+        try:
+            session.flush()
+        except IntegrityError as error:
+            if _is_dashboard_name_conflict(error):
+                session.rollback()
+                raise DashboardNameTakenError(dashboard_name)
+            logger.exception(
+                "Failed to duplicate dashboard",
+                extra={"tenant_id": tenant_id, "source_dashboard_id": dashboard_id},
+            )
+            session.rollback()
+            raise
+        copy_dashboard_images(
+            session, tenant_id, source.id, dashboard.id, id_map, created_by
+        )
+        session.commit()
+        session.refresh(dashboard)
+        logger.info(
+            "Duplicated dashboard",
+            extra={
+                "tenant_id": tenant_id,
+                "source_dashboard_id": dashboard_id,
+                "new_dashboard_id": dashboard.id,
+                "copied_images": len(id_map),
+            },
+        )
         return dashboard
 
 
