@@ -3,11 +3,19 @@ import uuid
 
 import pytest
 
+from src.services.assistant.bl import drafts_bl
 from src.services.assistant.core import metrics
 from src.services.assistant.models.db import Conversation, Draft
 from tests.assistant.conftest import OTHER_TENANT
 from tests.assistant.fakes import whoami
-from tests.assistant.rows import add_conversation, add_draft, ago, messages, read
+from tests.assistant.rows import (
+    add_conversation,
+    add_draft,
+    ago,
+    change,
+    messages,
+    read,
+)
 from tests.assistant.running import Exchange, Keep, equip, post_confirm
 
 
@@ -120,6 +128,39 @@ async def test_only_a_pending_draft(app, db, conversation, state, code):
     assert exchange.json()["draft"]["state"] == state
     assert read(db, Draft, draft) == before
     assert messages(db, conversation) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("state", "status", "code"),
+    [
+        ("applying", 409, "draft_applying"),
+        ("expired", 409, "draft_expired"),
+        ("applied", 409, "draft_not_pending"),
+        # Put back since: whoever confirmed it may do so again.
+        ("pending", 409, "draft_applying"),
+        ("discarded", 200, None),
+    ],
+)
+async def test_somebody_was_faster(
+    app, db, conversation, monkeypatch, state, status, code
+):
+    """Between reading the draft and changing it."""
+    draft = add_draft(db, conversation)
+    count = discarded()
+
+    def too_late(*args, **kwargs):
+        change(db, Draft, draft, state=state)
+        return None
+
+    monkeypatch.setattr(drafts_bl, "resolve", too_late)
+    exchange = await post(app, draft).finish()
+    assert exchange.status == status
+    if code:
+        assert exchange.code == code
+    shown = exchange.json()["draft"] if code else exchange.json()
+    assert shown["state"] == state
+    assert discarded() == count
 
 
 @pytest.mark.asyncio
