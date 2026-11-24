@@ -1,6 +1,8 @@
 import logging
+import unicodedata
 from copy import deepcopy
 from typing import Iterable, List, Optional
+from urllib.parse import urlsplit
 
 import celpy
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
@@ -83,6 +85,37 @@ def _require_delete_scope(
     """
     if "deleted" in keys:
         _delete_alert_verifier.authorize(authenticated_entity)
+
+
+def _is_http_url(value) -> bool:
+    """Whether value is an absolute http(s) URL free of whitespace and control chars.
+
+    The character check comes first: URL parsers (this one and the browser's) drop
+    tabs and newlines, so `java\nscript:` would otherwise read as something else.
+    """
+    if not isinstance(value, str) or any(
+        char.isspace() or unicodedata.category(char) == "Cc" for char in value
+    ):
+        return False
+    try:
+        parts = urlsplit(value)
+        return parts.scheme in ("http", "https") and bool(parts.hostname)
+    except ValueError:
+        return False
+
+
+def _reject_unsafe_ticket_url(enrichments: dict) -> None:
+    """422 when `ticket_url` is set to something other than a web link.
+
+    The UI opens the stored value when the ticket is clicked, so a `javascript:` URL
+    would run in the session of whoever clicks it. null and "" clear the field.
+    """
+    ticket_url = enrichments.get("ticket_url")
+    if ticket_url is None or ticket_url == "" or _is_http_url(ticket_url):
+        return
+    raise HTTPException(
+        status_code=422, detail="ticket_url must be an absolute http or https URL"
+    )
 
 
 class AlertHistoryResponse(BaseModel):
@@ -604,6 +637,7 @@ async def batch_enrich_alerts(
     session: Session = Depends(get_session),
 ):
     _require_delete_scope(authenticated_entity, enrich_data.enrichments)
+    _reject_unsafe_ticket_url(enrich_data.enrichments)
 
     tenant_id = authenticated_entity.tenant_id
     logger.info(
@@ -778,6 +812,7 @@ async def enrich_alert(
     session: Session = Depends(get_session),
 ) -> dict[str, str]:
     _require_delete_scope(authenticated_entity, enrich_data.enrichments)
+    _reject_unsafe_ticket_url(enrich_data.enrichments)
 
     _translate_dismiss_enrichments(enrich_data.enrichments)
 
