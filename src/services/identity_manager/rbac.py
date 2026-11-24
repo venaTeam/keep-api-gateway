@@ -54,10 +54,11 @@ class Role:
         return True
 
 
-# Noc has read permissions and it can assign itself to alert
+# Noc has read permissions and can change alert state (status, assignee, note).
+# write:alert does not cover soft-deleting an alert, which needs delete:alert.
 class Noc(Role):
-    SCOPES = ["read:*"]
-    DESCRIPTION = "read permissions and assign itself to alert"
+    SCOPES = ["read:*", "write:alert"]
+    DESCRIPTION = "read permissions and change alert state"
 
 
 # Viewer is read-only within the tenants it has access to (VENA-5596 §3.5).

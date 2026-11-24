@@ -12,6 +12,7 @@ import pytest
 from src.models.alert import AlertStatus
 from src.models.db.alert import AlertAudit, LastAlert
 from tests.fixtures.client import client, setup_api_key, test_app  # noqa
+from tests.fixtures.identity import bearer_headers
 
 FINGERPRINT = "fp-ticket"
 STORED_URL = "https://jira.example.com/browse/OPS-1"
@@ -116,6 +117,21 @@ def test_non_http_ticket_url_is_refused_before_any_write(
         if isinstance(bad, str) and bad.strip():
             assert bad not in detail
         assert _state(db_session) == before, bad
+
+
+@pytest.mark.parametrize("form", FORMS)
+@pytest.mark.parametrize("test_app", ["SINGLE_TENANT"], indirect=True)
+def test_noc_cannot_store_a_script_url(
+    db_session, client, test_app, create_alert, form
+):
+    _seed(db_session, create_alert)
+    before = _state(db_session)
+
+    path, body = FORMS[form]({"ticket_url": "javascript:alert(document.domain)"})
+    response = client.post(path, headers=bearer_headers("noc"), json=body)
+
+    assert response.status_code == 422, response.text
+    assert _state(db_session) == before
 
 
 @pytest.mark.parametrize("test_app", ["SINGLE_TENANT"], indirect=True)

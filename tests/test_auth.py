@@ -6,6 +6,7 @@ import pytest
 from src.repositories.dependencies import GENERIC_TENANT_UUID
 from src.models.db.tenant import TenantApiKey
 from tests.fixtures.client import client, setup_api_key, test_app  # noqa
+from tests.fixtures.identity import bearer_headers
 
 MOCK_TOKEN = "MOCKTOKEN"
 
@@ -456,6 +457,83 @@ def test_deleted_api_key_authentication(db_session, client, test_app):
     found_key = get_api_key(valid_api_key, include_deleted=True)
     assert found_key is not None
     assert found_key.is_deleted == True
+
+
+# ---------------------------------------------------------------------------
+# Role gates around alert status changes
+# ---------------------------------------------------------------------------
+
+# A body the route rejects. Authorization is decided before the body is parsed, so
+# 403 means "refused" and 422 means "allowed in" without running the handler.
+RESCOPED_ROUTES = {
+    "ai_settings": ("PUT", "/ai/some-algorithm/settings", {}),
+    "provider_alerts": ("POST", "/providers/grafana/some-id/alerts", "not a dict"),
+}
+
+
+@pytest.mark.parametrize("route", RESCOPED_ROUTES)
+@pytest.mark.parametrize("test_app", ["SINGLE_TENANT"], indirect=True)
+def test_rescoped_routes_refuse_webhook_keys(db_session, client, test_app, route):
+    """write:alert is not enough to change AI settings or push alerts to a provider."""
+    setup_api_key(db_session, "webhook-key", role="webhook")
+    method, path, body = RESCOPED_ROUTES[route]
+
+    response = client.request(
+        method, path, headers={"x-api-key": "webhook-key"}, json=body
+    )
+
+    assert response.status_code == 403, response.text
+
+
+@pytest.mark.parametrize(
+    "role,expected",
+    [("noc", 403), ("viewer", 403), ("editor", 422), ("admin", 422)],
+)
+@pytest.mark.parametrize("route", RESCOPED_ROUTES)
+@pytest.mark.parametrize("test_app", ["SINGLE_TENANT"], indirect=True)
+def test_rescoped_routes_by_role(db_session, client, test_app, route, role, expected):
+    method, path, body = RESCOPED_ROUTES[route]
+
+    response = client.request(method, path, headers=bearer_headers(role), json=body)
+
+    assert response.status_code == expected, response.text
+
+
+@pytest.mark.parametrize("test_app", ["SINGLE_TENANT"], indirect=True)
+def test_noc_changes_alert_status(db_session, client, test_app, create_alert):
+    from datetime import datetime
+
+    from src.models.alert import AlertStatus
+    from src.models.db.alert import AlertAudit, LastAlert
+
+    create_alert("fp-noc", AlertStatus.FIRING, datetime.utcnow(), {"name": "noc"})
+
+    response = client.post(
+        "/alerts/batch_enrich",
+        headers=bearer_headers("noc"),
+        json={"fingerprints": ["fp-noc"], "enrichments": {"status": "acknowledged"}},
+    )
+
+    assert (response.status_code, response.json()) == (200, {"status": "ok"})
+    db_session.expire_all()
+    assert db_session.query(LastAlert).one().status == "acknowledged"
+    audit = db_session.query(AlertAudit).one()
+    assert audit.user_id == "noc@example.com"
+    assert (
+        audit.description
+        == "Alert status was changed to acknowledged by noc@example.com"
+    )
+
+
+@pytest.mark.parametrize("test_app", ["SINGLE_TENANT"], indirect=True)
+def test_noc_still_cannot_delete_alerts(db_session, client, test_app):
+    response = client.request(
+        "DELETE",
+        "/alerts",
+        headers=bearer_headers("noc"),
+        json={"fingerprint": "fp", "last_received": "2026-01-01T00:00:00.000Z"},
+    )
+    assert response.status_code == 403
 
 
 # ---------------------------------------------------------------------------

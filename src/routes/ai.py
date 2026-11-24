@@ -50,7 +50,7 @@ def update_settings(
     algorithm_id: str,
     body: ExternalAIConfigAndMetadataDto,
     authenticated_entity: AuthenticatedEntity = Depends(
-        IdentityManagerFactory.get_auth_verifier(["write:alert"])
+        IdentityManagerFactory.get_auth_verifier(["write:settings"])
     ),
 ):
     tenant_id = authenticated_entity.tenant_id

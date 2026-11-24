@@ -123,6 +123,49 @@ def test_webhook_key_still_writes_everything_else(
     assert (deleted, status, note, audits) == (False, None, "keep me", 3)
 
 
+@pytest.mark.parametrize("write", DELETED_WRITES)
+@pytest.mark.parametrize("already_deleted", [False, True])
+@pytest.mark.parametrize("test_app", ["SINGLE_TENANT"], indirect=True)
+def test_noc_cannot_write_deleted(
+    db_session, client, test_app, create_alert, write, already_deleted
+):
+    path, body = DELETED_WRITES[write]
+    _seed(db_session, create_alert, deleted=already_deleted)
+    before = _state(db_session)
+
+    response = client.post(path, headers=bearer_headers("noc"), json=body)
+
+    assert response.status_code == 403, response.text
+    # The guard refused it, not the route's own write:alert gate.
+    assert "delete:alert" in response.json()["detail"]
+    assert _state(db_session) == before
+
+
+@pytest.mark.parametrize("test_app", ["SINGLE_TENANT"], indirect=True)
+def test_noc_still_writes_everything_else(db_session, client, test_app, create_alert):
+    _seed(db_session, create_alert, deleted=False)
+
+    for path, body in (
+        _enrich(status="acknowledged"),
+        _batch(status="suppressed"),
+        _unenrich("status"),
+    ):
+        response = client.post(path, headers=bearer_headers("noc"), json=body)
+        assert (response.status_code, response.json()) == (200, {"status": "ok"})
+
+
+@pytest.mark.parametrize("test_app", ["SINGLE_TENANT"], indirect=True)
+def test_viewer_writes_nothing(db_session, client, test_app, create_alert):
+    _seed(db_session, create_alert, deleted=False)
+    before = _state(db_session)
+
+    for path, body in (*DELETED_WRITES.values(), _batch(status="acknowledged")):
+        response = client.post(path, headers=bearer_headers("viewer"), json=body)
+        assert response.status_code == 403, response.text
+
+    assert _state(db_session) == before
+
+
 @pytest.mark.parametrize("role", ["editor", "admin"])
 @pytest.mark.parametrize("test_app", ["SINGLE_TENANT"], indirect=True)
 def test_roles_with_delete_scope_still_write_deleted(

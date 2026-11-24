@@ -292,7 +292,7 @@ def add_alert(
     alert: dict,
     alert_id: Optional[str] = None,
     authenticated_entity: AuthenticatedEntity = Depends(
-        IdentityManagerFactory.get_auth_verifier(["write:alert"])
+        IdentityManagerFactory.get_auth_verifier(["write:providers"])
     ),
 ) -> JSONResponse:
     tenant_id = authenticated_entity.tenant_id
