@@ -268,8 +268,11 @@ async def lifespan(app: FastAPI):
     yield {"background_tasks": background_tasks}
 
     # Shutdown
-    await shutdown()
-    if assistant is not None:
+    if assistant is None:
+        await shutdown()
+    else:
+        # Concurrently, for the same reason as the stops in shutdown().
+        await asyncio.gather(shutdown(), assistant.settle(app))
         await assistant.stop(app)
 
 

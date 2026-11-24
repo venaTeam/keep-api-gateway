@@ -1,7 +1,10 @@
 """KEEP_ASSISTANT_ENABLED: nothing of the assistant exists without it."""
+import asyncio
 import logging
 import sys
+import time
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -11,7 +14,7 @@ from src.services.assistant.config import ENABLED_ENV_VAR
 from src.services.assistant.core import db as db_core
 from src.services.assistant.core import metrics
 from tests.assistant.conftest import TEST_OPENAI_KEY
-from tests.assistant.fakes import TOKEN
+from tests.assistant.fakes import TOKEN, FakeGateway, caller, whoami
 from tests.assistant.logs import rendered
 
 HEADERS = {"Authorization": TOKEN}
@@ -91,11 +94,13 @@ def test_off_does_not_even_import_the_routes(main, monkeypatch):
 def test_off_builds_no_openai_client_even_with_a_key(main, monkeypatch):
     monkeypatch.setattr(lifecycle, "build_llm_client", lambda: pytest.fail("built"))
     monkeypatch.setattr(lifecycle, "start", lambda app: pytest.fail("started"))
+    monkeypatch.setattr(lifecycle, "settle", lambda app: pytest.fail("settled"))
     monkeypatch.setattr(lifecycle, "stop", lambda app: pytest.fail("stopped"))
     app = main.get_app()
     with TestClient(app) as client:
         assert client.get("/assistant/chat", headers=HEADERS).status_code == 404
-        assert not hasattr(app.state, "assistant_llm")
+        for name in ("llm", "gateway", "work"):
+            assert not hasattr(app.state, f"assistant_{name}")
     assert main.stopped == [True]
 
 
@@ -179,6 +184,97 @@ def test_a_failing_stop_is_logged_without_its_text(app, main, monkeypatch, caplo
     assert main.stopped == [True]
     assert not [r for r in caplog.records if CANARY in rendered(r)]
     assert any(getattr(r, "error_type", "") == "RuntimeError" for r in caplog.records)
+
+
+def test_chat_without_a_key_is_the_only_thing_refused(app, main, set_env, schema_ready):
+    set_env("OPENAI_API_KEY", "")
+    with TestClient(app, headers=HEADERS) as client:
+        app.state.assistant_gateway = (
+            FakeGateway().on_json("GET", "/whoami", whoami()).client()
+        )
+        response = client.post("/assistant/chat", json={"message": "hi"})
+        assert response.status_code == 503
+        assert response.json()["errors"][0]["code"] == "llm_not_configured"
+        assert client.get("/").status_code == 200
+
+
+# --- shutdown --------------------------------------------------------------------
+
+
+def test_the_worker_waits_for_writes_next_to_its_own_shutdown(app, main, monkeypatch):
+    """With the LLM client still open: what is waited for may need it."""
+    seen = {}
+
+    async def shutdown():
+        seen["shutdown started"] = time.monotonic()
+        await asyncio.sleep(0.5)
+        seen["shutdown ended"] = time.monotonic()
+
+    monkeypatch.setattr(main, "shutdown", shutdown)
+
+    async def write(request):
+        await asyncio.sleep(0.5)
+        seen["write ended"] = time.monotonic()
+        seen["llm open"] = not app.state.assistant_llm._client.is_closed()
+        seen["draining"] = app.state.assistant_work.draining
+        return httpx.Response(200, json={"status": "ok"})
+
+    gateway = FakeGateway().on("POST", "/alerts/batch_enrich", write).client()
+    with TestClient(app) as client:
+        app.state.assistant_gateway = gateway
+
+        @app.get("/scratch/abandon")
+        async def abandon():
+            result = await gateway.batch_enrich_status(
+                caller(), ["a"], "acknowledged", None, False, timeout=0.01
+            )
+            return {"result": result}
+
+        assert client.get("/scratch/abandon").json() == {"result": "unknown"}
+    assert seen["llm open"] and seen["draining"]
+    assert seen["write ended"] < seen["shutdown ended"] + 0.4
+    assert seen["shutdown started"] < seen["write ended"]
+    assert gateway._http.is_closed
+
+
+def test_a_write_that_does_not_end_is_not_waited_for_for_long(
+    app, main, monkeypatch, caplog
+):
+    monkeypatch.setattr(lifecycle, "SHUTDOWN_GRACE_SECONDS", 0.2)
+
+    async def write(request):
+        await asyncio.sleep(30)
+
+    gateway = FakeGateway().on("POST", "/alerts/batch_enrich", write).client()
+    with TestClient(app) as client:
+        app.state.assistant_gateway = gateway
+
+        @app.get("/scratch/abandon")
+        async def abandon():
+            await gateway.batch_enrich_status(
+                caller(), ["a"], "acknowledged", None, False, timeout=0.01
+            )
+
+        client.get("/scratch/abandon")
+        started = time.monotonic()
+    assert time.monotonic() - started < 5
+    assert main.stopped == [True]
+    [line] = [r for r in caplog.records if "shutting down with work left" in r.message]
+    assert line.writes == 1
+
+
+def test_a_failure_to_settle_does_not_cut_the_shutdown_short(
+    app, main, monkeypatch, caplog
+):
+    async def fail(timeout):
+        raise RuntimeError(CANARY)
+
+    with caplog.at_level(logging.DEBUG), TestClient(app):
+        monkeypatch.setattr(app.state.assistant_work, "settle", fail)
+        llm = app.state.assistant_llm
+    assert main.stopped == [True]
+    assert llm._client.is_closed()
+    assert not [r for r in caplog.records if CANARY in rendered(r)]
 
 
 def test_the_engine_is_disposed_with_the_worker(app, db_engine):
