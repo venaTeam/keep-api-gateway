@@ -17,14 +17,15 @@ from sqlmodel import Session, select
 
 from src.config.core import config
 from src.repositories.db import (
+    add_audit,
     get_alert_by_event_id,
     get_enrichment_with_session,
     get_extraction_rule_by_id,
+    get_incident_ids_with_unresolved_alerts,
     get_incidents_by_alert_fingerprint,
     get_last_alert_by_fingerprint,
     get_mapping_rule_by_id,
     get_session_sync,
-    is_all_alerts_resolved,
     normalize_enrichments,
 )
 from src.repositories.db import enrich_entity as enrich_alert_db
@@ -39,7 +40,7 @@ from src.models.db.enrichment_event import (
     EnrichmentType,
 )
 from src.models.db.extraction import ExtractionRule
-from src.models.db.incident import IncidentStatus
+from src.models.db.incident import Incident, IncidentStatus
 from src.models.db.mapping import MappingRule
 from src.models.db.rule import ResolveOn
 from src.services.identity_manager.authenticatedentity import AuthenticatedEntity
@@ -978,18 +979,66 @@ class EnrichmentsBl:
                 },
             )
 
-    def check_incident_resolution(self, alert: Alert | AlertDto):
+    def check_incident_resolution(
+        self, alert: Alert | AlertDto, *, resolved_by: str | None = None
+    ):
         incidents = get_incidents_by_alert_fingerprint(
             self.tenant_id, alert.fingerprint, self.db_session
         )
 
         self.db_session.expire_on_commit = False
-        for incident in incidents:
-            if incident.resolve_on == ResolveOn.ALL.value and is_all_alerts_resolved(
-                incident=incident, session=self.db_session
-            ):
-                incident.status = IncidentStatus.RESOLVED.value
-                self.db_session.add(incident)
-            self.db_session.commit()
+        self.resolve_incidents_with_all_alerts_resolved(
+            incidents, resolved_by=resolved_by
+        )
 
+    def resolve_incidents_with_all_alerts_resolved(
+        self,
+        incidents: list[Incident],
+        *,
+        resolved_by: str | None = None,
+        via_assistant: bool = False,
+    ) -> None:
+        """
+        Resolve the incidents whose alerts are all resolved by now (those that ask
+        for it with resolve_on=all_resolved).
 
+        Args:
+            incidents (list[Incident]): Candidates, attached to self.db_session. May repeat
+            resolved_by (str | None): Email of the user whose change got here, for the
+                incident's audit trail. None (nobody acted) writes no audit
+            via_assistant (bool): Whether that change came through Keep Assistant
+        """
+        candidates = {
+            incident.id: incident
+            for incident in incidents
+            if incident.tenant_id == self.tenant_id
+            and incident.resolve_on == ResolveOn.ALL.value
+            and incident.status != IncidentStatus.RESOLVED.value
+            and incident.alerts_count != 0
+        }
+        if not candidates:
+            return
+
+        still_open = get_incident_ids_with_unresolved_alerts(
+            self.tenant_id, list(candidates), self.db_session
+        )
+        marker = " via Keep Assistant" if via_assistant else ""
+        for incident_id, incident in candidates.items():
+            if incident_id in still_open:
+                continue
+            old_status = incident.status
+            incident.status = IncidentStatus.RESOLVED.value
+            self.db_session.add(incident)
+            if resolved_by:
+                add_audit(
+                    self.tenant_id,
+                    str(incident_id),
+                    resolved_by,
+                    ActionType.INCIDENT_STATUS_CHANGE,
+                    f"Incident status changed from {old_status} to "
+                    f"{IncidentStatus.RESOLVED.value} because all its alerts were "
+                    f"resolved by {resolved_by}{marker}",
+                    session=self.db_session,
+                    commit=False,
+                )
+        self.db_session.commit()

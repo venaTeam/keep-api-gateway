@@ -40,7 +40,6 @@ from src.repositories.db import (
     get_last_alerts,
     get_last_alerts_by_fingerprints,
     get_session,
-    is_all_alerts_resolved,
 )
 
 from src.services.sse import notify_sse
@@ -63,8 +62,6 @@ from src.models.alert import (
     UnEnrichAlertRequestBody,
 )
 from src.models.alert_audit import AlertAuditDto
-from src.models.db.incident import IncidentStatus
-from src.models.db.rule import ResolveOn
 from src.models.facet import FacetOptionsQueryDto
 from src.models.query import CountQueryDto, QueryDto
 from src.models.search_alert import SearchAlertsRequest
@@ -654,6 +651,7 @@ async def batch_enrich_alerts(
     tenant_id = authenticated_entity.tenant_id
     # On every log line below, so a caller's X-Request-ID finds all of them.
     log_context = {"tenant_id": tenant_id, "request_id": current_request_id()}
+    via_assistant = keep_source == "assistant"
     logger.info("Enriching alerts in batch", extra=log_context)
 
     _translate_dismiss_enrichments(enrich_data.enrichments)
@@ -730,7 +728,7 @@ async def batch_enrich_alerts(
         ) = enrichment_bl.get_enrichment_metadata(
             enrich_data.enrichments,
             authenticated_entity,
-            via_assistant=keep_source == "assistant",
+            via_assistant=via_assistant,
         )
 
         enrichments = deepcopy(enrich_data.enrichments)
@@ -788,16 +786,14 @@ async def batch_enrich_alerts(
 
         # @tb add "and session" cuz I saw AttributeError: 'NoneType' object has no attribute 'add'"
         if should_check_incidents_resolution and session:
-            enrich_alerts_with_incidents(tenant_id=tenant_id, alerts=alerts)
-            for alert in alerts:
-                for incident in alert._incidents:
-                    if (
-                        incident.resolve_on == ResolveOn.ALL.value
-                        and is_all_alerts_resolved(incident=incident, session=session)
-                    ):
-                        incident.status = IncidentStatus.RESOLVED.value
-                        session.add(incident)
-                    session.commit()
+            enrich_alerts_with_incidents(
+                tenant_id=tenant_id, alerts=alerts, session=session
+            )
+            enrichment_bl.resolve_incidents_with_all_alerts_resolved(
+                [incident for alert in alerts for incident in alert._incidents],
+                resolved_by=authenticated_entity.email,
+                via_assistant=via_assistant,
+            )
 
         return {"status": "ok"}
     except HTTPException:
@@ -934,7 +930,9 @@ async def _enrich_alert(
 
 
         if should_check_incidents_resolution:
-            enrichement_bl.check_incident_resolution(enriched_alerts_dto[0])
+            enrichement_bl.check_incident_resolution(
+                enriched_alerts_dto[0], resolved_by=authenticated_entity.email
+            )
 
         return {"status": "ok"}
 
