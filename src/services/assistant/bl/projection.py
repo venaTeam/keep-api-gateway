@@ -29,6 +29,22 @@ def strip_control(value: str) -> str:
     return "".join(kept)
 
 
+# Joiners and direction marks belong to ordinary text in many languages.
+_ORDINARY_FORMAT = frozenset("\u200c\u200d\u200e\u200f")
+
+
+def visible_text(value: str) -> str:
+    """`value` without characters that show nothing or reorder what is around them, so
+    that a person confirms what they read. Line breaks stay."""
+    return "".join(
+        char
+        for char in value
+        if char in "\n\t"
+        or char in _ORDINARY_FORMAT
+        or unicodedata.category(char) not in ("Cc", "Cf", "Cs")
+    )
+
+
 def clean_text(value: str, max_chars: int) -> str:
     """`value` without control characters and angle brackets, truncated."""
     # Bounded before the scan: alert text can be megabytes long.

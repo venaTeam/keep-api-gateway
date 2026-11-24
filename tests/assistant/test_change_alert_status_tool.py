@@ -138,6 +138,18 @@ async def test_argument_errors_never_echo_values():
 
 
 @pytest.mark.asyncio
+async def test_a_note_is_what_it_looks_like():
+    """It ends up in the audit trail, and the user confirms what the card shows."""
+    fake = FakeGateway().on_json("POST", "/alerts/query", query_result(alert("a")))
+    hidden = "ok\u202egnp.\u200b\ufeff\U000e0041\x1b\x7f"
+    kept = " line one\nline two \u05d0\u200f \u0646\u200c\u0647 \U0001f469\u200d\U0001f692"
+    payload = await draft_of(fake, fingerprints=["a"], note=hidden + kept)
+    assert payload.note == "okgnp." + kept
+    payload = await draft_of(fake, fingerprints=["a"], note="\u202e\u200b \x1b")
+    assert payload.note is None
+
+
+@pytest.mark.asyncio
 async def test_blank_note_is_no_note_and_fingerprints_are_distinct():
     fake = results(alert("a"), alert("b"))
     payload = await draft_of(fake, fingerprints=["b", "a", "b"], note="  ")

@@ -12,7 +12,11 @@ from pydantic import (
     validator,
 )
 
-from src.services.assistant.bl.projection import clean_text, project_alert
+from src.services.assistant.bl.projection import (
+    clean_text,
+    project_alert,
+    visible_text,
+)
 from src.services.assistant.bl.scopes import has_scope
 from src.services.assistant.gateway.client import Caller, FetchedAlert, can_use_cel, can_use_path
 from src.services.assistant.gateway.errors import (
@@ -128,6 +132,10 @@ class ChangeAlertStatusArgs(BaseModel):
     @validator("cel", "note")
     def _storable_or_none(cls, value):
         return storable(value) if value else None
+
+    @validator("note")
+    def _as_it_is_read(cls, value):
+        return (visible_text(value).strip() or None) if value else None
 
     @root_validator(skip_on_failure=True)
     def _exactly_one_selector(cls, values):
