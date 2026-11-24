@@ -1,6 +1,7 @@
 """The chat can do exactly what its user can do: the gateway's own routes decide, with
 its own verifier, through the whole app."""
 import ast
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -286,6 +287,7 @@ PACKAGE = Path(src.services.assistant.__file__).parent
 ROUTES = PACKAGE.parent.parent / "routes" / "assistant.py"
 CONFIRM = PACKAGE / "bl" / "confirm_bl.py"
 CLIENT = PACKAGE / "gateway" / "client.py"
+TRANSPORT = PACKAGE / "gateway" / "transport.py"
 
 
 def sources() -> dict[Path, ast.Module]:
@@ -294,20 +296,38 @@ def sources() -> dict[Path, ast.Module]:
     return {path: ast.parse(path.read_text("utf-8")) for path in paths}
 
 
-def mentions(tree: ast.Module, name: str) -> bool:
-    """As an attribute, a plain name, an import, a definition or a string that could
-    be handed to getattr."""
-    return any(
-        getattr(node, field, None) == name
+def named(node: ast.AST, name: str) -> bool:
+    """As an attribute, a plain name, a part of an import, a definition or a string
+    that could be handed to getattr."""
+    values = [
+        getattr(node, field, None)
+        for field in ("attr", "id", "name", "asname", "value", "module")
+    ]
+    return any(isinstance(v, str) and name in v.split(".") for v in values)
+
+
+def mentions(tree: ast.AST, name: str) -> bool:
+    return any(named(node, name) for node in ast.walk(tree))
+
+
+def users(tree: ast.Module, name: str) -> set[str]:
+    """The functions that name it, and "" for anything outside of a function."""
+    functions = [
+        node
         for node in ast.walk(tree)
-        for field in ("attr", "id", "name", "asname", "value")
-    )
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    inside = {id(child) for node in functions for child in ast.walk(node)}
+    outside = any(named(node, name) for node in ast.walk(tree) if id(node) not in inside)
+    return {f.name for f in functions if mentions(f, name)} | ({""} if outside else set())
 
 
 def test_only_confirm_can_write():
     writers = [p for p, tree in sources().items() if mentions(tree, "batch_enrich_status")]
     # The client defines it.
     assert sorted(writers) == sorted([CONFIRM, CLIENT])
+    assert users(sources()[CONFIRM], "batch_enrich_status") == {"_send"}
+    assert users(sources()[CLIENT], "batch_enrich_status") == {"batch_enrich_status"}
 
 
 def test_only_the_client_talks_to_the_gateway():
@@ -320,9 +340,35 @@ def test_only_the_client_talks_to_the_gateway():
         ]
         if path != CLIENT:
             assert not [s for s in strings if s.startswith(("/alerts", "/incidents"))]
+            # Anywhere in a string: an address of its own.
+            assert not [s for s in strings if "/alerts/" in s]
             assert not mentions(tree, "_send") or path == CONFIRM
+            assert not mentions(tree, "_http")
+            assert "gateway._request" not in path.read_text("utf-8")
+        if path != TRANSPORT:
+            assert not mentions(tree, "ASGITransport"), path.name
     # Confirm's own method of that name.
     assert "gateway._send" not in CONFIRM.read_text("utf-8")
+
+
+def test_the_client_uses_httpx_in_one_place():
+    assert users(sources()[CLIENT], "_http") == {"__init__", "aclose", "_request"}
+
+
+TABLE_MAKERS = ("table", "Table", "reflect", "automap_base")
+
+
+def test_the_assistants_sql_changes_only_its_own_tables():
+    """Its sessions are on the database of the alerts: no statement that is only text,
+    and no table but those of its models (the imports below)."""
+    write = re.compile(r"(?i)\b(update\s+\w+\s+set|insert\s+into|delete\s+from)\b")
+    for path, tree in sources().items():
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                assert not write.search(node.value), f"{path.name}: {node.value}"
+            # sa.table("..."), and the like
+            assert getattr(node, "attr", "") not in TABLE_MAKERS, path.name
+            assert getattr(node, "name", "") not in TABLE_MAKERS, path.name
 
 
 def test_the_client_has_one_write():

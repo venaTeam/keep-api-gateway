@@ -265,13 +265,16 @@ async def test_shutdown_waits_for_running_work(app, main):
 
 def test_rare_events_have_a_series_from_the_start(app, main):
     """Prometheus sees no increase in a series that begins with its first event."""
+    # A cleared series that begins again keeps its value in multi-process mode, so only
+    # its presence says something.
     metrics.draft_outcomes_total.clear()
+    metrics.drafts_total.clear()
     metrics.llm_errors_total.clear()
     with TestClient(app):
         text = generate_latest(REGISTRY).decode()
     for series in (
-        'draft_outcomes_total{kind="change_alert_status",outcome="outcome_unknown"} 0.0',
-        'llm_errors_total{kind="misconfigured"} 0.0',
+        'draft_outcomes_total{kind="change_alert_status",outcome="outcome_unknown"} ',
+        'llm_errors_total{kind="misconfigured"} ',
         'drafts_total{event="finalized_after_timeout",kind="change_alert_status"} ',
     ):
         assert f"keep_assistant_{series}" in text
