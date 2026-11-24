@@ -21,7 +21,9 @@ lifecycle, and dragging it back out would misreport reality.
 Suppression travels as dismiss state, never as status='suppressed'. Alerts derive
 suppression from dismiss_mode/dismissed_until, so copying the incident's deadline
 is what makes an alert come back on the same clock — writing a status would strand
-it suppressed after the deadline passed.
+it suppressed after the deadline passed. It comes back as the incident does
+(acknowledged if the incident reverts to acknowledged, otherwise firing), never as
+an acknowledgement the alert held on its own before the incident was dismissed.
 """
 
 import uuid
@@ -269,7 +271,12 @@ async def test_an_expired_propagated_dismissal_reverts_the_alert(db_session):
 
 
 @pytest.mark.asyncio
-async def test_suppress_preserves_the_status_the_alert_reverts_to(db_session):
+async def test_an_acknowledged_alert_comes_back_firing_with_its_dismissed_incident(
+    db_session,
+):
+    """The incident's dismissal takes over from the alert's own acknowledgement:
+    when it lapses the alert comes back as the incident does — firing — not as
+    the acknowledged it was before the incident was dismissed."""
     incident = _incident(db_session)
     fp = _alert(db_session, "prop-sup-revert", status="acknowledged")
     _link(db_session, incident, fp)
@@ -282,9 +289,64 @@ async def test_suppress_preserves_the_status_the_alert_reverts_to(db_session):
         dismissed_until=_future(45),
     )
     assert _state(db_session, fp)["effective"] == "suppressed"
-    # The override survives underneath, so expiry returns it to acknowledged
-    # rather than to the provider's firing.
-    assert _state(db_session, fp)["override"] == "acknowledged"
+
+    _lapse(db_session, incident, fp)
+    assert db_session.get(Incident, incident.id).get_effective_status() == "firing"
+    assert _state(db_session, fp)["effective"] == "firing"
+
+
+@pytest.mark.asyncio
+async def test_an_acknowledged_alert_linked_to_a_dismissed_incident_comes_back_firing(
+    db_session,
+):
+    incident = _incident(db_session)
+    bl = _bl(db_session)
+    await bl.change_status(
+        incident.id,
+        IncidentStatus.SUPPRESSED,
+        ACTOR,
+        dismiss_mode=IncidentDismissMode.DISMISS_UNTIL,
+        dismissed_until=_future(90),
+    )
+
+    fp = _alert(db_session, "prop-late-ack", status="acknowledged")
+    await bl.add_alerts_to_incident(incident.id, [fp], change_by=ACTOR)
+    assert _state(db_session, fp)["effective"] == "suppressed"
+
+    _lapse(db_session, incident, fp)
+    assert _state(db_session, fp)["effective"] == "firing"
+
+
+@pytest.mark.asyncio
+async def test_alerts_of_an_acknowledged_incident_come_back_acknowledged_with_it(
+    db_session,
+):
+    """An incident dismissed on top of acknowledged comes back acknowledged, and
+    so do its alerts — including a firing one that joined while it was
+    dismissed."""
+    incident = _incident(db_session)
+    held = _alert(db_session, "prop-ack-sup-held")
+    _link(db_session, incident, held)
+    bl = _bl(db_session)
+    await bl.change_status(incident.id, IncidentStatus.ACKNOWLEDGED, ACTOR)
+    await bl.change_status(
+        incident.id,
+        IncidentStatus.SUPPRESSED,
+        ACTOR,
+        dismiss_mode=IncidentDismissMode.DISMISS_UNTIL,
+        dismissed_until=_future(45),
+    )
+    late = _alert(db_session, "prop-ack-sup-late")
+    await bl.add_alerts_to_incident(incident.id, [late], change_by=ACTOR)
+
+    for fp in (held, late):
+        assert _state(db_session, fp)["effective"] == "suppressed"
+        _lapse(db_session, incident, fp)
+    assert db_session.get(Incident, incident.id).get_effective_status() == (
+        "acknowledged"
+    )
+    for fp in (held, late):
+        assert _state(db_session, fp)["effective"] == "acknowledged"
 
 
 # === firing ===

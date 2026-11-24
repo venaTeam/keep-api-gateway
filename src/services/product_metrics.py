@@ -196,9 +196,9 @@ def record_alert_enrichment(
         # Status changes are only meaningful on success.
         if result == "success":
             status = (enrichments or {}).get("status")
-            # A dismiss is a suppression even when the enrichment body only
-            # carries dismiss_mode (no explicit status).
-            if not status and action == "dismiss":
+            # A dismiss is a suppression whatever status the body carries: none,
+            # or the one the alert reverts to once the dismissal lifts.
+            if action == "dismiss":
                 status = "suppressed"
             if status in TO_STATUSES:
                 record_alert_status_change(tenant_id=tenant_id, to_status=status)
