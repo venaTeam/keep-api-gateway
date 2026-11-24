@@ -7,6 +7,7 @@ import time
 
 import pytest
 import sqlalchemy.exc
+from fastapi.middleware.gzip import GZipMiddleware
 
 from src.services.assistant.api.turn_response import TurnResponse
 from src.services.assistant.bl import chat_turn, conversations_bl
@@ -146,32 +147,35 @@ async def test_a_client_that_was_never_there(db, gateway):
 
 
 @pytest.mark.asyncio
-async def test_a_client_that_left_before_the_response_began(db, gateway):
-    """Without any answer the middleware around the stream raises, and the gateway's
-    catch-all would log and return that."""
+@pytest.mark.parametrize("cut_off", ["waiting for the first frame", "sending it"])
+async def test_a_client_that_left_before_the_response_began(db, gateway, cut_off):
+    """Without any answer the gateway's middleware raises, and its catch-all logs and
+    returns that. GZip holds the start back until there is a body."""
     ref = await run_db(start_turn, identity(), None, "hello")
-    turn = Turn(
-        ref,
-        identity(),
-        ChatRequest(message="hello"),
-        gateway.client(),
-        FakeLlm([Gate()]),
-    )
+    request = ChatRequest(message="hello")
+    turn = Turn(ref, identity(), request, gateway.client(), FakeLlm([Gate()]))
+    frames = turn.frames
     turn.start(OngoingWork())
     sent = []
+
+    async def late_frames():
+        await asyncio.sleep(0.05)
+        async for frame in frames():
+            yield frame
 
     async def receive():
         return {"type": "http.disconnect"}
 
     async def send(message):
-        # As the queue of the middleware: cancelled here when the client is gone.
-        await asyncio.sleep(0)
-        sent.append(message)
+        if cut_off == "sending it":
+            await asyncio.sleep(0)
+        sent.append(message["type"])
 
-    await TurnResponse(turn)({"type": "http"}, receive, send)
-    assert [m["type"] for m in sent] == ["http.response.start", "http.response.body"]
-    assert sent[0]["status"] == 200
-    assert not sent[1].get("more_body")
+    if cut_off == "waiting for the first frame":
+        turn.frames = late_frames
+    scope = {"type": "http", "headers": []}
+    await GZipMiddleware(TurnResponse(turn))(scope, receive, send)
+    assert sent == ["http.response.start", "http.response.body"]
     assert read(db, Conversation, ref.conversation_id)["active_turn_id"] is None
 
 

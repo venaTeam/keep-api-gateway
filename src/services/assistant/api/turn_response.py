@@ -37,18 +37,22 @@ class TurnResponse(StreamingResponse):
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         begun = False
 
-        async def noting(message: Message) -> None:
+        async def begin(message: Message) -> None:
             nonlocal begun
-            await send(message)
-            # Not before: the sending itself can be cancelled.
-            begun = True
+            if begun:
+                return await send(message)
+            # Not cancelled half way: GZip holds the start back until the first body
+            # and then sends it once.
+            with anyio.CancelScope(shield=True):
+                await send(message)
+            begun = message["type"] == "http.response.body"
 
         try:
-            await super().__call__(scope, receive, noting)
+            await super().__call__(scope, receive, begin)
             if not begun:
-                # The client was gone already. The middleware around this raises when
-                # there is no answer at all.
-                await self._begin_and_end(send)
+                # The client was gone before the first frame. The middleware around
+                # this raises when there is no answer at all.
+                await send({"type": "http.response.body", "body": b""})
         except Exception as exc:
             # Never further up: the gateway's catch-all logs and returns the text.
             log_failure("stream", "assistant: stream failed", exc)
@@ -56,13 +60,3 @@ class TurnResponse(StreamingResponse):
             self._turn.stop()
             with anyio.move_on_after(CLOSE_SECONDS, shield=True):
                 await self._turn.closed()
-
-    async def _begin_and_end(self, send: Send) -> None:
-        await send(
-            {
-                "type": "http.response.start",
-                "status": self.status_code,
-                "headers": self.raw_headers,
-            }
-        )
-        await send({"type": "http.response.body", "body": b""})
