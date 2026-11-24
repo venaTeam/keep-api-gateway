@@ -67,6 +67,7 @@ from src.models.query import CountQueryDto, QueryDto
 from src.models.search_alert import SearchAlertsRequest
 from src.models.time_stamp import TimeStampFilter
 from src.utils.enrichment_helpers import convert_db_alerts_to_dto_alerts
+from src.utils.log_sanitize import sanitize_for_log
 from src.utils.request_id import current_request_id
 from src.utils.time_stamp_helpers import get_time_stamp_filter
 from src.services.identity_manager.authenticatedentity import AuthenticatedEntity
@@ -196,8 +197,13 @@ def fetch_alert_facet_options(
             tenant_id=tenant_id, facet_options_query=facet_options_query
         )
     except CelToSqlException as e:
-        logger.exception(
-            f'Error parsing CEL expression "{facet_options_query.cel}". {str(e)}'
+        logger.warning(
+            "Error parsing CEL expression",
+            extra={
+                "tenant_id": tenant_id,
+                "cel": sanitize_for_log(facet_options_query.cel),
+                "error": sanitize_for_log(e),
+            },
         )
         raise http_exception_from_converter_error(facet_options_query.cel, e) from e
 
@@ -284,7 +290,7 @@ def query_alerts_count(
         msg="Fetching alerts count from DB",
         extra={
             "tenant_id": tenant_id,
-            "cel_expression": query.cel,
+            "cel_expression": sanitize_for_log(query.cel),
             "group_by": query.group_by.value if query.group_by else None,
             "incident_status": (
                 query.incident_status.value if query.incident_status else None
@@ -302,7 +308,7 @@ def query_alerts_count(
             msg="Fetched alerts count from DB",
             extra={
                 "tenant_id": tenant_id,
-                "query": query,
+                "query": sanitize_for_log(query.json()),
                 "total_count": total_count,
             },
         )
@@ -316,7 +322,14 @@ def query_alerts_count(
         return response
 
     except CelToSqlException as e:
-        logger.exception(f'Error parsing CEL expression "{query.cel}". {str(e)}')
+        logger.warning(
+            "Error parsing CEL expression",
+            extra={
+                "tenant_id": tenant_id,
+                "cel": sanitize_for_log(query.cel),
+                "error": sanitize_for_log(e),
+            },
+        )
         raise http_exception_from_converter_error(query.cel, e) from e
 
 @router.post(
@@ -338,7 +351,10 @@ def query_alerts(
     tenant_id = authenticated_entity.tenant_id
     logger.info(
         "Fetching alerts from DB",
-        extra={"tenant_id": tenant_id, "cel_expression": query.cel},
+        extra={
+            "tenant_id": tenant_id,
+            "cel_expression": sanitize_for_log(query.cel),
+        },
     )
 
     # The filter is validated by the converter as the query is built, so an
@@ -346,7 +362,14 @@ def query_alerts(
     try:
         db_alerts = query_last_alerts(tenant_id=tenant_id, query=query)
     except CelToSqlException as e:
-        logger.exception(f'Error parsing CEL expression "{query.cel}". {str(e)}')
+        logger.warning(
+            "Error parsing CEL expression",
+            extra={
+                "tenant_id": tenant_id,
+                "cel": sanitize_for_log(query.cel),
+                "error": sanitize_for_log(e),
+            },
+        )
         raise http_exception_from_converter_error(query.cel, e) from e
 
     db_alerts = enrich_alerts_with_incidents(tenant_id, db_alerts)
@@ -357,7 +380,7 @@ def query_alerts(
         "Fetched alerts from DB",
         extra={
             "tenant_id": tenant_id,
-            "query": query,
+            "query": sanitize_for_log(query.json()),
             "total_count": len(db_alerts),
         },
     )
@@ -668,9 +691,10 @@ async def batch_enrich_alerts(
 
     # If CEL is provided, use it to find matching alerts
     if enrich_data.cel:
+        log_cel = sanitize_for_log(enrich_data.cel)
         logger.info(
             "Enriching alerts by CEL query",
-            extra={**log_context, "cel": enrich_data.cel},
+            extra={**log_context, "cel": log_cel},
         )
 
         try:
@@ -682,7 +706,7 @@ async def batch_enrich_alerts(
             if not db_alerts:
                 logger.info(
                     "No alerts found matching the CEL query",
-                    extra={**log_context, "cel": enrich_data.cel},
+                    extra={**log_context, "cel": log_cel},
                 )
                 return {
                     "status": "ok",
@@ -694,20 +718,24 @@ async def batch_enrich_alerts(
                 "Found alerts matching CEL query",
                 extra={
                     **log_context,
-                    "cel": enrich_data.cel,
+                    "cel": log_cel,
                     "alert_count": len(db_alerts),
                 },
             )
         except CelToSqlException as e:
-            logger.exception(
-                f'Error parsing CEL expression "{enrich_data.cel}". {str(e)}',
-                extra=log_context,
+            logger.warning(
+                "Error parsing CEL expression",
+                extra={
+                    **log_context,
+                    "cel": log_cel,
+                    "error": sanitize_for_log(e),
+                },
             )
             raise http_exception_from_converter_error(enrich_data.cel, e) from e
         except Exception as e:
             logger.exception(
                 "Failed to process CEL query",
-                extra={**log_context, "error": str(e)},
+                extra={**log_context, "error": sanitize_for_log(e)},
             )
             return {"status": "failed", "message": str(e)}
     else:
