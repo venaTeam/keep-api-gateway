@@ -8,9 +8,10 @@ the POST /ui/events beacon.
 
 Design:
 - `tenant_id` comes from the authenticated identity.
-- `source` (ui|api) comes from the X-Keep-Source request header, carried via a
-  contextvar so deep chokepoints don't need the request object. keep-ui's
-  ApiClient sets `X-Keep-Source: ui`; everything else defaults to `api`.
+- `source` (ui|api|assistant) comes from the X-Keep-Source request header, carried
+  via a contextvar so deep chokepoints don't need the request object. keep-ui's
+  ApiClient sets `X-Keep-Source: ui` and keep-assistant sets `assistant`; everything
+  else defaults to `api`.
 - `result` is success|error.
 - All record_* helpers swallow their own errors: instrumentation must never
   break the request path.
@@ -50,7 +51,7 @@ ACTIONS = frozenset(
     }
 )
 TO_STATUSES = frozenset({"firing", "acknowledged", "resolved", "suppressed"})
-SOURCES = frozenset({"ui", "api"})
+SOURCES = frozenset({"ui", "api", "assistant"})
 RESULTS = frozenset({"success", "error"})
 # Bounded page-view route templates (mirrors keep-ui's PAGE_LABELS).
 ROUTES = frozenset(
@@ -65,7 +66,7 @@ ROUTES = frozenset(
     }
 )
 
-# Request source (ui|api), set per-request by middleware from X-Keep-Source.
+# Request source (see SOURCES), set per-request by middleware from X-Keep-Source.
 _source_ctx: contextvars.ContextVar[str] = contextvars.ContextVar(
     "keep_metrics_source", default="api"
 )

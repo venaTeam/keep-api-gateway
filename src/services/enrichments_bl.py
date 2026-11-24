@@ -581,14 +581,18 @@ class EnrichmentsBl:
 
     @staticmethod
     def get_enrichment_metadata(
-        enrichments: dict, authenticated_entity: AuthenticatedEntity
-    ) -> tuple[ActionType, str, bool, bool]:
+        enrichments: dict,
+        authenticated_entity: AuthenticatedEntity,
+        *,
+        via_assistant: bool = False,
+    ) -> tuple[ActionType, str, bool]:
         """
         Get the metadata for the enrichment
 
         Args:
             enrichments (dict): The enrichments to get the metadata for
             authenticated_entity (AuthenticatedEntity): The authenticated entity that performed the enrichment
+            via_assistant (bool): Whether the change came through Keep Assistant. Only labels the description
 
         Returns:
             tuple[ActionType, str, bool]: action_type, action_description, should_check_incidents_resolution
@@ -626,6 +630,10 @@ class EnrichmentsBl:
             action_description = (
                 f"Comment added by {authenticated_entity.email} - {enrichments['note']}"
             )
+
+        # Before the note: keep-ui takes everything after "With note:" as the note
+        if via_assistant:
+            action_description += " via Keep Assistant"
 
         # If there's a note AND we already have a status or ticket, append it to the description
         # (if we only have a note, it's already handled in the elif above)

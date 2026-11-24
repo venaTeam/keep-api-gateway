@@ -47,10 +47,11 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         if os.environ.get("LOG_AUTH_PAYLOAD", "false") == "true":
             logger.info(f"Request headers: {request.headers}")
 
-        # Record the product-metric source (ui|api) for this request so deep
-        # business-logic chokepoints can label keep_user_action_total without
+        # Record the product-metric source (ui|api|assistant) for this request so
+        # deep business-logic chokepoints can label keep_user_action_total without
         # threading the request object through. keep-ui's ApiClient sends
-        # X-Keep-Source: ui; everything else defaults to api.
+        # X-Keep-Source: ui, keep-assistant sends assistant; everything else
+        # defaults to api.
         try:
             from src.services.product_metrics import set_request_source
 

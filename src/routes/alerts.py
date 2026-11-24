@@ -5,7 +5,15 @@ from typing import Iterable, List, Optional
 from urllib.parse import urlsplit
 
 import celpy
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+)
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlmodel import Session
@@ -634,6 +642,9 @@ async def batch_enrich_alerts(
     dispose_on_new_alert: Optional[bool] = Query(
         False, description="Dispose on new alert"
     ),
+    # A channel label for the audit trail that any caller can send: never authorize
+    # or trust anything on it.
+    keep_source: Optional[str] = Header(None, alias="X-Keep-Source"),
     session: Session = Depends(get_session),
 ):
     _require_delete_scope(authenticated_entity, enrich_data.enrichments)
@@ -721,7 +732,9 @@ async def batch_enrich_alerts(
             action_description,
             should_check_incidents_resolution,
         ) = enrichment_bl.get_enrichment_metadata(
-            enrich_data.enrichments, authenticated_entity
+            enrich_data.enrichments,
+            authenticated_entity,
+            via_assistant=keep_source == "assistant",
         )
 
         enrichments = deepcopy(enrich_data.enrichments)

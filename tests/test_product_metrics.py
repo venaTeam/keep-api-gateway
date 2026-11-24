@@ -6,6 +6,10 @@ action mapping (incl. dismiss detection), and the enrichment chokepoint recorder
 that drives keep_user_action_total and keep_alert_status_change_total.
 """
 
+import contextvars
+
+import pytest
+
 from src.models.action_type import ActionType
 from src.repositories.metrics import (
     alert_status_change_total,
@@ -14,10 +18,12 @@ from src.repositories.metrics import (
 )
 from src.services.product_metrics import (
     alert_action_for,
+    current_source,
     record_alert_enrichment,
     record_alert_status_change,
     record_page_load,
     record_user_action,
+    set_request_source,
 )
 
 TENANT = "keep"
@@ -238,3 +244,48 @@ def test_record_alert_enrichment_system_action_not_counted():
     )
     # No assertion on a specific series — covered by alert_action_for returning
     # None; this just exercises the no-op path without error.
+
+
+@pytest.mark.parametrize(
+    "header,expected",
+    [
+        ("ui", "ui"),
+        ("api", "api"),
+        ("assistant", "assistant"),
+        ("Assistant", "api"),
+        ("something-else", "api"),
+        ("", "api"),
+        (None, "api"),
+    ],
+)
+def test_request_source_is_bounded(header, expected):
+    def run():
+        set_request_source(header)
+        return current_source()
+
+    # Own context: the source must not leak into other tests.
+    assert contextvars.Context().run(run) == expected
+
+
+def test_assistant_enrichment_is_counted_under_its_own_source():
+    labels = dict(
+        tenant_id=TENANT,
+        feature="alerts",
+        action="change_status",
+        source="assistant",
+        result="success",
+    )
+    before = _action(**labels)
+
+    def run():
+        set_request_source("assistant")
+        record_alert_enrichment(
+            tenant_id=TENANT,
+            action_type=ActionType.MANUAL_STATUS_CHANGE,
+            enrichments={"status": "acknowledged"},
+            result="success",
+        )
+
+    contextvars.Context().run(run)
+
+    assert _action(**labels) == before + 1
