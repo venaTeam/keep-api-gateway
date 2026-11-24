@@ -6,6 +6,7 @@ import threading
 import time
 
 import pytest
+import sqlalchemy.exc
 
 from src.services.assistant.api.turn_response import TurnResponse
 from src.services.assistant.bl import chat_turn, conversations_bl
@@ -292,6 +293,35 @@ async def test_the_stream_ends_even_when_the_turn_cannot_be_closed(
 
 
 @pytest.mark.asyncio
+async def test_as_many_threads_as_connections(set_env):
+    """The UI's own sync routes need the others."""
+    set_env("ASSISTANT_DB_POOL_SIZE", 2)
+    set_env("ASSISTANT_DB_MAX_OVERFLOW", 1)
+    set_env("ASSISTANT_DB_POOL_TIMEOUT", 0.2)
+    proceed, started = threading.Event(), []
+
+    def blocking():
+        started.append(1)
+        proceed.wait(10)
+
+    running = [asyncio.create_task(run_db(blocking)) for _ in range(3)]
+    await until(lambda: len(started) == 3)
+    waiting = asyncio.create_task(run_db(blocking))
+    await asyncio.sleep(0.05)
+    waiting.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiting
+    with pytest.raises(sqlalchemy.exc.TimeoutError):
+        await run_db(blocking)
+    assert len(started) == 3
+    proceed.set()
+    await asyncio.gather(*running)
+    # Every place is free again.
+    await asyncio.gather(*(run_db(blocking) for _ in range(3)))
+    assert len(started) == 6
+
+
+@pytest.mark.asyncio
 async def test_run_db_ends_with_its_thread(monkeypatch):
     proceed, ended = threading.Event(), threading.Event()
 
@@ -386,6 +416,59 @@ async def test_draining_interrupts_running_turns(app, db, gateway):
     assert (refused.status, refused.code) == (503, "not_ready")
     # Its message would stay without an answer.
     assert len(stored(db)) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_slow_database_does_not_take_the_workers_last_seconds(
+    app, db, gateway, monkeypatch
+):
+    """gunicorn kills the worker 30 s after the signal, and the gateway's own shutdown
+    only begins when the responses have ended."""
+    monkeypatch.setattr(work_module, "SHUTDOWN_GRACE_SECONDS", 0.5)
+    proceed = threading.Event()
+
+    def stuck(*args):
+        proceed.wait(10)
+        return end_turn(*args)
+
+    monkeypatch.setattr(conversations_bl, "end_turn", stuck)
+    work = equip(app, FakeLlm([TextDelta("I was about to"), Gate()]), gateway)
+    exchange = post_chat(app)
+    await exchange.until("I was about to")
+    started = time.monotonic()
+    work.drain()
+    try:
+        await exchange.finish(timeout=3)
+        assert 0.4 < time.monotonic() - started < 2
+        assert "done" not in exchange.names
+        assert only_conversation(db)["active_turn_id"] is not None
+    finally:
+        proceed.set()
+    # What the worker's last seconds are for.
+    assert await work.settle(5) == 0
+    assert only_conversation(db)["active_turn_id"] is None
+    assert stored(db)[-1] == ("assistant", "I was about to", "interrupted")
+
+
+@pytest.mark.asyncio
+async def test_a_client_that_no_longer_reads(app, db, gateway):
+    """The server's send blocks until the connection is lost."""
+    stuck, lost = asyncio.Event(), asyncio.Event()
+
+    async def on_send(message):
+        if b"half" in message.get("body", b""):
+            stuck.set()
+            await lost.wait()
+
+    work = equip(app, FakeLlm([TextDelta("half"), Gate()]), gateway)
+    exchange = post_chat(app, on_send=on_send)
+    await asyncio.wait_for(stuck.wait(), 5)
+    exchange.leave()
+    await until(lambda: only_conversation(db)["active_turn_id"] is None, 5)
+    assert stored(db)[-1] == ("assistant", "half", "interrupted")
+    lost.set()
+    await exchange.finish()
+    assert await work.settle(5) == 0
 
 
 @pytest.mark.asyncio

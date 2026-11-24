@@ -4,12 +4,12 @@ import time
 import uuid
 
 from fastapi import Request
-from starlette.concurrency import run_in_threadpool
 
 from src.services.assistant.api.guard import single_bearer
 from src.services.assistant.api.route import describe_exception
 from src.services.assistant.core import db as db_core
 from src.services.assistant.core import metrics
+from src.services.assistant.core.work import run_db
 from src.services.assistant.exceptions import AssistantError
 from src.services.assistant.gateway.client import Caller, GatewayClient
 from src.services.assistant.gateway.errors import (
@@ -35,7 +35,7 @@ async def require_ready() -> None:
     if db_core.schema_verified():
         return
     try:
-        missing = await run_in_threadpool(db_core.check_schema)
+        missing = await run_db(db_core.check_schema)
     except Exception as exc:
         metrics.internal_errors_total.labels(site="readiness_database").inc()
         logger.error("assistant: database check failed", extra=describe_exception(exc))
@@ -64,7 +64,8 @@ async def get_identity(request: Request) -> Identity:
     token, a changed role or a switched tenant."""
     authorization = require_bearer(request)
     gateway: GatewayClient = request.app.state.assistant_gateway
-    client = tuple(request.client) if request.client else UNKNOWN_CLIENT
+    address = request.client
+    client = (address.host, address.port) if address else UNKNOWN_CLIENT
     caller = Caller(authorization, request_id(), client)
     try:
         body = await gateway.whoami(caller)

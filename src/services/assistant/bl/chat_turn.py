@@ -125,6 +125,7 @@ class Turn:
         self._stop = asyncio.Event()
         self._frames: asyncio.Queue[str | None] = asyncio.Queue()
         self._supervisor: asyncio.Task[None] | None = None
+        self._closed: asyncio.Task[None] | None = None
 
     def start(self, work: OngoingWork) -> None:
         self._emit(
@@ -135,16 +136,25 @@ class Turn:
             )
         )
         self._supervisor = work.spawn(self._supervise(), stoppable=self)
+        self._closed = work.spawn(self._close(work, self._supervisor))
 
     def stop(self) -> None:
         """End the turn as interrupted, unless it has ended already."""
         self._stop.set()
 
     async def closed(self) -> None:
-        """Until the lock is released and everything is stored. Cancelling this ends
-        the wait only."""
-        if self._supervisor is not None:
-            await asyncio.wait({self._supervisor})
+        """Until the lock is released and everything is stored, or the worker has no
+        more time for it. Cancelling this ends the wait only."""
+        if self._closed is not None:
+            await asyncio.wait({self._closed})
+
+    async def _close(self, work: OngoingWork, supervisor: asyncio.Task[None]) -> None:
+        """Ends the response, in a worker that shuts down at the latest when its grace
+        is over: a slow database must not take the rest of the worker's time."""
+        try:
+            await work.wait(supervisor, leave=0.0)
+        finally:
+            self._frames.put_nowait(None)
 
     async def frames(self) -> AsyncGenerator[str, None]:
         heartbeat = get_settings().heartbeat_seconds
@@ -165,15 +175,12 @@ class Turn:
 
     async def _supervise(self) -> None:
         started = time.monotonic()
-        try:
-            end = await self._run()
-            await self._release(end)
-            # Only now: the next message must not find the lock taken.
-            if end.error is not None:
-                self._emit(stream_error(end.error))
-            self._emit(DoneEvent(message_id=self._message_id, finish_reason=end.finish))
-        finally:
-            self._frames.put_nowait(None)
+        end = await self._run()
+        await self._release(end)
+        # Only now: the next message must not find the lock taken.
+        if end.error is not None:
+            self._emit(stream_error(end.error))
+        self._emit(DoneEvent(message_id=self._message_id, finish_reason=end.finish))
         self._report(end, time.monotonic() - started)
 
     async def _run(self) -> _End:

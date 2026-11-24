@@ -11,12 +11,15 @@ import math
 import signal
 import threading
 import time
+import weakref
 from collections.abc import Callable, Coroutine
 from typing import Any, Protocol, TypeVar
 
+import sqlalchemy as sa
 from starlette.concurrency import run_in_threadpool
 
 from src.services.assistant.api.route import describe_exception
+from src.services.assistant.config import get_settings
 from src.services.assistant.core import metrics
 
 logger = logging.getLogger(__name__)
@@ -109,13 +112,37 @@ class OngoingWork:
         return len(self._tasks)
 
 
+# Per event loop: as many threads as the pool has connections. Any more would only
+# wait for one, on threads that the UI's own sync routes need.
+_places: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+async def _take_place() -> asyncio.Semaphore:
+    settings = get_settings()
+    places = _places.setdefault(
+        asyncio.get_running_loop(),
+        asyncio.Semaphore(settings.db_pool_size + settings.db_max_overflow),
+    )
+    try:
+        async with asyncio.timeout(settings.db_pool_timeout):
+            await places.acquire()
+    except TimeoutError:
+        # What the pool raises when no connection becomes free.
+        raise sa.exc.TimeoutError("all assistant connections are in use") from None
+    return places
+
+
 async def run_db(function: Callable[..., T], *args: Any, **kwargs: Any) -> T:
     """A blocking database function in a thread.
 
     A thread cannot be interrupted. A cancelled caller gets here only after the
     transaction has ended, so that its cleanup sees what was committed.
     """
+    places = await _take_place()
     task = asyncio.ensure_future(run_in_threadpool(function, *args, **kwargs))
+    task.add_done_callback(lambda _: places.release())
     cancelled = False
     while not task.done():
         try:
