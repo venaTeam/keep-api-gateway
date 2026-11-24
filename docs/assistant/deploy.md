@@ -18,8 +18,9 @@ With the switch on and no usable `OPENAI_API_KEY` or `OPENAI_BASE_URL`, only new
 are refused (503 `llm_not_configured`). Conversations can still be read, and drafts
 confirmed and discarded.
 
-keep-ui has a switch of its own, also `KEEP_ASSISTANT_ENABLED`, for the panel. The UI
-needs no other setting: it reaches `/assistant/*` through its existing `/backend` rewrite.
+keep-ui has a switch of its own, also `KEEP_ASSISTANT_ENABLED`, for the panel; it takes
+only `true`. The UI needs no other setting: it reaches `/assistant/*` through its existing
+`/backend` rewrite.
 
 ## Rollout
 
@@ -65,7 +66,7 @@ role's permission to change alert status and the soft-delete guard.
 | `ASSISTANT_MAX_COMPLETION_TOKENS` | 1024 | per LLM call |
 | `ASSISTANT_HISTORY_MAX_MESSAGES` | 30 | what the model sees of a conversation |
 | `ASSISTANT_HISTORY_MAX_CHARS` | 48000 | |
-| `ASSISTANT_MAX_USER_MESSAGE_CHARS` | 4000 | |
+| `ASSISTANT_MAX_USER_MESSAGE_CHARS` | 4000 | the UI's composer has its own limit of 4000 |
 | `ASSISTANT_HEARTBEAT_SECONDS` | 10 | keep it well under the 30 s idle timeout of the UI's proxy |
 | `ASSISTANT_FIELDS_CACHE_TTL_SECONDS` | 600 | alert field names, per tenant |
 | `ASSISTANT_RATE_LIMIT_PER_MINUTE` | 10 | messages per user |
@@ -87,7 +88,15 @@ role's permission to change alert status and the soft-delete guard.
 | `ASSISTANT_RETENTION_LOCK_KEY` | 7316902254418086 | advisory lock; must not be keep-migrations' 8274419300112233 |
 
 The database is the gateway's own; `DATABASE_POOL_*` and the like do not reach the
-assistant. A value that cannot be read is logged and the default is used.
+assistant. A value that cannot be read, or that is not above 0, is logged and the default
+is used. Only `ASSISTANT_DB_MAX_OVERFLOW`, `ASSISTANT_MAX_TOOL_ROUNDS`,
+`ASSISTANT_MAX_DRAFTS_PER_TURN`, `ASSISTANT_FIELDS_CACHE_TTL_SECONDS` and the rate limits
+may be 0.
+
+The assistant's connections set `statement_timeout` through the `options` startup
+parameter, in place of an `options` in the connection string. PgBouncer refuses that
+parameter unless it is in its `ignore_startup_parameters`, and then the timeout does not
+apply.
 
 ## What the deployment must provide
 
@@ -109,7 +118,8 @@ new chats and Confirms with 503 `not_ready`. A Confirm that has not sent its wri
 back to `pending`; one that has sent it answers within 8 s, or its draft stays `applying`
 until somebody looks at the conversation again. Writes nobody waits for any more get up to
 8 s, next to the gateway's own shutdown (up to 20 s), after up to 8 s in which open
-responses end: 28 s of the 30.
+responses end: 28 s of the 30. A response does not wait longer than that for a slow
+database; what it wanted to store gets its chance next to the gateway's shutdown.
 
 A `batch_enrich` that takes longer than that is cut off, as it was before the assistant.
 So is a single database statement of retention (60 s at most): its transaction rolls back
@@ -117,14 +127,18 @@ and the next run repeats it.
 
 ## Load
 
-Everything runs in the gateway's own process and event loop. What bounds it:
+Everything runs in the gateway's own process and event loop. The calls to the app's own
+routes are requests like any other: they count in its HTTP metrics and against its rate
+limits, with the caller's address. What bounds it:
 
 | What | Bound |
 |---|---|
 | Messages per user | 10 a minute, 200 a day |
 | Running turns per user | 2, one per conversation |
-| Calls to the app's own routes | 8 at once per worker, then `gateway_unavailable` |
-| Reads of single alerts | 4 of those |
+| Calls to the app's own routes | 8 at once per worker, then `gateway_unavailable`. One of them is kept for Confirm's write |
+| Filters the model wrote | 4 of those at once; the next one waits 5 s for its turn |
+| Reads of single alerts | 4 of those at once; the others wait |
+| Database threads | 5 per worker, one per connection |
 | Alerts per draft | 20 |
 | Drafts per turn | 3 |
 | Request body | 256 KiB |
@@ -133,7 +147,8 @@ Everything runs in the gateway's own process and event loop. What bounds it:
 Running chats stand still for that long.
 
 A call nobody waits for any more (deadline, closed panel) runs to its end and keeps its
-place among the 8 until then: the query routes have no statement timeout.
+place until then: the query routes have no statement timeout. That is what the 4 for
+filters are for: however slow they are, the other calls still get a place.
 
 ## Data
 
@@ -156,7 +171,7 @@ thresholds are starting points.
 | Metric | Says |
 |---|---|
 | `keep_assistant_llm_configured` | 0 in a worker that cannot call the LLM |
-| `keep_assistant_llm_errors_total` | by `kind`: `unavailable`, `rate_limited`, `timeout`, `rejected` |
+| `keep_assistant_llm_errors_total` | by `kind`: `unavailable`, `rate_limited`, `timeout`, `rejected`, `misconfigured` (401, 403 or 404) |
 | `keep_assistant_llm_tokens_total` | by `tenant_id`, `model` and `type`: one key serves all tenants |
 | `keep_assistant_turns_total` | by `result`: `ok`, `error`, `cancelled`, `tool_limit`, `timeout` |
 | `keep_assistant_turn_lock_conflicts_total` | a message while the conversation's turn runs, or seems to |
