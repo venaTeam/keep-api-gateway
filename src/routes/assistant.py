@@ -12,7 +12,13 @@ from src.services.assistant.api.deps import (
 )
 from src.services.assistant.api.route import AssistantRoute
 from src.services.assistant.api.turn_response import TurnResponse
-from src.services.assistant.bl import chat_turn, confirm_bl, timeline
+from src.services.assistant.bl import (
+    chat_turn,
+    confirm_bl,
+    drafts_bl,
+    reconcile_bl,
+    timeline,
+)
 from src.services.assistant.core.work import run_db
 from src.services.assistant.exceptions import AssistantError
 from src.services.assistant.models.api.chat import ChatRequest
@@ -69,11 +75,18 @@ def _stop_unused(starting: "asyncio.Task[chat_turn.Turn]") -> None:
     "/conversations/{conversation_id}", description="A conversation, to show it again."
 )
 async def get_conversation(
+    request: Request,
     conversation_id: str,
     identity: Identity = Depends(get_identity),
 ) -> ConversationView:
     conversation = parse_resource_id(conversation_id, "conversation_not_found")
-    return await run_db(timeline.load, identity, conversation)
+    view = await run_db(timeline.load, identity, conversation)
+    applying = reconcile_bl.applying(view)
+    if applying and await reconcile_bl.reconcile(
+        identity, applying, request.app.state.assistant_gateway
+    ):
+        view = await run_db(timeline.load, identity, conversation)
+    return view
 
 
 @router.post("/drafts/{draft_id}/confirm", description="Change what the card lists.")
@@ -94,3 +107,12 @@ async def confirm_draft(
     )
     # A user who leaves must not cut it off between the write and its result.
     return await asyncio.shield(confirming)
+
+
+@router.post("/drafts/{draft_id}/discard", description="Put a draft away.")
+async def discard_draft(
+    draft_id: str,
+    identity: Identity = Depends(get_identity),
+) -> DraftView:
+    draft = parse_resource_id(draft_id, "draft_not_found")
+    return await run_db(drafts_bl.discard, identity, draft)

@@ -13,6 +13,7 @@ from typing import Any
 import sqlalchemy as sa
 from sqlmodel import Session
 
+from src.services.assistant.bl import outcomes
 from src.services.assistant.config import get_settings
 from src.services.assistant.core import metrics
 from src.services.assistant.core.db import get_session
@@ -82,9 +83,7 @@ class DraftKey:
 
 
 def key_of(identity: Identity, draft: DraftView) -> DraftKey:
-    return DraftKey(
-        draft.id, identity.tenant_id, identity.email, draft.conversation_id
-    )
+    return DraftKey(draft.id, identity.tenant_id, identity.email, draft.conversation_id)
 
 
 def owned(identity: Identity) -> tuple[sa.ColumnElement[bool], ...]:
@@ -208,6 +207,45 @@ def resolve(
             )
         )
         return to_view(draft)
+
+
+def claim_look(key: DraftKey, after_seconds: int) -> DraftView | None:
+    """The draft, for one caller per `after_seconds` since it was claimed. None: it is
+    too early, or it is not being applied any more."""
+    with get_session() as session, session.begin():
+        draft = _change(
+            session,
+            *key.matches(),
+            Draft.state == "applying",
+            Draft.updated_at < sa.func.now() - timedelta(seconds=after_seconds),
+        )
+        return None if draft is None else to_view(draft)
+
+
+def discard(identity: Identity, draft_id: uuid.UUID) -> DraftView:
+    """pending -> discarded; again is fine. Raises as `claim` does."""
+    with get_session() as session:
+        draft = session.scalar(
+            sa.select(Draft).where(Draft.id == draft_id, *owned(identity))
+        )
+        if draft is None:
+            raise AssistantError("draft_not_found")
+        view = to_view(draft)
+    if view.state == "pending":
+        key = key_of(identity, view)
+        discarded = resolve(
+            key,
+            from_state="pending",
+            state="discarded",
+            event=outcomes.discarded_text(view),
+        )
+        if discarded is not None:
+            metrics.drafts_total.labels(kind=view.kind, event="discarded").inc()
+            return discarded
+        view = load(key)  # somebody was faster
+    if view.state == "discarded":
+        return view
+    raise conflict(view)
 
 
 def load(key: DraftKey) -> DraftView:
