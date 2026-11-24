@@ -363,6 +363,13 @@ CONFIG = {
             "level": "ERROR",
             "propagate": False,
         },
+        # They log whole requests at DEBUG: prompts, alert text, headers.
+        "openai": {
+            "level": "WARNING",
+        },
+        "httpcore": {
+            "level": "WARNING",
+        },
         "http.client": {
             "handlers": ["default"],
             "level": "DEBUG",
