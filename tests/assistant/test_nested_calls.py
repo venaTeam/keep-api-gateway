@@ -374,6 +374,8 @@ async def test_a_full_house_of_calls_leaves_the_ui_its_threads(
         return []
 
     monkeypatch.setattr(alerts, "query_last_alerts", stuck)
+    # The test database is one SQLite connection: not for several threads at once.
+    monkeypatch.setattr(alerts, "enrich_alerts_with_incidents", lambda t, found: found)
     client = in_process(test_app)
     noc = Caller(role("noc"), REQUEST_ID)
     queries = [
