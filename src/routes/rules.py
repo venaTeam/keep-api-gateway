@@ -18,6 +18,18 @@ router = APIRouter()
 
 logger = logging.getLogger(__name__)
 
+# first_resolved / last_resolved are retired: rules already stored with them keep
+# working and stay readable, but they can no longer be created or saved.
+SELECTABLE_RESOLVE_ON: tuple[str, str] = (ResolveOn.NEVER.value, ResolveOn.ALL.value)
+
+
+def validate_resolve_on(resolve_on: str) -> None:
+    if resolve_on not in SELECTABLE_RESOLVE_ON:
+        raise HTTPException(
+            status_code=400,
+            detail=f"resolveOn '{resolve_on}' is not supported; use 'never' or 'all_resolved'",
+        )
+
 
 class RuleCreateDto(BaseModel):
     ruleName: str
@@ -118,6 +130,8 @@ async def create_rule(
 
     if not resolve_on:
         raise HTTPException(status_code=400, detail="resolveOn is required")
+
+    validate_resolve_on(resolve_on)
 
     if not create_on:
         raise HTTPException(status_code=400, detail="createOn is required")
@@ -232,6 +246,8 @@ async def update_rule(
 
     if not resolve_on:
         raise HTTPException(status_code=400, detail="resolveOn is required")
+
+    validate_resolve_on(resolve_on)
 
     if not create_on:
         raise HTTPException(status_code=400, detail="createOn is required")
