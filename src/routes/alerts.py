@@ -70,6 +70,7 @@ from src.models.query import CountQueryDto, QueryDto
 from src.models.search_alert import SearchAlertsRequest
 from src.models.time_stamp import TimeStampFilter
 from src.utils.enrichment_helpers import convert_db_alerts_to_dto_alerts
+from src.utils.request_id import current_request_id
 from src.utils.time_stamp_helpers import get_time_stamp_filter
 from src.services.identity_manager.authenticatedentity import AuthenticatedEntity
 from src.services.identity_manager.identitymanagerfactory import IdentityManagerFactory
@@ -651,12 +652,9 @@ async def batch_enrich_alerts(
     _reject_unsafe_ticket_url(enrich_data.enrichments)
 
     tenant_id = authenticated_entity.tenant_id
-    logger.info(
-        "Enriching alerts in batch",
-        extra={
-            "tenant_id": tenant_id,
-        },
-    )
+    # On every log line below, so a caller's X-Request-ID finds all of them.
+    log_context = {"tenant_id": tenant_id, "request_id": current_request_id()}
+    logger.info("Enriching alerts in batch", extra=log_context)
 
     _translate_dismiss_enrichments(enrich_data.enrichments)
 
@@ -674,10 +672,7 @@ async def batch_enrich_alerts(
     if enrich_data.cel:
         logger.info(
             "Enriching alerts by CEL query",
-            extra={
-                "cel": enrich_data.cel,
-                "tenant_id": tenant_id,
-            },
+            extra={**log_context, "cel": enrich_data.cel},
         )
 
         try:
@@ -689,7 +684,7 @@ async def batch_enrich_alerts(
             if not db_alerts:
                 logger.info(
                     "No alerts found matching the CEL query",
-                    extra={"cel": enrich_data.cel, "tenant_id": tenant_id},
+                    extra={**log_context, "cel": enrich_data.cel},
                 )
                 return {
                     "status": "ok",
@@ -700,28 +695,29 @@ async def batch_enrich_alerts(
             logger.info(
                 "Found alerts matching CEL query",
                 extra={
+                    **log_context,
                     "cel": enrich_data.cel,
-                    "tenant_id": tenant_id,
                     "alert_count": len(db_alerts),
                 },
             )
         except CelToSqlException as e:
             logger.exception(
-                f'Error parsing CEL expression "{enrich_data.cel}". {str(e)}'
+                f'Error parsing CEL expression "{enrich_data.cel}". {str(e)}',
+                extra=log_context,
             )
             raise http_exception_from_converter_error(enrich_data.cel, e) from e
         except Exception as e:
-            logger.exception("Failed to process CEL query", extra={"error": str(e)})
+            logger.exception(
+                "Failed to process CEL query",
+                extra={**log_context, "error": str(e)},
+            )
             return {"status": "failed", "message": str(e)}
     else:
         # Use the provided fingerprints
         fingerprints = enrich_data.fingerprints
         logger.info(
             "Enriching alerts batch",
-            extra={
-                "fingerprints": fingerprints,
-                "tenant_id": tenant_id,
-            },
+            extra={**log_context, "fingerprints": fingerprints},
         )
 
     # Common enrichment processing
@@ -763,28 +759,30 @@ async def batch_enrich_alerts(
         enriched_alerts_dto = convert_db_alerts_to_dto_alerts(alerts, session=session)
         # push the enriched alert to the elasticsearch
         try:
-            logger.info("Pushing enriched alerts to elasticsearch")
+            logger.info("Pushing enriched alerts to elasticsearch", extra=log_context)
             elastic_client = ElasticClient(tenant_id)
             elastic_client.index_alerts(
                 alerts=enriched_alerts_dto,
             )
-            logger.info("Pushed enriched alerts to elasticsearch")
+            logger.info("Pushed enriched alerts to elasticsearch", extra=log_context)
         except Exception:
-            logger.exception("Failed to push alerts to elasticsearch")
+            logger.exception("Failed to push alerts to elasticsearch", extra=log_context)
             pass
 
         # use SSE to push the enriched alert to the client
-        logger.info("Telling client to poll alerts")
+        logger.info("Telling client to poll alerts", extra=log_context)
         try:
             notify_sse(tenant_id, "poll-alerts", {})
-            logger.info("Told client to poll alerts")
+            logger.info("Told client to poll alerts", extra=log_context)
         except Exception:
-            logger.exception("Failed to tell client to poll alerts")
+            logger.exception(
+                "Failed to tell client to poll alerts", extra=log_context
+            )
             pass
 
         logger.info(
             "Alerts batch enriched successfully",
-            extra={"fingerprints": fingerprints, "tenant_id": tenant_id},
+            extra={**log_context, "fingerprints": fingerprints},
         )
 
 
@@ -806,7 +804,14 @@ async def batch_enrich_alerts(
         # Re-raise HTTP exceptions
         raise
     except Exception as e:
-        logger.exception("Failed to enrich alerts batch", extra={"error": str(e)})
+        logger.exception(
+            "Failed to enrich alerts batch",
+            extra={
+                **log_context,
+                "fingerprint_count": len(fingerprints),
+                "error": str(e),
+            },
+        )
         return {"status": "failed"}
 
 
