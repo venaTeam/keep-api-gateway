@@ -14,6 +14,16 @@ def caller(request_id: str = REQUEST_ID) -> Caller:
     return Caller(authorization=TOKEN, request_id=request_id)
 
 
+def whoami(**fields) -> dict:
+    return {
+        "tenant_id": "keep",
+        "role": "noc",
+        "email": "ops@example.com",
+        "scopes": ["read:*", "write:alert"],
+        **fields,
+    }
+
+
 def alert(fingerprint: str, **fields) -> dict:
     """An alert as the gateway renders it."""
     return {
