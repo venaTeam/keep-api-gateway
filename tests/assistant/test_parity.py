@@ -326,21 +326,33 @@ def test_only_the_client_talks_to_the_gateway():
 
 
 def test_the_client_has_one_write():
-    paths = {
-        (call.args[2].value, call.args[3].value)
+    calls = sorted(
+        tuple(ast.unparse(arg) for arg in call.args[2:4])
         for call in ast.walk(sources()[CLIENT])
         if isinstance(call, ast.Call)
-        and getattr(call.func, "attr", "") in ("_send", "_read")
-        and len(call.args) > 3
-        and all(isinstance(arg, ast.Constant) for arg in call.args[2:4])
-    }
-    assert paths == {
-        ("GET", "/whoami"),
-        ("POST", "/alerts/query"),
-        ("POST", "/alerts/query/count"),
-        ("GET", "/alerts/facets/fields"),
-        ("POST", "/alerts/batch_enrich"),
-    }
+        and getattr(call.func, "attr", "") in ("_send", "_read", "_request", "request")
+    )
+    assert calls == sorted(
+        [
+            ("'GET'", "'/whoami'"),
+            ("'POST'", "'/alerts/query'"),
+            ("'POST'", "'/alerts/query/count'"),
+            ("'GET'", "'/alerts/facets/fields'"),
+            ("'GET'", "f\"/alerts/{quote(fingerprint, safe='')}\""),
+            ("'POST'", "'/alerts/batch_enrich'"),
+            # What these go through.
+            ("method", "path"),  # _read to _send
+            ("path", "timeout"),  # _send to _request
+            (),  # _request to httpx
+        ]
+    )
+
+
+def test_nothing_is_imported_by_name():
+    """The checks here read import statements."""
+    for path, tree in sources().items():
+        for name in ("importlib", "import_module", "__import__", "exec", "eval"):
+            assert not mentions(tree, name), f"{path.name} uses {name}"
 
 
 def test_nothing_of_the_chat_reaches_confirm():
@@ -363,8 +375,10 @@ def test_the_rest_of_the_gateway_is_not_used_for_writes():
     }
     for path, tree in sources().items():
         for node in ast.walk(tree):
+            assert not getattr(node, "level", 0), f"{path.name}: a relative import"
             modules = (
-                [node.module or ""]
+                # `from src.repositories import db` names a module after `import`.
+                [f"{node.module}.{alias.name}" for alias in node.names]
                 if isinstance(node, ast.ImportFrom)
                 else [alias.name for alias in node.names]
                 if isinstance(node, ast.Import)
