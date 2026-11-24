@@ -6,6 +6,8 @@ import json
 import time
 from types import SimpleNamespace
 
+import httpx
+
 from src.services.assistant.core.work import OngoingWork
 from src.services.assistant.llm.client import (
     Finished,
@@ -13,7 +15,7 @@ from src.services.assistant.llm.client import (
     ToolCallComplete,
     Usage,
 )
-from tests.assistant.fakes import TOKEN, FakeGateway, whoami
+from tests.assistant.fakes import TOKEN, FakeGateway, alert, query_result, whoami
 
 
 # --- the model -----------------------------------------------------------------
@@ -232,7 +234,9 @@ class Exchange:
         return [data for found, data in self.events if found == name][-1]
 
 
-def post_chat(app, message="hello", conversation_id=None, on_send=None, **context):
+def post_chat(
+    app, message="hello", conversation_id=None, on_send=None, token=TOKEN, **context
+):
     return Exchange(
         app,
         "POST",
@@ -243,7 +247,55 @@ def post_chat(app, message="hello", conversation_id=None, on_send=None, **contex
             "context": context,
         },
         on_send=on_send,
+        token=token,
     )
+
+
+def post_confirm(app, draft_id, **options) -> Exchange:
+    return Exchange(app, "POST", f"/assistant/drafts/{draft_id}/confirm", **options)
+
+
+class Keep(FakeGateway):
+    """A gateway with alerts in it, which a batch_enrich really changes."""
+
+    def __init__(self, statuses: dict[str, str]):
+        super().__init__()
+        self.statuses = dict(statuses)
+        # What batch_enrich does not get to change.
+        self.stuck: set[str] = set()
+        self.answer = httpx.Response(200, json={"status": "ok"})
+        self.on_json("GET", "/whoami", whoami())
+        self.on("POST", "/alerts/query", self._query)
+        self.on("POST", "/alerts/batch_enrich", self._write)
+
+    async def _query(self, request: httpx.Request) -> httpx.Response:
+        cel = json.loads(request.content)["cel"]
+        wanted = json.loads(cel.removeprefix("fingerprint in "))
+        return httpx.Response(
+            200,
+            json=query_result(
+                *(
+                    alert(fp, status=self.statuses[fp])
+                    for fp in wanted
+                    if fp in self.statuses
+                )
+            ),
+        )
+
+    async def _write(self, request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        for fp in body["fingerprints"]:
+            if fp not in self.stuck:
+                self.statuses[fp] = body["enrichments"]["status"]
+        return self.answer
+
+    @property
+    def writes(self) -> list[httpx.Request]:
+        return [r for r in self.requests if r.url.path == "/alerts/batch_enrich"]
+
+    @property
+    def looks(self) -> list[httpx.Request]:
+        return [r for r in self.requests if r.url.path == "/alerts/query"]
 
 
 async def until(condition, timeout: float = 10) -> None:

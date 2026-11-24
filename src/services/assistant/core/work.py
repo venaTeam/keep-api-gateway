@@ -7,6 +7,7 @@ SHUTDOWN_GRACE_SECONDS once the signal has come.
 """
 import asyncio
 import logging
+import math
 import signal
 import threading
 import time
@@ -53,7 +54,7 @@ class OngoingWork:
         self._draining.set()
         logger.info(
             "assistant: draining",
-            extra={"turns": len(self._stoppables), "tasks": len(self._tasks)},
+            extra={"to_stop": len(self._stoppables), "tasks": len(self._tasks)},
         )
         for item in list(self._stoppables):
             item.stop()
@@ -81,6 +82,23 @@ class OngoingWork:
         if stoppable is not None and self.draining:
             stoppable.stop()
         return task
+
+    def grace_left(self) -> float:
+        """Seconds a response may stay open; no limit while the worker stays up."""
+        if not self.draining:
+            return math.inf
+        return SHUTDOWN_GRACE_SECONDS - (time.monotonic() - self._drain_started)
+
+    async def wait(self, task: asyncio.Task[Any], *, leave: float) -> None:
+        """Until `task` ends, or until the worker shuts down and only `leave` seconds
+        of its grace are left. Never cancels `task`."""
+        draining = asyncio.create_task(self._draining.wait())
+        try:
+            await asyncio.wait({task, draining}, return_when=asyncio.FIRST_COMPLETED)
+            if not task.done():
+                await asyncio.wait({task}, timeout=max(0.0, self.grace_left() - leave))
+        finally:
+            draining.cancel()
 
     async def settle(self, timeout: float) -> int:
         """Wait for what is still running, and for what that starts in turn. How many

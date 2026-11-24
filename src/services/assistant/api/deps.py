@@ -1,5 +1,6 @@
 """Request dependencies and path helpers shared by the routes."""
 import logging
+import time
 import uuid
 
 from fastapi import Request
@@ -24,8 +25,13 @@ from src.utils.request_id import current_request_id
 logger = logging.getLogger(__name__)
 
 
+async def request_started() -> float:
+    """time.monotonic() before any other dependency ran."""
+    return time.monotonic()
+
+
 async def require_ready() -> None:
-    """Every route's first dependency: the tables come from another release job."""
+    """Before anything that touches them: the tables come from another release job."""
     if db_core.schema_verified():
         return
     try:

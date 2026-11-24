@@ -7,18 +7,23 @@ from fastapi.responses import Response
 from src.services.assistant.api.deps import (
     get_identity,
     parse_resource_id,
+    request_started,
     require_ready,
 )
 from src.services.assistant.api.route import AssistantRoute
 from src.services.assistant.api.turn_response import TurnResponse
-from src.services.assistant.bl import chat_turn, timeline
+from src.services.assistant.bl import chat_turn, confirm_bl, timeline
 from src.services.assistant.core.work import run_db
 from src.services.assistant.exceptions import AssistantError
 from src.services.assistant.models.api.chat import ChatRequest
 from src.services.assistant.models.api.conversation import ConversationView
+from src.services.assistant.models.api.draft import DraftView
 from src.services.assistant.models.identity import Identity
 
-router = APIRouter(route_class=AssistantRoute, dependencies=[Depends(require_ready)])
+router = APIRouter(
+    route_class=AssistantRoute,
+    dependencies=[Depends(request_started), Depends(require_ready)],
+)
 
 
 @router.post("/chat", description="Send a message; the answer is an event stream.")
@@ -69,3 +74,23 @@ async def get_conversation(
 ) -> ConversationView:
     conversation = parse_resource_id(conversation_id, "conversation_not_found")
     return await run_db(timeline.load, identity, conversation)
+
+
+@router.post("/drafts/{draft_id}/confirm", description="Change what the card lists.")
+async def confirm_draft(
+    request: Request,
+    draft_id: str,
+    started: float = Depends(request_started),
+    identity: Identity = Depends(get_identity),
+) -> DraftView:
+    state = request.app.state
+    draft = parse_resource_id(draft_id, "draft_not_found")
+    if state.assistant_work.draining:
+        raise AssistantError("not_ready")
+    confirming = state.assistant_work.spawn(
+        confirm_bl.confirm(
+            identity, draft, state.assistant_gateway, state.assistant_work, started
+        )
+    )
+    # A user who leaves must not cut it off between the write and its result.
+    return await asyncio.shield(confirming)

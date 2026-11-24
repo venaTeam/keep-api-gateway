@@ -6,14 +6,19 @@ one finds no row. Locks are always taken in the order conversation, draft, messa
 import json
 import uuid
 from collections.abc import Collection
+from dataclasses import dataclass
 from datetime import timedelta
+from typing import Any
 
 import sqlalchemy as sa
 from sqlmodel import Session
 
 from src.services.assistant.config import get_settings
-from src.services.assistant.models.api.draft import DraftView
-from src.services.assistant.models.db import Draft
+from src.services.assistant.core import metrics
+from src.services.assistant.core.db import get_session
+from src.services.assistant.exceptions import AssistantError
+from src.services.assistant.models.api.draft import DraftOutcome, DraftState, DraftView
+from src.services.assistant.models.db import Conversation, Draft, Message
 from src.services.assistant.models.identity import Identity
 from src.services.assistant.tools.base import NewDraft
 
@@ -59,8 +64,171 @@ def to_view(draft: Draft) -> DraftView:
     )
 
 
+@dataclass(frozen=True)
+class DraftKey:
+    """One draft of one user: every statement below is scoped by all of it."""
+
+    id: uuid.UUID
+    tenant_id: str
+    created_by: str
+    conversation_id: uuid.UUID
+
+    def matches(self) -> tuple[sa.ColumnElement[bool], ...]:
+        return (
+            Draft.id == self.id,
+            Draft.tenant_id == self.tenant_id,
+            Draft.created_by == self.created_by,
+        )
+
+
+def key_of(identity: Identity, draft: DraftView) -> DraftKey:
+    return DraftKey(
+        draft.id, identity.tenant_id, identity.email, draft.conversation_id
+    )
+
+
 def owned(identity: Identity) -> tuple[sa.ColumnElement[bool], ...]:
     return Draft.tenant_id == identity.tenant_id, Draft.created_by == identity.email
+
+
+def claim(identity: Identity, draft_id: uuid.UUID) -> DraftView:
+    """pending -> applying, for exactly one caller.
+
+    Raises draft_not_found, or draft_applying, draft_expired or draft_not_pending with
+    the draft as it is.
+    """
+    mine = (Draft.id == draft_id, *owned(identity))
+    with get_session() as session, session.begin():
+        claimed = _change(
+            session,
+            *mine,
+            Draft.state == "pending",
+            Draft.expires_at > sa.func.now(),
+            state="applying",
+        )
+        if claimed is not None:
+            return to_view(claimed)
+        expired = _change(
+            session,
+            *mine,
+            Draft.state == "pending",
+            Draft.expires_at <= sa.func.now(),
+            state="expired",
+            resolved_at=sa.func.now(),
+        )
+        draft = expired or session.scalar(sa.select(Draft).where(*mine))
+        if draft is None:
+            raise AssistantError("draft_not_found")
+        view = to_view(draft)
+    if expired is not None:
+        metrics.drafts_total.labels(kind=view.kind, event="expired").inc()
+    raise conflict(view)
+
+
+def conflict(draft: DraftView) -> AssistantError:
+    code = {
+        "applying": "draft_applying",
+        "expired": "draft_expired",
+        # It was being applied a moment ago, and was put back since.
+        "pending": "draft_applying",
+    }.get(draft.state, "draft_not_pending")
+    return AssistantError(code, extra={"draft": json.loads(draft.json())})
+
+
+def revert(key: DraftKey) -> None:
+    """applying -> pending: nothing was sent."""
+    with get_session() as session, session.begin():
+        _change(session, *key.matches(), Draft.state == "applying", state="pending")
+
+
+def keep_applying(key: DraftKey, outcome: DraftOutcome) -> DraftView | None:
+    """Store what is known so far. None: it is not being applied any more.
+
+    `updated_at` stays: it says when somebody may look at the alerts again.
+    """
+    with get_session() as session, session.begin():
+        draft = _change(
+            session,
+            *key.matches(),
+            Draft.state == "applying",
+            outcome=json.loads(outcome.json()),
+            updated_at=Draft.updated_at,
+        )
+        return None if draft is None else to_view(draft)
+
+
+def resolve(
+    key: DraftKey,
+    *,
+    from_state: DraftState,
+    state: DraftState,
+    event: str,
+    outcome: DraftOutcome | None = None,
+    by_user: bool = True,
+) -> DraftView | None:
+    """The final state, and the row that tells the model, all or nothing. None: the
+    draft was not in `from_state` any more.
+
+    Only what a user does counts as activity in the conversation.
+    """
+    with get_session() as session, session.begin():
+        conversation = (
+            Conversation.id == key.conversation_id,
+            Conversation.tenant_id == key.tenant_id,
+        )
+        session.execute(
+            sa.select(Conversation.id)
+            .where(*conversation)
+            .with_for_update(key_share=True, read=not by_user)
+        )
+        draft = _change(
+            session,
+            *key.matches(),
+            Draft.state == from_state,
+            state=state,
+            resolved_at=sa.func.now(),
+            outcome=None if outcome is None else json.loads(outcome.json()),
+        )
+        if draft is None:
+            return None
+        if by_user:
+            session.execute(
+                sa.update(Conversation)
+                .where(*conversation)
+                .values(updated_at=sa.func.now())
+            )
+        session.execute(
+            sa.insert(Message).values(
+                id=uuid.uuid4(),
+                tenant_id=key.tenant_id,
+                conversation_id=key.conversation_id,
+                role="event",
+                content=event,
+                draft_id=key.id,
+            )
+        )
+        return to_view(draft)
+
+
+def load(key: DraftKey) -> DraftView:
+    """Raises draft_not_found."""
+    with get_session() as session:
+        draft = session.scalar(sa.select(Draft).where(*key.matches()))
+        if draft is None:
+            raise AssistantError("draft_not_found")
+        return to_view(draft)
+
+
+def _change(
+    session: Session, *where: sa.ColumnElement[bool], **values: Any
+) -> Draft | None:
+    return session.scalars(
+        sa.update(Draft)
+        .where(*where)
+        .values(**{"updated_at": sa.func.now(), **values})
+        .returning(Draft)
+        .execution_options(synchronize_session=False, populate_existing=True)
+    ).one_or_none()
 
 
 def load_many(
