@@ -13,13 +13,17 @@ MAX_FINGERPRINT_CHARS = 512
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
 
-def _storable(value: str) -> str:
+def storable(value: str) -> str:
     """Postgres text holds neither NUL nor a lone surrogate, and both survive
     JSON parsing: refuse them here instead of failing on the insert."""
     if "\x00" in value:
         raise ValueError("NUL character")
     value.encode("utf-8")  # UnicodeEncodeError is a ValueError
     return value
+
+
+def has_control_characters(value: str) -> bool:
+    return bool(_CONTROL.search(value))
 
 
 class ChatContext(BaseModel):
@@ -34,14 +38,14 @@ class ChatContext(BaseModel):
     # The true size of the selection; the list carries the first 200.
     selected_count: conint(ge=0, strict=True) = 0
 
-    _page_storable = validator("page", allow_reuse=True)(_storable)
+    _page_storable = validator("page", allow_reuse=True)(storable)
 
     @validator("selected_fingerprints")
     def _clean_and_distinct(cls, value: List[str]) -> List[str]:
         for fingerprint in value:
-            if _CONTROL.search(fingerprint):
+            if has_control_characters(fingerprint):
                 raise ValueError("control character")
-            _storable(fingerprint)
+            storable(fingerprint)
         return list(dict.fromkeys(value))
 
 
@@ -56,4 +60,4 @@ class ChatRequest(BaseModel):
     def _bounded_and_storable(cls, value: str) -> str:
         if len(value) > get_settings().max_user_message_chars:
             raise ValueError("too long")
-        return _storable(value)
+        return storable(value)

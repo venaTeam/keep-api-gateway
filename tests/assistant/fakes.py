@@ -5,6 +5,7 @@ from collections.abc import Callable
 import httpx
 
 from src.services.assistant.gateway.client import Caller, GatewayClient
+from src.services.assistant.models.identity import Identity
 
 TOKEN = "Bearer keepActiveTenant=keep&header.payload.signature"
 REQUEST_ID = "00000000-0000-4000-8000-000000000042"
@@ -12,6 +13,18 @@ REQUEST_ID = "00000000-0000-4000-8000-000000000042"
 
 def caller(request_id: str = REQUEST_ID) -> Caller:
     return Caller(authorization=TOKEN, request_id=request_id)
+
+
+def identity(**fields) -> Identity:
+    return Identity(
+        **{
+            "tenant_id": "keep",
+            "email": "ops@example.com",
+            "scopes": frozenset({"read:*", "write:alert"}),
+            "authorization": TOKEN,
+            **fields,
+        }
+    )
 
 
 def whoami(**fields) -> dict:
