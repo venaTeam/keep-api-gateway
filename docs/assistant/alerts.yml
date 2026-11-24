@@ -1,0 +1,162 @@
+# Prometheus rules for Keep Assistant; see deploy.md. Thresholds are starting points.
+groups:
+  - name: keep-assistant-llm
+    rules:
+      - alert: KeepAssistantLlmNotConfigured
+        expr: min(keep_assistant_llm_configured) == 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Keep Assistant cannot call the LLM
+          description: >-
+            A worker has no LLM client, so it answers new chats with 503. Check
+            OPENAI_API_KEY and OPENAI_BASE_URL; the startup log names the problem.
+      - alert: KeepAssistantLlmRateLimited
+        expr: sum(increase(keep_assistant_llm_errors_total{kind="rate_limited"}[15m])) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: OpenAI limits Keep Assistant
+          description: >-
+            One key serves all tenants. keep_assistant_llm_tokens_total by tenant_id
+            shows who uses it.
+      - alert: KeepAssistantLlmRejected
+        expr: sum(increase(keep_assistant_llm_errors_total{kind="rejected"}[15m])) > 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: OpenAI refuses Keep Assistant's requests
+          description: A revoked key, an unknown model or a request it does not accept.
+      - alert: KeepAssistantLlmUnavailable
+        expr: sum(increase(keep_assistant_llm_errors_total{kind=~"unavailable|timeout"}[15m])) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: OpenAI does not answer Keep Assistant
+          description: Chats end with an error. Check the egress and OpenAI's status.
+      - alert: KeepAssistantTenantTokens
+        expr: sum by (tenant_id) (increase(keep_assistant_llm_tokens_total[1h])) > 2000000
+        for: 10m
+        labels:
+          severity: info
+        annotations:
+          summary: "A tenant uses many LLM tokens: {{ $labels.tenant_id }}"
+          description: There is no budget per tenant; the key's budget is shared.
+
+  - name: keep-assistant-chat
+    rules:
+      - alert: KeepAssistantTurnsCancelled
+        expr: >-
+          sum(increase(keep_assistant_turns_total{result="cancelled"}[30m]))
+          > 0.3 * sum(increase(keep_assistant_turns_total[30m]))
+          and sum(increase(keep_assistant_turns_total[30m])) > 20
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: Many Keep Assistant chats are broken off
+          description: >-
+            Right after a rollout, look for a proxy that buffers text/event-stream or
+            closes it after a short idle time.
+      - alert: KeepAssistantTurnsFailing
+        expr: >-
+          sum(increase(keep_assistant_turns_total{result=~"error|timeout"}[30m]))
+          > 0.2 * sum(increase(keep_assistant_turns_total[30m]))
+          and sum(increase(keep_assistant_turns_total[30m])) > 20
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: Many Keep Assistant chats fail
+          description: The LLM and gateway metrics of the same time say why.
+      - alert: KeepAssistantTurnLockConflicts
+        expr: sum(increase(keep_assistant_turn_lock_conflicts_total[15m])) > 20
+        for: 5m
+        labels:
+          severity: info
+        annotations:
+          summary: Keep Assistant conversations stay locked
+          description: >-
+            A worker that was killed leaves its conversations locked for 120 s. During a
+            rollout this means that workers do not end in time.
+      - alert: KeepAssistantOwnCallsFailing
+        expr: >-
+          sum by (endpoint) (increase(keep_assistant_gateway_requests_total{status_class=~"5xx|timeout|not_sent|dropped"}[15m])) > 20
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Keep Assistant's calls to the gateway's routes fail: {{ $labels.endpoint }}"
+          description: >-
+            not_sent: more than 8 at once in a worker, usually because earlier ones are
+            slow. The UI's own requests to these routes are then slow, too.
+
+  - name: keep-assistant-drafts
+    rules:
+      - alert: KeepAssistantDraftsStuck
+        expr: max(keep_assistant_drafts_stale_applying) > 0
+        for: 2h
+        labels:
+          severity: warning
+        annotations:
+          summary: Confirmed changes have no known result
+          description: >-
+            Nobody has looked at these conversations since, and the gateway may or may
+            not have changed the alerts. They are closed after 24 hours.
+      - alert: KeepAssistantDraftsFinishedLate
+        expr: sum(increase(keep_assistant_drafts_total{event="finalized_after_timeout"}[1h])) > 5
+        for: 5m
+        labels:
+          severity: info
+        annotations:
+          summary: Confirmed changes take too long
+          description: batch_enrich did not answer within Confirm's 26 s.
+      - alert: KeepAssistantDraftOutcomeUnknown
+        expr: sum(increase(keep_assistant_draft_outcomes_total{outcome="outcome_unknown"}[1h])) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: The result of a confirmed change was never found out
+          description: The log line "draft closed without a result" names the draft.
+
+  - name: keep-assistant-service
+    rules:
+      - alert: KeepAssistantRetentionStale
+        # 0 until a worker's first run, at most 20 minutes after it started.
+        expr: time() - max(keep_assistant_retention_last_success_unixtime) > 2 * 86400
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: Old Keep Assistant conversations are not deleted
+          description: >-
+            No complete run for two days. Expected with ASSISTANT_RETENTION_ENABLED off.
+      - alert: KeepAssistantRetentionFailing
+        expr: sum(increase(keep_assistant_retention_failures_total[1d])) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: A retention run of Keep Assistant failed
+          description: The next one is a day later. The log line has the type of the error.
+      - alert: KeepAssistantNotReady
+        expr: sum(increase(keep_assistant_internal_errors_total{site=~"readiness_database|readiness_schema"}[15m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Keep Assistant has no usable database
+          description: >-
+            Its tables are missing or not complete (has keep-migrations run?), or the
+            database does not answer. Requests get 503.
+      - alert: KeepAssistantInternalErrors
+        expr: sum by (site) (increase(keep_assistant_internal_errors_total[15m])) > 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Keep Assistant fails internally: {{ $labels.site }}"
+          description: Log lines with the same time have the type and the place, no text.
