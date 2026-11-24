@@ -6,6 +6,8 @@ from fastapi import FastAPI
 from src.services.assistant.api.route import describe_exception
 from src.services.assistant.core import db as db_core
 from src.services.assistant.core import metrics
+from src.services.assistant.gateway.client import GatewayClient
+from src.services.assistant.gateway.transport import IN_PROCESS_URL, InProcessTransport
 from src.services.assistant.llm.client import build_llm_client
 
 logger = logging.getLogger(__name__)
@@ -13,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 def start(app: FastAPI) -> None:
     """Never raises: the assistant must not keep the gateway from starting."""
+    app.state.assistant_gateway = GatewayClient(IN_PROCESS_URL, InProcessTransport(app))
     # None: new chats answer 503 llm_not_configured, existing drafts still work.
     app.state.assistant_llm = None
     try:
@@ -28,6 +31,7 @@ async def stop(app: FastAPI) -> None:
     try:
         if app.state.assistant_llm is not None:
             await app.state.assistant_llm.aclose()
+        await app.state.assistant_gateway.aclose()
         db_core.dispose_engine()
     except Exception as exc:
         metrics.internal_errors_total.labels(site="shutdown").inc()

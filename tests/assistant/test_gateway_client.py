@@ -610,9 +610,12 @@ async def test_one_failing_single_read_fails_the_lookup(gateway, answer, error):
 
 
 @pytest.mark.asyncio
-async def test_lookup_has_one_overall_deadline_and_leaves_no_task(gateway):
+async def test_lookup_has_one_overall_deadline_and_leaves_only_running_calls(gateway):
+    answer = asyncio.Event()
+
     async def slow(request):
-        await asyncio.Event().wait()
+        await answer.wait()
+        return httpx.Response(404)
 
     for number in range(15):
         gateway.on("GET", f"/alerts/q%20{number}", slow)
@@ -621,7 +624,12 @@ async def test_lookup_has_one_overall_deadline_and_leaves_no_task(gateway):
         await gateway.client().fetch_alerts_by_fingerprints(
             caller(), [f"q {n}" for n in range(15)], deadline_seconds=0.1
         )
+    left = asyncio.all_tasks() - before
+    assert len(left) == len(gateway.requests) == MAX_CONCURRENT_ALERT_READS
+    answer.set()
+    await asyncio.wait(left, timeout=2)
     assert asyncio.all_tasks() == before
+    assert len(gateway.requests) == MAX_CONCURRENT_ALERT_READS
 
 
 @pytest.mark.asyncio

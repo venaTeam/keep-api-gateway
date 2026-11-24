@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from src.services.assistant.api.deps import get_identity
 from src.services.assistant.config import get_settings
 from src.services.assistant.core import metrics
+from src.services.assistant.gateway.transport import CLIENT_EXTENSION
 from src.services.assistant.models.identity import Identity
 from tests.assistant.fakes import TOKEN, FakeGateway, whoami
 
@@ -25,6 +26,7 @@ def app(assistant_router, make_app):
             "scopes": sorted(identity.scopes) if identity.scopes is not None else None,
             "token_forwarded": identity.authorization == TOKEN,
             "repr": repr(identity) + repr(identity.caller(uuid.uuid4())),
+            "client": identity.caller(uuid.uuid4()).client,
         }
 
     return make_app()
@@ -76,6 +78,13 @@ def test_whoami_carries_only_the_callers_token_and_a_uuid(client, gateway):
     uuid.UUID(sent["X-Request-ID"])
     for name in ("x-keep-source", "x-api-key", "cookie"):
         assert name not in sent
+
+
+def test_nested_calls_come_from_the_users_address(app, schema_ready, gateway):
+    client = TestClient(app, client=("192.0.2.7", 4711))
+    assert call(client).json()["client"] == ["192.0.2.7", 4711]
+    sent = gateway.requests[0]
+    assert sent.extensions[CLIENT_EXTENSION] == ("192.0.2.7", 4711)
 
 
 def test_whoami_is_asked_on_every_request(client, gateway):

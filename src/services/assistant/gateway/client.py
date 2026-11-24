@@ -1,12 +1,15 @@
 """Client of the gateway's own routes, which are the only authority on permissions:
 every call carries the end user's own token and nothing else of the caller's request.
+
+A call runs in a task of its own. A deadline or a disconnected user ends the wait for
+it and never the call: a write must not be cut off half way through its rows.
 """
 import asyncio
 import json
 import logging
 import re
 import time
-from collections.abc import Collection
+from collections.abc import Collection, Coroutine
 from dataclasses import dataclass, field
 from http.cookiejar import CookieJar, DefaultCookiePolicy
 from typing import Any
@@ -25,15 +28,26 @@ from src.services.assistant.gateway.errors import (
     InvalidCel,
     QueryFailed,
 )
+from src.services.assistant.gateway.transport import CLIENT_EXTENSION, UNKNOWN_CLIENT
 from src.services.assistant.models.api.draft import GatewayResult, TargetStatus
 
 logger = logging.getLogger(__name__)
 
 KEEP_SOURCE = "assistant"
 
+# Running calls of the whole process, abandoned ones included: the gateway's sync
+# routes share one threadpool (40 threads) with every other request of the UI.
+MAX_RUNNING_CALLS = 8
+
 # Single-alert reads of the whole process: each one makes the gateway call its
-# identity provider.
-MAX_CONCURRENT_ALERT_READS = 10
+# identity provider. Below the cap above, so that a chat's own lookup fits in it.
+MAX_CONCURRENT_ALERT_READS = 4
+
+# A blocked event loop fires a deadline late, and the answer is then only a few loop
+# iterations away.
+LATE_ANSWER_SECONDS = 0.1
+
+_WRITE_ENDPOINT = "batch_enrich"
 
 _LIMITS = httpx.Limits(
     max_connections=50,
@@ -69,6 +83,8 @@ class Caller:
 
     authorization: str = field(repr=False)
     request_id: str
+    # The address of the user's own request: what the gateway's rate limiter counts.
+    client: tuple[str, int] = UNKNOWN_CLIENT
 
 
 @dataclass(frozen=True)
@@ -165,9 +181,19 @@ class GatewayClient:
             headers={"User-Agent": "keep-gateway-assistant"},
         )
         self._alert_reads = asyncio.Semaphore(MAX_CONCURRENT_ALERT_READS)
+        # Strong references: the event loop itself only holds weak ones.
+        self._running: set[asyncio.Task[httpx.Response]] = set()
+        self._writes: set[asyncio.Task[httpx.Response]] = set()
 
     async def aclose(self) -> None:
         await self._http.aclose()
+
+    async def wait_for_writes(self, timeout: float) -> int:
+        """Give writes that nobody waits for any more the time to finish. How many
+        are still running."""
+        if self._writes:
+            await asyncio.wait(set(self._writes), timeout=timeout)
+        return len(self._writes)
 
     # --- reads ---------------------------------------------------------------
 
@@ -291,6 +317,7 @@ class GatewayClient:
         try:
             answers = await asyncio.gather(*tasks)
         except BaseException:
+            # These only wait: a read that is already running has its own task.
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
@@ -314,14 +341,15 @@ class GatewayClient:
         self, caller: Caller, fingerprint: str
     ) -> dict[str, Any] | None:
         """One alert; None for a 404, an empty dict for a foreign answer."""
-        async with self._alert_reads:
-            response = await self._read(
-                caller,
-                "alert",
-                "GET",
-                f"/alerts/{quote(fingerprint, safe='')}",
-                not_found_ok=True,
-            )
+        await self._alert_reads.acquire()
+        response = await self._read(
+            caller,
+            "alert",
+            "GET",
+            f"/alerts/{quote(fingerprint, safe='')}",
+            not_found_ok=True,
+            slot=self._alert_reads,
+        )
         if response.status_code == 404:
             return None
         body = _json(response)
@@ -355,7 +383,7 @@ class GatewayClient:
         try:
             response = await self._send(
                 caller,
-                "batch_enrich",
+                _WRITE_ENDPOINT,
                 "POST",
                 "/alerts/batch_enrich",
                 body={"fingerprints": fingerprints, "enrichments": enrichments},
@@ -397,6 +425,7 @@ class GatewayClient:
         body: dict[str, Any] | None = None,
         timeout: float | None = None,
         not_found_ok: bool = False,
+        slot: asyncio.Semaphore | None = None,
     ) -> httpx.Response:
         """A read whose failures are GatewayErrors."""
         response = await self._send(
@@ -405,6 +434,7 @@ class GatewayClient:
             method,
             path,
             body=body,
+            slot=slot,
             timeout=(
                 get_settings().gateway_read_timeout_seconds
                 if timeout is None
@@ -453,55 +483,53 @@ class GatewayClient:
         body: dict[str, Any] | None = None,
         params: dict[str, str] | None = None,
         headers: dict[str, str] | None = None,
+        slot: asyncio.Semaphore | None = None,
     ) -> httpx.Response:
+        """`slot` is released when the call itself ends, however long nobody has been
+        waiting for it."""
         started = time.monotonic()
-        status_class = "dropped"
+        status_class = "cancelled"
         try:
-            # httpx timeouts are per operation; this bounds the whole call. The
-            # pool and connect limits are shorter, so a write that was never sent
-            # is reported as such and not as an unknown result.
-            async with asyncio.timeout(timeout):
-                response = await self._http.request(
-                    method,
-                    f"{self._base_url}{path}",
-                    json=body,
-                    params=params,
-                    headers={
-                        # Opaque, byte for byte (ASGI decodes headers as latin-1).
-                        "Authorization": caller.authorization.encode("latin-1"),
-                        "X-Request-ID": caller.request_id,
-                        **(headers or {}),
-                    },
-                    timeout=httpx.Timeout(
-                        timeout, connect=min(3.0, timeout), pool=min(2.0, timeout)
-                    ),
+            # No await between the check and the start, so the cap holds.
+            if len(self._running) >= MAX_RUNNING_CALLS:
+                if slot is not None:
+                    slot.release()
+                status_class = "not_sent"
+                raise self._unsuccessful(
+                    caller, endpoint, status_class, "TooManyCalls", sent=False
                 )
-            status_class = f"{response.status_code // 100}xx"
-            return response
-        except (
-            TimeoutError,
-            httpx.HTTPError,
-            httpx.InvalidURL,
-            UnicodeEncodeError,
-        ) as exc:
+            task = self._start(
+                self._request(caller, method, path, timeout, body, params, headers),
+                endpoint,
+                slot,
+            )
+            try:
+                await asyncio.wait({task}, timeout=timeout)
+                if not task.done():
+                    await asyncio.wait({task}, timeout=LATE_ANSWER_SECONDS)
+            finally:
+                if not task.done():
+                    self._log_when_done(task, caller, endpoint, started)
+            if not task.done():
+                status_class = "timeout"
+                raise self._unsuccessful(
+                    caller, endpoint, status_class, "TimeoutError", sent=True
+                )
+            exc = asyncio.CancelledError() if task.cancelled() else task.exception()
+            if exc is None:
+                response = task.result()
+                status_class = f"{response.status_code // 100}xx"
+                return response
             sent = not isinstance(exc, _NEVER_SENT)
             if not sent:
                 status_class = "not_sent"
-            elif isinstance(exc, (TimeoutError, httpx.TimeoutException)):
+            elif isinstance(exc, httpx.TimeoutException):
                 status_class = "timeout"
-            logger.warning(
-                "gateway: request error",
-                extra={
-                    "gateway_request_id": caller.request_id,
-                    "endpoint": endpoint,
-                    "error_type": type(exc).__name__,
-                    "sent": sent,
-                },
+            else:
+                status_class = "dropped"
+            raise self._unsuccessful(
+                caller, endpoint, status_class, type(exc).__name__, sent=sent
             )
-            raise GatewayUnavailable(status_class, sent=sent) from None
-        except asyncio.CancelledError:
-            status_class = "cancelled"
-            raise
         finally:
             metrics.gateway_requests_total.labels(
                 endpoint=endpoint, status_class=status_class
@@ -509,6 +537,96 @@ class GatewayClient:
             metrics.gateway_request_seconds.labels(endpoint=endpoint).observe(
                 time.monotonic() - started
             )
+
+    async def _request(
+        self,
+        caller: Caller,
+        method: str,
+        path: str,
+        timeout: float,
+        body: dict[str, Any] | None,
+        params: dict[str, str] | None,
+        headers: dict[str, str] | None,
+    ) -> httpx.Response:
+        return await self._http.request(
+            method,
+            f"{self._base_url}{path}",
+            json=body,
+            params=params,
+            headers={
+                # Opaque, byte for byte (ASGI decodes headers as latin-1).
+                "Authorization": caller.authorization.encode("latin-1"),
+                "X-Request-ID": caller.request_id,
+                **(headers or {}),
+            },
+            # Only a network transport looks at it. The pool and connect limits are
+            # shorter, so a write that was never sent is reported as such and not as
+            # an unknown result.
+            timeout=httpx.Timeout(
+                timeout, connect=min(3.0, timeout), pool=min(2.0, timeout)
+            ),
+            extensions={CLIENT_EXTENSION: caller.client},
+        )
+
+    def _start(
+        self,
+        request: Coroutine[Any, Any, httpx.Response],
+        endpoint: str,
+        slot: asyncio.Semaphore | None,
+    ) -> asyncio.Task[httpx.Response]:
+        task = asyncio.create_task(request)
+        self._running.add(task)
+        if endpoint == _WRITE_ENDPOINT:
+            self._writes.add(task)
+
+        def ended(task: asyncio.Task[httpx.Response]) -> None:
+            self._running.discard(task)
+            self._writes.discard(task)
+            if slot is not None:
+                slot.release()
+            if not task.cancelled():
+                # Marks it as retrieved: asyncio would log the text of the exception
+                # of an abandoned call.
+                task.exception()
+
+        task.add_done_callback(ended)
+        return task
+
+    def _unsuccessful(
+        self, caller: Caller, endpoint: str, reason: str, error_type: str, *, sent: bool
+    ) -> GatewayUnavailable:
+        logger.warning(
+            "gateway: request error",
+            extra={
+                "gateway_request_id": caller.request_id,
+                "endpoint": endpoint,
+                "error_type": error_type,
+                "sent": sent,
+            },
+        )
+        return GatewayUnavailable(reason, sent=sent)
+
+    def _log_when_done(
+        self,
+        task: asyncio.Task[httpx.Response],
+        caller: Caller,
+        endpoint: str,
+        started: float,
+    ) -> None:
+        def ended(task: asyncio.Task[httpx.Response]) -> None:
+            exc = asyncio.CancelledError() if task.cancelled() else task.exception()
+            logger.warning(
+                "gateway: abandoned call ended",
+                extra={
+                    "gateway_request_id": caller.request_id,
+                    "endpoint": endpoint,
+                    "status": task.result().status_code if exc is None else None,
+                    "error_type": None if exc is None else type(exc).__name__,
+                    "seconds": round(time.monotonic() - started, 1),
+                },
+            )
+
+        task.add_done_callback(ended)
 
     def _bad_response(self, endpoint: str) -> GatewayUnavailable:
         logger.warning("gateway: unusable answer", extra={"endpoint": endpoint})

@@ -17,6 +17,7 @@ from src.services.assistant.gateway.errors import (
     GatewayUnauthorized,
     GatewayUnavailable,
 )
+from src.services.assistant.gateway.transport import UNKNOWN_CLIENT
 from src.services.assistant.models.identity import Identity
 from src.utils.request_id import current_request_id
 
@@ -57,7 +58,8 @@ async def get_identity(request: Request) -> Identity:
     token, a changed role or a switched tenant."""
     authorization = require_bearer(request)
     gateway: GatewayClient = request.app.state.assistant_gateway
-    caller = Caller(authorization=authorization, request_id=request_id())
+    client = tuple(request.client) if request.client else UNKNOWN_CLIENT
+    caller = Caller(authorization, request_id(), client)
     try:
         body = await gateway.whoami(caller)
     except GatewayUnauthorized:
@@ -94,6 +96,7 @@ async def get_identity(request: Request) -> Identity:
             else None
         ),
         authorization=authorization,
+        client=client,
     )
 
 
