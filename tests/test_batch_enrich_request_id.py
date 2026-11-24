@@ -1,6 +1,6 @@
 """Every log line of a batch enrichment carries the caller's X-Request-ID.
 
-keep-assistant sends the draft id there, so one id finds a change in both services.
+Keep Assistant sends the draft id there, so one id finds everything about a change.
 
 The requests run in an empty `contextvars.Context()`: the autouse `mocked_context`
 fixture opens a request context with an integer id, and the point here is that the

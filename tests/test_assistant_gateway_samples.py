@@ -1,8 +1,8 @@
-"""The gateway responses keep-assistant parses, captured from the real routes.
+"""The responses Keep Assistant parses, captured from the real routes.
 
-`tests/fixtures/assistant_gateway_samples.json` is vendored byte-identical into
-keep-assistant, whose client is tested against it. A failure here means a response
-it depends on changed: check the consumer, then regenerate and vendor again with
+Its client is tested against `tests/fixtures/assistant_gateway_samples.json`
+(`tests/assistant/test_gateway_samples.py`). A failure here means a response it
+depends on changed: check `src/services/assistant/gateway`, then regenerate with
 
     UPDATE_ASSISTANT_SAMPLES=1 poetry run pytest tests/test_assistant_gateway_samples.py
 
@@ -35,7 +35,7 @@ TIMESTAMP_RE = re.compile(
     r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})?$"
 )
 
-# Alert fields keep-assistant reads from /alerts/query and /alerts/{fingerprint}.
+# Alert fields Keep Assistant reads from /alerts/query and /alerts/{fingerprint}.
 CONSUMED_ALERT_FIELDS = {
     "fingerprint",
     "name",
@@ -173,7 +173,7 @@ def _check(recorder, part):
     if os.environ.get("UPDATE_ASSISTANT_SAMPLES") == "1":
         stored[part] = recorder.samples
         # Bytes, not text: no platform line endings in a file that is compared byte
-        # by byte elsewhere.
+        # by byte.
         SAMPLES_PATH.write_bytes(_render(stored))
         return
     assert stored.get(part) == recorder.samples
@@ -418,7 +418,7 @@ def test_captured_read_only_samples(db_session, client, test_app, recorder):
 
 
 def test_samples_file_is_canonical():
-    """Same content, same bytes: keep-assistant compares its copy byte by byte."""
+    """Same content, same bytes: a diff of the file shows only what changed."""
     raw = SAMPLES_PATH.read_bytes()
     # A Windows checkout may have converted the line endings.
     assert raw.replace(b"\r\n", b"\n") == _render(json.loads(raw))

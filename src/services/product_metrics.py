@@ -10,8 +10,8 @@ Design:
 - `tenant_id` comes from the authenticated identity.
 - `source` (ui|api|assistant) comes from the X-Keep-Source request header, carried
   via a contextvar so deep chokepoints don't need the request object. keep-ui's
-  ApiClient sets `X-Keep-Source: ui` and keep-assistant sets `assistant`; everything
-  else defaults to `api`.
+  ApiClient sets `X-Keep-Source: ui`, and Keep Assistant sets `assistant` when it
+  calls this service's own routes; everything else defaults to `api`.
 - `result` is success|error.
 - All record_* helpers swallow their own errors: instrumentation must never
   break the request path.

@@ -143,7 +143,7 @@ def test_batch_writes_one_row_per_incident(
 def test_single_enrich_writes_one_row(db_session, client, test_app, make_incident):
     incident = make_incident(["a"], status=IncidentStatus.ACKNOWLEDGED)
 
-    # The header marks batch_enrich only: keep-assistant never calls this route.
+    # The header marks batch_enrich only: Keep Assistant never calls this route.
     _resolve_single(client, "a", source="assistant")
 
     assert _status(db_session, incident) == "resolved"
