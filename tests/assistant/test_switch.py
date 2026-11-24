@@ -2,6 +2,7 @@
 import asyncio
 import logging
 import random
+import signal
 import sys
 import threading
 import time
@@ -9,6 +10,7 @@ import time
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from prometheus_client import REGISTRY, generate_latest
 
 from src.services.assistant import lifecycle
 from src.services.assistant.api.guard import AssistantGuardMiddleware
@@ -248,6 +250,33 @@ def test_on_starts_the_loops_and_ends_them_with_the_worker(app, main, monkeypatc
     assert ended == [True]
 
 
+@pytest.mark.asyncio
+async def test_shutdown_waits_for_running_work(app, main):
+    ended = []
+
+    async def storing_the_answer():
+        await asyncio.sleep(0.3)
+        ended.append(True)
+
+    async with app.router.lifespan_context(app):
+        app.state.assistant_work.spawn(storing_the_answer())
+    assert ended
+
+
+def test_rare_events_have_a_series_from_the_start(app, main):
+    """Prometheus sees no increase in a series that begins with its first event."""
+    metrics.draft_outcomes_total.clear()
+    metrics.llm_errors_total.clear()
+    with TestClient(app):
+        text = generate_latest(REGISTRY).decode()
+    for series in (
+        'draft_outcomes_total{kind="change_alert_status",outcome="outcome_unknown"} 0.0',
+        'llm_errors_total{kind="misconfigured"} 0.0',
+        'drafts_total{event="finalized_after_timeout",kind="change_alert_status"} ',
+    ):
+        assert f"keep_assistant_{series}" in text
+
+
 def test_retention_can_be_switched_off(app, main, monkeypatch, set_env, caplog):
     set_env("ASSISTANT_RETENTION_ENABLED", "false")
     started = loops_started(monkeypatch)
@@ -270,6 +299,31 @@ def test_loops_that_cannot_start_do_not_stop_the_gateway(
 
 
 # --- shutdown --------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("signum", [signal.SIGTERM, signal.SIGINT])
+async def test_the_workers_signal_reaches_its_turns(app, main, signum):
+    """On the main thread, as in gunicorn's worker: TestClient's lifespan runs on
+    another one, where no signal handler can be installed."""
+    original = {s: signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGINT)}
+    seen = []
+    try:
+        for each in original:
+            signal.signal(each, lambda number, frame: seen.append(number))
+        before = signal.getsignal(signum)
+        async with app.router.lifespan_context(app):
+            work = app.state.assistant_work
+            signal.raise_signal(signum)
+            await asyncio.sleep(0.05)
+            assert work.draining
+        # The gateway's own handler comes after it, and is there again at the end.
+        assert seen == [signum]
+        assert signal.getsignal(signum) is before
+    finally:
+        for each, handler in original.items():
+            signal.signal(each, handler)
+
 
 
 def test_the_worker_waits_for_writes_next_to_its_own_shutdown(app, main, monkeypatch):

@@ -20,7 +20,7 @@ rate_limited_total = Counter(
     f"{_PREFIX}rate_limited_total", "Messages refused by the rate limit"
 )
 
-# LLM. error kind: unavailable | rate_limited | timeout | rejected
+# LLM. error kind: unavailable | rate_limited | timeout | rejected | misconfigured
 llm_first_token_seconds = Histogram(
     f"{_PREFIX}llm_first_token_seconds",
     "Time to the first streamed LLM event",

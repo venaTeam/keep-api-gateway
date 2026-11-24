@@ -29,12 +29,15 @@ for _library in ("openai", "httpx", "httpcore"):
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
 _LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
 
-LlmErrorKind = Literal["unavailable", "rate_limited", "timeout", "rejected"]
+LlmErrorKind = Literal[
+    "unavailable", "rate_limited", "timeout", "rejected", "misconfigured"
+]
 _STREAM_CODES: dict[str, str] = {
     "unavailable": "llm_unavailable",
     "timeout": "llm_unavailable",
     "rate_limited": "llm_rate_limited",
     "rejected": "llm_rejected",
+    "misconfigured": "llm_unavailable",
 }
 
 
@@ -149,6 +152,9 @@ def _error_kind(exc: Exception) -> LlmErrorKind:
             return "rate_limited"
         if exc.status_code in (400, 413, 422):
             return "rejected"
+        if exc.status_code in (401, 403, 404):
+            # A revoked key or an unknown model: no user can do anything about it.
+            return "misconfigured"
         if exc.status_code == 408:
             return "timeout"
         return "unavailable"

@@ -5,6 +5,7 @@ shutdown short.
 """
 import asyncio
 import logging
+from typing import get_args
 
 from fastapi import FastAPI
 
@@ -22,7 +23,8 @@ from src.services.assistant.core.work import (
 )
 from src.services.assistant.gateway.client import GatewayClient
 from src.services.assistant.gateway.transport import IN_PROCESS_URL, InProcessTransport
-from src.services.assistant.llm.client import build_llm_client
+from src.services.assistant.llm.client import LlmErrorKind, build_llm_client
+from src.services.assistant.models.api.draft import PAYLOAD_MODELS, OutcomeCode
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +42,7 @@ def start(app: FastAPI) -> None:
         metrics.internal_errors_total.labels(site="startup").inc()
         logger.error("assistant: no LLM client", extra=describe_exception(exc))
     metrics.llm_configured.set(0 if app.state.assistant_llm is None else 1)
+    _start_series()
     app.state.assistant_undo_signals = lambda: None
     try:
         app.state.assistant_undo_signals = install_signal_handlers(
@@ -51,6 +54,17 @@ def start(app: FastAPI) -> None:
         _start_loops(app.state.assistant_work)
     except Exception as exc:
         log_failure("startup", "assistant: no loops", exc)
+
+
+def _start_series() -> None:
+    """Prometheus sees no increase in a series that begins with its first event, and
+    some of these happen once in months."""
+    for kind in get_args(LlmErrorKind):
+        metrics.llm_errors_total.labels(kind=kind)
+    for kind in PAYLOAD_MODELS:
+        for outcome in get_args(OutcomeCode):
+            metrics.draft_outcomes_total.labels(kind=kind, outcome=outcome)
+        metrics.drafts_total.labels(kind=kind, event="finalized_after_timeout")
 
 
 def _start_loops(work: OngoingWork) -> None:
