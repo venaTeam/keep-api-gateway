@@ -43,6 +43,46 @@ def test_an_unusable_value_falls_back_to_the_default(set_env, caplog):
     assert "three-secret" not in str([vars(r) for r in caplog.records])
 
 
+NUMBERS = [
+    f for f in dataclasses.fields(Settings) if f.default_factory() is not True
+    and isinstance(f.default_factory(), (int, float))
+]
+# 0: no overflow, no tools, no drafts, no cache, nobody may chat.
+MAY_BE_ZERO = {
+    "db_max_overflow",
+    "max_tool_rounds",
+    "max_drafts_per_turn",
+    "fields_cache_ttl_seconds",
+    "rate_limit_per_minute",
+    "rate_limit_per_day",
+}
+
+
+@pytest.mark.parametrize("setting", NUMBERS, ids=lambda f: f.name)
+@pytest.mark.parametrize("value", ["0", "-1"])
+def test_a_number_that_makes_no_sense_falls_back_to_the_default(
+    set_env, caplog, setting, value
+):
+    """0 days of retention would delete every conversation, a heartbeat every 0 s
+    would be nothing but heartbeats."""
+    set_env(setting.metadata["env"], "")
+    default = getattr(get_settings(), setting.name)
+    set_env(setting.metadata["env"], value)
+    with caplog.at_level(logging.ERROR):
+        actual = getattr(get_settings(), setting.name)
+    allowed = value == "0" and setting.name in MAY_BE_ZERO
+    assert actual == (0 if allowed else default)
+    assert [r.setting for r in caplog.records] == (
+        [] if allowed else [setting.metadata["env"]]
+    )
+
+
+@pytest.mark.parametrize("value", ["nan", "-inf"])
+def test_not_a_number_falls_back_to_the_default(set_env, value):
+    set_env("ASSISTANT_HEARTBEAT_SECONDS", value)
+    assert get_settings().heartbeat_seconds == 10
+
+
 def test_repr_hides_the_key_and_the_url(set_env):
     set_env("OPENAI_BASE_URL", "https://user:pw@proxy.test")
     text = repr(get_settings())

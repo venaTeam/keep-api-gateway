@@ -27,14 +27,26 @@ def is_enabled() -> bool:
 
 
 def _env(
-    name: str, default: Any, cast: Callable[[str], Any] = str, *, repr: bool = True
+    name: str,
+    default: Any,
+    cast: Callable[[str], Any] = str,
+    *,
+    zero: bool = False,
+    repr: bool = True,
 ) -> Any:
+    """`zero`: 0 means something sensible here. Below that, and where it does not (0
+    days of retention would delete everything), a number is as unusable as a typo."""
+
     def read() -> Any:
         value = os.environ.get(name)
         if not value:
             return default
         try:
-            return cast(value)
+            result = cast(value)
+            # Not `<= 0`, which is false for nan.
+            if cast in (int, float) and not (result > 0 or (zero and result == 0)):
+                raise ValueError("out of range")
+            return result
         except ValueError:
             # A typo here must not take the whole gateway down.
             logger.error(
@@ -51,7 +63,7 @@ class Settings:
     # Database, per worker. Small and impatient: assistant queries may neither
     # starve the gateway's pool nor eat up the 26 s budget of a Confirm.
     db_pool_size: int = _env("ASSISTANT_DB_POOL_SIZE", 3, int)
-    db_max_overflow: int = _env("ASSISTANT_DB_MAX_OVERFLOW", 2, int)
+    db_max_overflow: int = _env("ASSISTANT_DB_MAX_OVERFLOW", 2, int, zero=True)
     db_pool_timeout: float = _env("ASSISTANT_DB_POOL_TIMEOUT", 3.0, float)
     db_connect_timeout: int = _env("ASSISTANT_DB_CONNECT_TIMEOUT", 3, int)
     db_statement_timeout_ms: int = _env("ASSISTANT_DB_STATEMENT_TIMEOUT_MS", 5000, int)
@@ -81,8 +93,10 @@ class Settings:
 
     # Chat turn
     turn_deadline_seconds: float = _env("ASSISTANT_TURN_DEADLINE_SECONDS", 90.0, float)
-    max_tool_rounds: int = _env("ASSISTANT_MAX_TOOL_ROUNDS", 4, int)
-    max_drafts_per_turn: int = _env("ASSISTANT_MAX_DRAFTS_PER_TURN", 3, int)
+    max_tool_rounds: int = _env("ASSISTANT_MAX_TOOL_ROUNDS", 4, int, zero=True)
+    max_drafts_per_turn: int = _env(
+        "ASSISTANT_MAX_DRAFTS_PER_TURN", 3, int, zero=True
+    )
     max_completion_tokens: int = _env("ASSISTANT_MAX_COMPLETION_TOKENS", 1024, int)
     history_max_messages: int = _env("ASSISTANT_HISTORY_MAX_MESSAGES", 30, int)
     history_max_chars: int = _env("ASSISTANT_HISTORY_MAX_CHARS", 48_000, int)
@@ -90,13 +104,15 @@ class Settings:
     # Must stay well under Next's 30 s idle proxy timeout.
     heartbeat_seconds: float = _env("ASSISTANT_HEARTBEAT_SECONDS", 10.0, float)
     fields_cache_ttl_seconds: float = _env(
-        "ASSISTANT_FIELDS_CACHE_TTL_SECONDS", 600.0, float
+        "ASSISTANT_FIELDS_CACHE_TTL_SECONDS", 600.0, float, zero=True
     )
 
     # Drafts and limits
     draft_ttl_seconds: int = _env("ASSISTANT_DRAFT_TTL_SECONDS", 1800, int)
-    rate_limit_per_minute: int = _env("ASSISTANT_RATE_LIMIT_PER_MINUTE", 10, int)
-    rate_limit_per_day: int = _env("ASSISTANT_RATE_LIMIT_PER_DAY", 200, int)
+    rate_limit_per_minute: int = _env(
+        "ASSISTANT_RATE_LIMIT_PER_MINUTE", 10, int, zero=True
+    )
+    rate_limit_per_day: int = _env("ASSISTANT_RATE_LIMIT_PER_DAY", 200, int, zero=True)
 
     # Retention
     retention_enabled: bool = _env("ASSISTANT_RETENTION_ENABLED", True, _is_true)
