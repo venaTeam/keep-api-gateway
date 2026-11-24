@@ -621,6 +621,8 @@ class IncidentBl:
         alerts derive suppression from dismiss_mode/dismissed_until the same way
         incidents do, so copying the incident's deadline is what makes the alert
         come back on the same clock. Writing a status would strand it suppressed.
+        What it comes back AS is the incident's revert status, not the alert's
+        own acknowledgement — see `_alert_status_after_dismissal`.
 
         Leaving acknowledged or suppressed takes back the dismissal entering
         suppressed wrote: it belongs to the incident, so it does not outlive the
@@ -668,11 +670,14 @@ class IncidentBl:
             return []
 
         enrichments: dict = {}
+        description: Optional[str] = None
         if target == IncidentStatus.SUPPRESSED:
-            # Mirror the incident's dismissal, deadline included, and leave the
-            # alerts' own status override alone — that is what they revert to.
+            # Mirror the incident's dismissal, deadline included, and set what
+            # the alerts revert to when it lifts: what the incident reverts to.
             enrichments["dismiss_mode"] = incident.dismiss_mode
             enrichments["dismissed_until"] = incident.dismissed_until
+            enrichments["status"] = self._alert_status_after_dismissal(incident)
+            description = self._suppressed_by_incident_description(incident)
         elif target is not None:
             # Acknowledged/firing are plain statuses, and they end any dismissal
             # the alert was under — it is visible again by definition.
@@ -694,7 +699,7 @@ class IncidentBl:
             enrichments, change_by
         )
         action_description = (
-            f"{action_description} (propagated from incident {incident.id})"
+            f"{description or action_description} (propagated from incident {incident.id})"
         )
 
         self.logger.info(
@@ -722,6 +727,26 @@ class IncidentBl:
             self.session.commit()
 
         return affected
+
+    @staticmethod
+    def _alert_status_after_dismissal(incident: Incident) -> Optional[str]:
+        """The status override an alert dismissed by `incident` reverts to: the
+        one the incident itself reverts to. An acknowledged incident brings its
+        alerts back acknowledged; any other brings them back firing — NULL, so
+        they read their provider's status. The alert's own acknowledgement does
+        not survive underneath: the incident's dismissal took over from it."""
+        if incident.status == IncidentStatus.ACKNOWLEDGED.value:
+            return IncidentStatus.ACKNOWLEDGED.value
+        return None
+
+    @staticmethod
+    def _suppressed_by_incident_description(incident: Incident) -> str:
+        # The status key the dismissal carries is the revert target, not a
+        # change happening now, so the generic "status was changed to" text
+        # would misreport it.
+        if incident.dismissed_until is not None:
+            return f"Alert suppressed until {incident.dismissed_until.isoformat()}"
+        return "Alert suppressed permanently"
 
     async def inherit_incident_status(
         self,

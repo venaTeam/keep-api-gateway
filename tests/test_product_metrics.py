@@ -197,6 +197,23 @@ def test_record_alert_enrichment_dismiss_without_explicit_status():
     assert _status(tenant_id=TENANT, to_status="suppressed") == s_before + 1
 
 
+def test_record_alert_enrichment_dismiss_carrying_a_revert_status():
+    # An incident's dismissal reaching its alerts also sets the status they
+    # revert to once it lifts. The change happening now is still a suppression.
+    s_before = _status(tenant_id=TENANT, to_status="suppressed")
+    a_before = _status(tenant_id=TENANT, to_status="acknowledged")
+
+    record_alert_enrichment(
+        tenant_id=TENANT,
+        action_type=ActionType.MANUAL_STATUS_CHANGE,
+        enrichments={"dismiss_mode": "dismiss_until", "status": "acknowledged"},
+        result="success",
+    )
+
+    assert _status(tenant_id=TENANT, to_status="suppressed") == s_before + 1
+    assert _status(tenant_id=TENANT, to_status="acknowledged") == a_before
+
+
 def test_record_alert_enrichment_error_skips_status_change():
     # On error we record the action (result=error) but NOT a status change.
     a_before = _action(
