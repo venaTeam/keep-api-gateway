@@ -3,7 +3,6 @@ import json
 from typing import get_args
 
 import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, ValidationError
 
@@ -26,6 +25,7 @@ from src.services.assistant.models.api.draft import (
     SkippedAlert,
 )
 from tests.assistant import golden_stream
+from tests.assistant.fakes import TOKEN
 
 GOLDEN = json.loads(golden_stream.FIXTURE.read_bytes())
 EVENTS_BY_NAME = {event.event: event for event in s.STREAM_EVENTS}
@@ -280,16 +280,46 @@ def test_context_is_optional():
     assert parsed.context.selected_fingerprints == []
 
 
-def test_models_survive_fastapi_serialization():
-    """The HTTP body and the stream must render the same draft identically."""
-    app = FastAPI()
+# --- over HTTP, on scratch routes of the real app -------------------------------
+
+
+@pytest.fixture(scope="module")
+def app(assistant_router, make_app):
     view = golden_stream.drafts()["partially_applied"]
 
-    @app.get("/scratch/draft", response_model=DraftView)
-    async def scratch():
+    @assistant_router.post("/scratch/chat")
+    async def scratch_chat(payload: ChatRequest):
+        return {}
+
+    @assistant_router.get("/scratch/draft", response_model=DraftView)
+    async def scratch_draft():
         return view
 
-    with TestClient(app) as client:
-        assert (
-            client.get("/scratch/draft").json() == GOLDEN["drafts"]["partially_applied"]
-        )
+    return make_app()
+
+
+@pytest.fixture()
+def client(app, schema_ready):
+    return TestClient(app, headers={"Authorization": TOKEN})
+
+
+def test_invalid_chat_body_is_a_400_over_http(client):
+    assert client.post("/assistant/scratch/chat", json=chat()).status_code == 200
+    response = client.post(
+        "/assistant/scratch/chat", json=context(selected_count=-1)
+    )
+    # A lone surrogate survives JSON parsing.
+    surrogate = client.post(
+        "/assistant/scratch/chat",
+        content=b'{"message": "\\ud800"}',
+        headers={"Content-Type": "application/json"},
+    )
+    assert response.status_code == surrogate.status_code == 400
+    assert response.json()["errors"][0]["field"] == "context.selected_count"
+    assert surrogate.json()["errors"][0]["field"] == "message"
+
+
+def test_models_survive_fastapi_serialization(client):
+    """The HTTP body and the stream must render the same draft identically."""
+    response = client.get("/assistant/scratch/draft")
+    assert response.json() == GOLDEN["drafts"]["partially_applied"]

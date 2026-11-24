@@ -3,7 +3,11 @@ import logging
 import uuid
 
 from fastapi import Request
+from starlette.concurrency import run_in_threadpool
 
+from src.services.assistant.api.guard import single_bearer
+from src.services.assistant.api.route import describe_exception
+from src.services.assistant.core import db as db_core
 from src.services.assistant.core import metrics
 from src.services.assistant.exceptions import AssistantError
 from src.services.assistant.gateway.client import Caller, GatewayClient
@@ -19,18 +23,28 @@ from src.utils.request_id import current_request_id
 logger = logging.getLogger(__name__)
 
 
-def require_bearer(request: Request) -> str:
-    """Exactly one Authorization header, Bearer scheme.
+async def require_ready() -> None:
+    """Every route's first dependency: the tables come from another release job."""
+    if db_core.schema_verified():
+        return
+    try:
+        missing = await run_in_threadpool(db_core.check_schema)
+    except Exception as exc:
+        metrics.internal_errors_total.labels(site="readiness_database").inc()
+        logger.error("assistant: database check failed", extra=describe_exception(exc))
+        raise AssistantError("not_ready") from None
+    if missing:
+        metrics.internal_errors_total.labels(site="readiness_schema").inc()
+        logger.error("assistant: schema incomplete", extra={"missing": missing})
+        raise AssistantError("not_ready")
 
-    The gateway also takes Basic and Digest, as API keys that act under the email
-    of whoever created them: a key holder would own that user's chats here.
-    """
-    values = request.headers.getlist("authorization")
-    if len(values) == 1:
-        scheme, _, credentials = values[0].partition(" ")
-        if scheme.lower() == "bearer" and credentials.strip():
-            return values[0]
-    raise AssistantError("unauthenticated", headers={"WWW-Authenticate": "Bearer"})
+
+def require_bearer(request: Request) -> str:
+    """What the guard already checked; no route may depend on that alone."""
+    value = single_bearer(request.headers.getlist("authorization"))
+    if value is None:
+        raise AssistantError("unauthenticated", headers={"WWW-Authenticate": "Bearer"})
+    return value
 
 
 def request_id() -> str:

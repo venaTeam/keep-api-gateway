@@ -3,42 +3,21 @@ import uuid
 
 import httpx
 import pytest
-from fastapi import Depends, FastAPI
-from fastapi.responses import JSONResponse
+from fastapi import Depends
 from fastapi.testclient import TestClient
-from starlette_context import plugins
-from starlette_context.middleware import RawContextMiddleware
 
 from src.services.assistant.api.deps import get_identity
 from src.services.assistant.config import get_settings
 from src.services.assistant.core import metrics
-from src.services.assistant.exceptions import AssistantError, error_body
 from src.services.assistant.models.identity import Identity
 from tests.assistant.fakes import TOKEN, FakeGateway, whoami
 
-URL = "/scratch/me"
+URL = "/assistant/scratch/me"
 
 
-@pytest.fixture()
-def app():
-    app = FastAPI()
-    app.add_middleware(RawContextMiddleware, plugins=(plugins.RequestIdPlugin(),))
-
-    @app.exception_handler(AssistantError)
-    async def handle(request, exc):
-        return JSONResponse(error_body(exc.code, exc.message), exc.status, exc.headers)
-
-    return app
-
-
-@pytest.fixture()
-def client(app):
-    return TestClient(app)
-
-
-@pytest.fixture()
-def gateway(app, client):
-    @app.get(URL)
+@pytest.fixture(scope="module")
+def app(assistant_router, make_app):
+    @assistant_router.get("/scratch/me")
     async def me(identity: Identity = Depends(get_identity)):
         return {
             "tenant_id": identity.tenant_id,
@@ -48,6 +27,16 @@ def gateway(app, client):
             "repr": repr(identity) + repr(identity.caller(uuid.uuid4())),
         }
 
+    return make_app()
+
+
+@pytest.fixture()
+def client(app, schema_ready):
+    return TestClient(app)
+
+
+@pytest.fixture()
+def gateway(app):
     fake = FakeGateway().on_json("GET", "/whoami", whoami())
     app.state.assistant_gateway = fake.client()
     return fake
@@ -75,6 +64,7 @@ def test_whoami_carries_only_the_callers_token_and_a_uuid(client, gateway):
     response = call(
         client,
         ("Authorization", TOKEN),
+        ("X-Request-ID", "from-the-client"),
         ("X-Keep-Source", "ui"),
         ("X-API-KEY", "someones-key"),
         ("Cookie", "session=1"),

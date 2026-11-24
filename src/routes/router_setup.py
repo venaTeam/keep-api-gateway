@@ -30,6 +30,7 @@ from src.routes import (
 )
 from src.routes.auth import groups as auth_groups
 from src.routes.auth import permissions, roles, users
+from src.services.assistant.config import is_enabled as assistant_enabled
 
 
 def setup_routers(app: FastAPI):
@@ -80,3 +81,9 @@ def setup_routers(app: FastAPI):
     app.include_router(
         provider_images.router, prefix="/provider-images", tags=["provider-images"]
     )
+    if assistant_enabled():
+        from src.routes import assistant
+
+        app.include_router(
+            assistant.router, prefix="/assistant", tags=["assistant"]
+        )

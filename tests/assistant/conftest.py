@@ -6,8 +6,10 @@ the assistant tables and a stand-in for `tenant`. The fixtures have names of the
 own: the root conftest's `db_session` (the gateway's SQLite) stays available.
 """
 import dataclasses
+import importlib
 import os
 import subprocess
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -74,6 +76,68 @@ def set_env(monkeypatch):
         reset_settings()
 
     return set_
+
+
+# --- the real app (opt-in) -----------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def gateway_main():
+    """src.main, imported under settings of its own (a developer's .env may name a
+    real identity provider), and gone again afterwards: the other suites' `test_app`
+    treats an already imported one differently."""
+    import src.config.config as gateway_config
+    import src.utils.logging as gateway_logging
+
+    earlier = sys.modules.pop("src.main", None)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv(ENABLED_ENV_VAR, "")
+        patch.setenv("KEEP_API_URL", "http://gateway.test")
+        for name, value in {
+            "AUTH_TYPE": "noauth",
+            "CONSUMER": False,
+            "KEEP_API_URL": "http://gateway.test",
+            "KEEP_OTEL_ENABLED": False,
+            "KEEP_USE_LIMITER": False,
+        }.items():
+            patch.setattr(gateway_config, name, value)
+        # It would take caplog's handler away.
+        patch.setattr(gateway_logging, "setup_logging", lambda: None)
+        try:
+            yield importlib.import_module("src.main")
+        finally:
+            sys.modules.pop("src.main", None)
+            if earlier is not None:
+                sys.modules["src.main"] = earlier
+
+
+@pytest.fixture(scope="module")
+def assistant_router(gateway_main):
+    """The assistant's real router; routes a module adds to it go with the module."""
+    from src.routes import assistant
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(assistant.router, "routes", list(assistant.router.routes))
+        yield assistant.router
+
+
+@pytest.fixture(scope="module")
+def make_app(gateway_main):
+    """The real app with the assistant switched on. Outside a `with TestClient(...)`
+    its lifespan does not run, so nothing connects to the gateway's database."""
+
+    def make():
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setenv(ENABLED_ENV_VAR, "true")
+            return gateway_main.get_app()
+
+    return make
+
+
+@pytest.fixture()
+def schema_ready(monkeypatch):
+    """For tests of routes that touch no database."""
+    monkeypatch.setattr(db_core, "check_schema", lambda: [])
 
 
 # --- database (opt-in: only tests that ask for it need Docker) -------------------
