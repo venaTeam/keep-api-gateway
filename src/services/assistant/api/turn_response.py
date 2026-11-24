@@ -3,7 +3,7 @@ import logging
 
 import anyio
 from fastapi.responses import StreamingResponse
-from starlette.types import Receive, Scope, Send
+from starlette.types import Message, Receive, Scope, Send
 
 from src.services.assistant.bl.chat_turn import Turn
 from src.services.assistant.core.work import log_failure
@@ -35,8 +35,20 @@ class TurnResponse(StreamingResponse):
         self._turn = turn
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        begun = False
+
+        async def noting(message: Message) -> None:
+            nonlocal begun
+            await send(message)
+            # Not before: the sending itself can be cancelled.
+            begun = True
+
         try:
-            await super().__call__(scope, receive, send)
+            await super().__call__(scope, receive, noting)
+            if not begun:
+                # The client was gone already. The middleware around this raises when
+                # there is no answer at all.
+                await self._begin_and_end(send)
         except Exception as exc:
             # Never further up: the gateway's catch-all logs and returns the text.
             log_failure("stream", "assistant: stream failed", exc)
@@ -44,3 +56,13 @@ class TurnResponse(StreamingResponse):
             self._turn.stop()
             with anyio.move_on_after(CLOSE_SECONDS, shield=True):
                 await self._turn.closed()
+
+    async def _begin_and_end(self, send: Send) -> None:
+        await send(
+            {
+                "type": "http.response.start",
+                "status": self.status_code,
+                "headers": self.raw_headers,
+            }
+        )
+        await send({"type": "http.response.body", "body": b""})

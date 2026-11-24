@@ -146,6 +146,36 @@ async def test_a_client_that_was_never_there(db, gateway):
 
 
 @pytest.mark.asyncio
+async def test_a_client_that_left_before_the_response_began(db, gateway):
+    """Without any answer the middleware around the stream raises, and the gateway's
+    catch-all would log and return that."""
+    ref = await run_db(start_turn, identity(), None, "hello")
+    turn = Turn(
+        ref,
+        identity(),
+        ChatRequest(message="hello"),
+        gateway.client(),
+        FakeLlm([Gate()]),
+    )
+    turn.start(OngoingWork())
+    sent = []
+
+    async def receive():
+        return {"type": "http.disconnect"}
+
+    async def send(message):
+        # As the queue of the middleware: cancelled here when the client is gone.
+        await asyncio.sleep(0)
+        sent.append(message)
+
+    await TurnResponse(turn)({"type": "http"}, receive, send)
+    assert [m["type"] for m in sent] == ["http.response.start", "http.response.body"]
+    assert sent[0]["status"] == 200
+    assert not sent[1].get("more_body")
+    assert read(db, Conversation, ref.conversation_id)["active_turn_id"] is None
+
+
+@pytest.mark.asyncio
 async def test_a_failing_stream_is_logged_without_its_text(db, gateway, caplog):
     work = OngoingWork()
     ref = await run_db(start_turn, identity(), None, "hello")
