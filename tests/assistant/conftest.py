@@ -15,14 +15,19 @@ from pathlib import Path
 import httpx
 import psycopg2
 import pytest
+import sqlalchemy as sa
 
 from src.config import consts
 from src.services.assistant.config import ENABLED_ENV_VAR, Settings, reset_settings
 from src.services.assistant.core import db as db_core
+from src.services.assistant.models.db import Conversation, Draft, Message
+from src.services.assistant.models.db.base import AssistantModel
 
 # Nothing listens there: a test that does not ask for `db_engine` reaches no database.
 NO_DATABASE_DSN = "postgresql://assistant_test:assistant_test@127.0.0.1:1/assistant_test"
 TEST_OPENAI_KEY = "test-key-not-real"
+TENANT = "keep"
+OTHER_TENANT = "other-tenant"
 
 _COMPOSE_FILE = Path(__file__).parent / "docker-compose.test.yml"
 _STARTUP_SECONDS = 300
@@ -118,8 +123,56 @@ def _wait_until_ready(dsn: str) -> None:
             time.sleep(0.5)
 
 
+@pytest.fixture(scope="session")
+def _assistant_database(_assistant_postgres):
+    # Copies, so that the stand-in for the gateway's `tenant` never gets into the
+    # models' own metadata.
+    ddl = sa.MetaData()
+    tenant = sa.Table(
+        "tenant",
+        ddl,
+        sa.Column("id", sa.String(), primary_key=True),
+        sa.Column("name", sa.String(), nullable=False),
+    )
+    for table in AssistantModel.metadata.tables.values():
+        table.to_metadata(ddl)
+    engine = sa.create_engine(_assistant_postgres)
+    ddl.create_all(engine)
+    with engine.begin() as conn:
+        conn.execute(
+            sa.insert(tenant),
+            [{"id": id_, "name": id_} for id_ in (TENANT, OTHER_TENANT)],
+        )
+    engine.dispose()
+    return _assistant_postgres
+
+
 @pytest.fixture()
-def db_engine(_assistant_postgres, monkeypatch):
+def assistant_dsn(_assistant_database):
+    return _assistant_database
+
+
+@pytest.fixture()
+def db_engine(assistant_dsn, monkeypatch):
     """The application's own engine, so its pool and timeouts are what is tested."""
-    monkeypatch.setattr(consts, "DB_CONNECTION_STRING", _assistant_postgres)
+    monkeypatch.setattr(consts, "DB_CONNECTION_STRING", assistant_dsn)
     return db_core.get_engine()
+
+
+@pytest.fixture()
+def clean_db(db_engine):
+    """The engine, with no assistant rows left of the seeded tenants."""
+    with db_engine.begin() as conn:
+        for model in (Message, Draft, Conversation):
+            conn.execute(
+                sa.delete(model).where(model.tenant_id.in_([TENANT, OTHER_TENANT]))
+            )
+    return db_engine
+
+
+@pytest.fixture()
+def assistant_session(clean_db):
+    """A session whose changes are rolled back."""
+    with db_core.get_session() as session:
+        yield session
+        session.rollback()
