@@ -134,7 +134,7 @@ groups:
           summary: The result of a confirmed change was never found out
           description: The log line "draft closed without a result" names the draft.
 
-  - name: keep-assistant-service
+  - name: keep-assistant-gateway
     rules:
       - alert: KeepAssistantRetentionStale
         # 0 until a worker's first run, at most 20 minutes after it started.
