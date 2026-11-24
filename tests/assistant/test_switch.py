@@ -1,7 +1,9 @@
 """KEEP_ASSISTANT_ENABLED: nothing of the assistant exists without it."""
 import asyncio
 import logging
+import random
 import sys
+import threading
 import time
 
 import httpx
@@ -10,9 +12,11 @@ from fastapi.testclient import TestClient
 
 from src.services.assistant import lifecycle
 from src.services.assistant.api.guard import AssistantGuardMiddleware
+from src.services.assistant.bl import retention, sweeps
 from src.services.assistant.config import ENABLED_ENV_VAR
 from src.services.assistant.core import db as db_core
 from src.services.assistant.core import metrics
+from src.services.assistant.core.loops import Loops
 from tests.assistant.conftest import TEST_OPENAI_KEY
 from tests.assistant.fakes import TOKEN, FakeGateway, caller, whoami
 from tests.assistant.logs import rendered
@@ -54,6 +58,19 @@ def assistant_paths(app) -> list[str]:
 
 def configured_gauge() -> float:
     return metrics.llm_configured._value.get()
+
+
+def loops_started(monkeypatch) -> list:
+    """(name, what it runs, seconds between two runs) of every loop from now on."""
+    started = []
+    start = Loops.start
+
+    def recording(self, name, run, *, seconds):
+        started.append((name, run, seconds))
+        start(self, name, run, seconds=seconds)
+
+    monkeypatch.setattr(Loops, "start", recording)
+    return started
 
 
 # --- off ---------------------------------------------------------------------
@@ -102,6 +119,14 @@ def test_off_builds_no_openai_client_even_with_a_key(main, monkeypatch):
         for name in ("llm", "gateway", "work"):
             assert not hasattr(app.state, f"assistant_{name}")
     assert main.stopped == [True]
+
+
+def test_off_starts_no_loops(main, monkeypatch):
+    # Not through `start` either: nothing may begin to delete or expire rows.
+    started = loops_started(monkeypatch)
+    with TestClient(main.get_app()) as client:
+        assert client.get("/").status_code == 200
+    assert started == []
 
 
 # --- on ------------------------------------------------------------------------
@@ -196,6 +221,52 @@ def test_chat_without_a_key_is_the_only_thing_refused(app, main, set_env, schema
         assert response.status_code == 503
         assert response.json()["errors"][0]["code"] == "llm_not_configured"
         assert client.get("/").status_code == 200
+
+
+def test_on_starts_the_loops_and_ends_them_with_the_worker(app, main, monkeypatch):
+    started = loops_started(monkeypatch)
+    ended = []
+    monkeypatch.setattr(random, "uniform", lambda low, high: 0.0)
+    entered = threading.Event()
+
+    def run(stop):
+        entered.set()
+        ended.append(stop.wait(10))
+
+    monkeypatch.setattr(retention, "run", run)
+    with TestClient(app):
+        assert sorted(started) == [
+            ("draft_sweeps", sweeps.run, 3600.0),
+            ("retention", run, 86400),
+        ]
+        assert entered.wait(5)
+        stopping = time.monotonic()
+    assert time.monotonic() - stopping < 5
+    deadline = time.monotonic() + 5
+    while not ended and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert ended == [True]
+
+
+def test_retention_can_be_switched_off(app, main, monkeypatch, set_env, caplog):
+    set_env("ASSISTANT_RETENTION_ENABLED", "false")
+    started = loops_started(monkeypatch)
+    with TestClient(app):
+        assert [name for name, _, _ in started] == ["draft_sweeps"]
+    assert "retention is switched off" in caplog.text
+
+
+def test_loops_that_cannot_start_do_not_stop_the_gateway(
+    app, main, monkeypatch, caplog
+):
+    def fail(self, name, run, *, seconds):
+        raise RuntimeError(CANARY)
+
+    monkeypatch.setattr(Loops, "start", fail)
+    with caplog.at_level(logging.DEBUG), TestClient(app) as client:
+        assert client.get("/").status_code == 200
+    assert main.stopped == [True]
+    assert not [r for r in caplog.records if CANARY in rendered(r)]
 
 
 # --- shutdown --------------------------------------------------------------------

@@ -9,8 +9,11 @@ import logging
 from fastapi import FastAPI
 
 from src.services.assistant.api.route import describe_exception
+from src.services.assistant.bl import retention, sweeps
+from src.services.assistant.config import get_settings
 from src.services.assistant.core import db as db_core
 from src.services.assistant.core import metrics
+from src.services.assistant.core.loops import Loops
 from src.services.assistant.core.work import (
     SHUTDOWN_GRACE_SECONDS,
     OngoingWork,
@@ -22,6 +25,8 @@ from src.services.assistant.gateway.transport import IN_PROCESS_URL, InProcessTr
 from src.services.assistant.llm.client import build_llm_client
 
 logger = logging.getLogger(__name__)
+
+SWEEP_INTERVAL_SECONDS = 3600.0
 
 
 def start(app: FastAPI) -> None:
@@ -42,6 +47,23 @@ def start(app: FastAPI) -> None:
         )
     except Exception as exc:
         log_failure("startup", "assistant: no signal handlers", exc)
+    try:
+        _start_loops(app.state.assistant_work)
+    except Exception as exc:
+        log_failure("startup", "assistant: no loops", exc)
+
+
+def _start_loops(work: OngoingWork) -> None:
+    """They end with the worker's other work."""
+    settings = get_settings()
+    loops = Loops(work)
+    loops.start("draft_sweeps", sweeps.run, seconds=SWEEP_INTERVAL_SECONDS)
+    if settings.retention_enabled:
+        loops.start(
+            "retention", retention.run, seconds=settings.retention_interval_seconds
+        )
+    else:
+        logger.warning("assistant: retention is switched off")
 
 
 async def settle(app: FastAPI) -> None:
