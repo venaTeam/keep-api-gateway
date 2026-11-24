@@ -1,6 +1,11 @@
-"""Drafts: the only thing the model can make, and only the user can confirm."""
+"""Drafts: the only thing the model can make, and only the user can confirm.
+
+A draft changes its state in one conditional UPDATE, whoever does it: of two that race,
+one finds no row. Locks are always taken in the order conversation, draft, message.
+"""
 import json
 import uuid
+from collections.abc import Collection
 from datetime import timedelta
 
 import sqlalchemy as sa
@@ -9,6 +14,7 @@ from sqlmodel import Session
 from src.services.assistant.config import get_settings
 from src.services.assistant.models.api.draft import DraftView
 from src.services.assistant.models.db import Draft
+from src.services.assistant.models.identity import Identity
 from src.services.assistant.tools.base import NewDraft
 
 
@@ -51,3 +57,16 @@ def to_view(draft: Draft) -> DraftView:
         payload=draft.payload,
         outcome=draft.outcome,
     )
+
+
+def owned(identity: Identity) -> tuple[sa.ColumnElement[bool], ...]:
+    return Draft.tenant_id == identity.tenant_id, Draft.created_by == identity.email
+
+
+def load_many(
+    session: Session, identity: Identity, ids: Collection[uuid.UUID]
+) -> dict[uuid.UUID, Draft]:
+    if not ids:
+        return {}
+    found = session.scalars(sa.select(Draft).where(Draft.id.in_(ids), *owned(identity)))
+    return {draft.id: draft for draft in found}

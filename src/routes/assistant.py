@@ -11,9 +11,11 @@ from src.services.assistant.api.deps import (
 )
 from src.services.assistant.api.route import AssistantRoute
 from src.services.assistant.api.turn_response import TurnResponse
-from src.services.assistant.bl import chat_turn
+from src.services.assistant.bl import chat_turn, timeline
+from src.services.assistant.core.work import run_db
 from src.services.assistant.exceptions import AssistantError
 from src.services.assistant.models.api.chat import ChatRequest
+from src.services.assistant.models.api.conversation import ConversationView
 from src.services.assistant.models.identity import Identity
 
 router = APIRouter(route_class=AssistantRoute, dependencies=[Depends(require_ready)])
@@ -56,3 +58,14 @@ async def chat(
 def _stop_unused(starting: "asyncio.Task[chat_turn.Turn]") -> None:
     if not starting.cancelled() and starting.exception() is None:
         starting.result().stop()
+
+
+@router.get(
+    "/conversations/{conversation_id}", description="A conversation, to show it again."
+)
+async def get_conversation(
+    conversation_id: str,
+    identity: Identity = Depends(get_identity),
+) -> ConversationView:
+    conversation = parse_resource_id(conversation_id, "conversation_not_found")
+    return await run_db(timeline.load, identity, conversation)
