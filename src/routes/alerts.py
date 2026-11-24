@@ -1,6 +1,6 @@
 import logging
 from copy import deepcopy
-from typing import List, Optional
+from typing import Iterable, List, Optional
 
 import celpy
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
@@ -67,6 +67,22 @@ from src.services.search_engine import SearchEngine
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+_delete_alert_verifier = IdentityManagerFactory.get_auth_verifier(["delete:alert"])
+
+
+def _require_delete_scope(
+    authenticated_entity: AuthenticatedEntity, keys: Iterable[str]
+) -> None:
+    """403 unless the caller may soft-delete, when `deleted` is among the keys.
+
+    The value is irrelevant: setting, clearing and nulling `deleted` are all what
+    `DELETE /alerts` protects with `delete:alert`, while the enrichment routes only
+    need `write:alert`. Every route that takes caller-supplied enrichment keys must
+    call this first, before anything is translated, looked up or written.
+    """
+    if "deleted" in keys:
+        _delete_alert_verifier.authorize(authenticated_entity)
 
 
 class AlertHistoryResponse(BaseModel):
@@ -587,6 +603,8 @@ async def batch_enrich_alerts(
     ),
     session: Session = Depends(get_session),
 ):
+    _require_delete_scope(authenticated_entity, enrich_data.enrichments)
+
     tenant_id = authenticated_entity.tenant_id
     logger.info(
         "Enriching alerts in batch",
@@ -759,6 +777,8 @@ async def enrich_alert(
     ),
     session: Session = Depends(get_session),
 ) -> dict[str, str]:
+    _require_delete_scope(authenticated_entity, enrich_data.enrichments)
+
     _translate_dismiss_enrichments(enrich_data.enrichments)
 
     tenant_id = authenticated_entity.tenant_id
@@ -883,6 +903,8 @@ async def unenrich_alert(
         IdentityManagerFactory.get_auth_verifier(["write:alert"])
     ),
 ) -> dict[str, str]:
+    _require_delete_scope(authenticated_entity, enrich_data.enrichments)
+
     tenant_id = authenticated_entity.tenant_id
     logger.info(
         "Un-Enriching alert",
