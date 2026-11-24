@@ -255,6 +255,21 @@ def test_one_open_alert_keeps_the_incident_open(
 
 
 @single_tenant
+def test_an_open_alert_holds_open_only_its_own_incident(
+    db_session, client, test_app, make_incident
+):
+    held_open = make_incident(["a", "shared", "open"])
+    complete = make_incident(["b", "shared"])
+
+    _resolve_batch(client, ["a", "b", "shared"])
+
+    assert _status(db_session, held_open) == "firing"
+    assert _status(db_session, complete) == "resolved"
+    (audit,) = _incident_audits(db_session)
+    assert audit.fingerprint == str(complete.id)
+
+
+@single_tenant
 def test_already_resolved_incident_gets_no_row(
     db_session, client, test_app, make_incident
 ):
