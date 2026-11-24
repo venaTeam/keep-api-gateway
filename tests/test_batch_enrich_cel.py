@@ -112,8 +112,11 @@ def test_batch_enrich_cel_severity(
     # Only the warning alerts were written
     rows = _last_alerts(db_session)
     for fingerprint in ("alert-warning-1", "alert-warning-2"):
-        assert rows[fingerprint].status == "suppressed"
+        # A requested 'suppressed' is saved as a permanent dismissal.
+        assert rows[fingerprint].dismiss_mode == "permanent"
+        assert rows[fingerprint].status is None
         assert rows[fingerprint].note == "Low priority alerts suppressed"
+    assert rows["alert-critical-1"].dismiss_mode is None
     assert rows["alert-critical-1"].status is None
     assert rows["alert-critical-1"].note is None
 

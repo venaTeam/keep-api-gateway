@@ -96,22 +96,26 @@ def test_automation_coverage_native_readback(db_session, matched, grace):
 # --------------------------------------------------------------------------- #
 def test_normalize_dismissed_true_permanent():
     out = normalize_enrichments({"dismissed": True})
-    assert out["status"] == "suppressed"
     assert out["dismiss_mode"] == "permanent"
+    # Dismiss does NOT write status: suppression is derived from the dismiss
+    # columns on read, leaving `status` holding what the alert reverts to.
+    assert "status" not in out
 
 
 def test_normalize_dismissed_true_with_until():
     out = normalize_enrichments({"dismissed": True, "dismissed_until": "2026-01-01T00:00:00Z"})
-    assert out["status"] == "suppressed"
     assert out["dismiss_mode"] == "dismiss_until"
     assert out["dismissed_until"] == "2026-01-01T00:00:00Z"
+    assert "status" not in out
 
 
 def test_normalize_dismissed_false_clears():
     out = normalize_enrichments({"dismissed": False})
-    assert out["status"] is None
     assert out["dismiss_mode"] is None
     assert out["dismissed_until"] is None
+    # Clearing the dismissal is what un-suppresses; the status override is not
+    # touched, so an unrelated override survives an undismiss.
+    assert "status" not in out
 
 
 def test_normalize_dismissed_false_preserves_explicit_status():
@@ -453,8 +457,10 @@ def test_extraction_mapping_nonstrict_discards_unknown_keys(db_session):
         strict=False,
     )
     la = get_last_alert_by_fingerprint(SINGLE_TENANT_UUID, "fp-extract", db_session)
-    # the known key was written; the unknown key was discarded silently
-    assert la.status == "suppressed"
+    # the known key was written (a requested 'suppressed' is saved as a permanent
+    # dismissal, over the untouched override); the unknown key was discarded
+    assert la.dismiss_mode == "permanent"
+    assert la.status == "acknowledged"
 
 
 def test_last_alert_enrichments_dict_emits_iso_dismissed_until(db_session):
