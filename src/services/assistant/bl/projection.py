@@ -13,7 +13,7 @@ MAX_NAME_CHARS = 120
 MAX_DESCRIPTION_CHARS = 200
 MAX_LABEL_CHARS = 100
 
-_DELIMITERS = str.maketrans({"<": "‹", ">": "›"})
+DELIMITERS = str.maketrans({"<": "‹", ">": "›"})
 
 
 def strip_control(value: str) -> str:
@@ -33,7 +33,7 @@ def clean_text(value: str, max_chars: int) -> str:
     """`value` without control characters and angle brackets, truncated."""
     # Bounded before the scan: alert text can be megabytes long.
     bounded = value[: max_chars * 4]
-    return strip_control(bounded)[:max_chars].translate(_DELIMITERS)
+    return strip_control(bounded)[:max_chars].translate(DELIMITERS)
 
 
 def text_or_none(value: Any) -> str | None:

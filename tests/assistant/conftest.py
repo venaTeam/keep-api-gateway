@@ -20,6 +20,7 @@ import pytest
 import sqlalchemy as sa
 
 from src.config import consts
+from src.services.assistant.bl.context import reset_fields_cache
 from src.services.assistant.config import ENABLED_ENV_VAR, Settings, reset_settings
 from src.services.assistant.core import db as db_core
 from src.services.assistant.models.db import Conversation, Draft, Message
@@ -53,6 +54,7 @@ def assistant_environment(monkeypatch):
     reset_settings()
     yield
     reset_settings()
+    reset_fields_cache()
     db_core.dispose_engine()
 
 
