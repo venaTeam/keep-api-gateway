@@ -15,6 +15,7 @@ from src.services.assistant import lifecycle
 from src.services.assistant.config import ENABLED_ENV_VAR
 from src.services.assistant.gateway.client import (
     MAX_CONCURRENT_ALERT_READS,
+    MAX_FILTER_CALLS,
     MAX_RUNNING_CALLS,
     Caller,
     GatewayClient,
@@ -25,6 +26,7 @@ from tests.assistant.fakes import (
     REQUEST_ID,
     TOKEN,
     FakeGateway,
+    alert,
     caller,
     query_result,
     whoami,
@@ -260,17 +262,24 @@ async def test_waiting_for_writes_is_bounded_and_counts_no_reads(slow):
 @pytest.mark.asyncio
 async def test_abandoned_calls_count_until_they_end(slow):
     client = slow.fake.client()
-    for _ in range(MAX_RUNNING_CALLS):
+    for _ in range(MAX_RUNNING_CALLS - 1):
         with pytest.raises(GatewayUnavailable) as caught:
             await client._send(
                 caller(), "query", "POST", "/alerts/query", timeout=0.01, body={}
             )
         assert caught.value.sent is True
-    assert slow.started == MAX_RUNNING_CALLS
 
     with pytest.raises(GatewayUnavailable) as caught:
         await client.query_alerts(caller(), "true", 21)
     assert caught.value.sent is False
+    with pytest.raises(GatewayUnavailable) as caught:
+        await client.whoami(caller())
+    assert caught.value.sent is False
+    assert slow.started == MAX_RUNNING_CALLS - 1
+
+    # The last place is for a write.
+    assert await write(client, timeout=0.01) == "unknown"
+    assert slow.started == MAX_RUNNING_CALLS
     # Nothing was written, so the draft can go back to pending.
     with pytest.raises(GatewayUnavailable) as caught:
         await write(client)
@@ -280,6 +289,77 @@ async def test_abandoned_calls_count_until_they_end(slow):
     slow.release.set()
     await until(lambda: slow.finished == MAX_RUNNING_CALLS)
     assert await write(client) == "ok"
+
+
+@pytest.mark.asyncio
+async def test_slow_filters_leave_places_for_everything_else(set_env):
+    """A filter the model wrote may run for minutes after its deadline. Nobody else's
+    conversation or Confirm may depend on that."""
+    set_env("ASSISTANT_GATEWAY_READ_TIMEOUT_SECONDS", 0.05)
+    release = asyncio.Event()
+    filters = []
+
+    async def handle(request):
+        path = request.url.path
+        if path in ("/alerts/query", "/alerts/query/count", "/alerts/facets/fields"):
+            if b"fingerprint in" not in request.content:
+                filters.append(path)
+                await release.wait()
+            return httpx.Response(200, json=query_result(alert("a")))
+        if path == "/whoami":
+            return httpx.Response(200, json=whoami())
+        return httpx.Response(200, json={"status": "ok"})
+
+    client = FakeGateway(handle).client()
+    for _ in range(2):
+        assert await client.count_alerts(caller(), "slow") is None
+        with pytest.raises(GatewayUnavailable):
+            await client.query_alerts(caller(), "slow", 21)
+    assert len(filters) == MAX_FILTER_CALLS
+    for call in (
+        client.query_alerts(caller(), "slow", 21),
+        client.alert_fields(caller()),
+    ):
+        with pytest.raises(GatewayUnavailable) as caught:
+            await call
+        assert caught.value.sent is False
+    assert await client.count_alerts(caller(), "slow") is None
+    assert len(filters) == MAX_FILTER_CALLS
+
+    assert (await client.whoami(caller()))["tenant_id"] == "keep"
+    assert (await client.fetch_alerts_by_fingerprints(caller(), ["a"])).found
+    assert await write(client) == "ok"
+
+    release.set()
+    await until(lambda: not client._running)
+    assert len(await client.query_alerts(caller(), "fast", 21)) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_filter_call_waits_for_its_place(slow):
+    """Several chats at the same moment are not a reason to refuse one."""
+    client = slow.fake.client()
+    queries = [
+        asyncio.create_task(client.query_alerts(caller(), "true", 21))
+        for _ in range(MAX_FILTER_CALLS + 2)
+    ]
+    await until(lambda: slow.started == MAX_FILTER_CALLS)
+    slow.release.set()
+    assert await asyncio.gather(*queries) == [[]] * (MAX_FILTER_CALLS + 2)
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_wait_for_a_place_takes_none(slow):
+    client = slow.fake.client()
+    queries = [
+        asyncio.create_task(client.query_alerts(caller(), "true", 21))
+        for _ in range(MAX_FILTER_CALLS + 1)
+    ]
+    await until(lambda: slow.started == MAX_FILTER_CALLS)
+    queries.pop().cancel()
+    slow.release.set()
+    await asyncio.gather(*queries)
+    await until(lambda: client._filter_calls._value == MAX_FILTER_CALLS)
 
 
 @pytest.mark.asyncio
@@ -303,10 +383,10 @@ async def test_an_alert_read_keeps_its_place_until_the_call_ends(slow):
 async def test_a_refused_alert_read_gives_its_place_back(slow):
     client = slow.fake.client()
     blocked = [
-        asyncio.create_task(client.query_alerts(caller(), "true", 21))
-        for _ in range(MAX_RUNNING_CALLS)
+        asyncio.create_task(client.whoami(caller()))
+        for _ in range(MAX_RUNNING_CALLS - 1)
     ]
-    await until(lambda: slow.started == MAX_RUNNING_CALLS)
+    await until(lambda: slow.started == MAX_RUNNING_CALLS - 1)
     for _ in range(MAX_CONCURRENT_ALERT_READS + 1):
         with pytest.raises(GatewayUnavailable) as caught:
             await client.fetch_alerts_by_fingerprints(caller(), ["q q"])
@@ -378,15 +458,16 @@ async def test_a_full_house_of_calls_leaves_the_ui_its_threads(
     monkeypatch.setattr(alerts, "enrich_alerts_with_incidents", lambda t, found: found)
     client = in_process(test_app)
     noc = Caller(role("noc"), REQUEST_ID)
+    # What a lookup of fingerprints sends, which the limit for filters does not count.
     queries = [
-        asyncio.create_task(client.query_alerts(noc, "true", 21))
-        for _ in range(MAX_RUNNING_CALLS)
+        asyncio.create_task(client._query(noc, "true", 21))
+        for _ in range(MAX_RUNNING_CALLS - 1)
     ]
     try:
         for _ in queries:
             assert await run_in_threadpool(started.acquire, timeout=10)
         with pytest.raises(GatewayUnavailable) as caught:
-            await client.query_alerts(noc, "true", 21)
+            await client._query(noc, "true", 21)
         assert caught.value.sent is False
         assert not started.acquire(blocking=False)
 
@@ -400,7 +481,7 @@ async def test_a_full_house_of_calls_leaves_the_ui_its_threads(
         assert response.status_code == 200
     finally:
         release.set()
-    assert await asyncio.gather(*queries) == [[]] * MAX_RUNNING_CALLS
+    assert await asyncio.gather(*queries) == [[]] * (MAX_RUNNING_CALLS - 1)
 
 
 def test_the_worker_calls_its_own_app(make_app, set_env, monkeypatch):
