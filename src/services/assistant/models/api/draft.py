@@ -92,26 +92,43 @@ class ChangeAlertStatusPayload(BaseModel):
     unresolvable: List[str]
 
 
-class AlertOutcome(BaseModel):
+class StoredAlertOutcome(BaseModel):
+    """As read back: a newer version may have stored a result this one does not know."""
+
     fingerprint: str
     name: Optional[str]
-    result: AlertResult
+    result: str
     status_after: Optional[str]
 
 
-class DraftOutcome(BaseModel):
-    code: OutcomeCode
+class AlertOutcome(StoredAlertOutcome):
+    result: AlertResult
+
+
+class StoredOutcome(BaseModel):
+    """As read back. Strict on write, lenient on load: a rollback leaves outcomes of a
+    newer version behind, with values and keys this one does not know."""
+
+    code: str
     message: str
     # None when nothing was sent to the gateway.
-    gateway_result: Optional[GatewayResult]
+    gateway_result: Optional[str]
     applied_count: int
     failed_count: int
     unconfirmed_count: int
     skipped_count: int
     not_found_count: int
-    results: List[AlertOutcome]
+    results: List[StoredAlertOutcome]
     # None while the outcome is still pending.
     finished_at: Optional[datetime]
+
+
+class DraftOutcome(StoredOutcome):
+    """What this version writes."""
+
+    code: OutcomeCode
+    gateway_result: Optional[GatewayResult]
+    results: List[AlertOutcome]
 
 
 class DraftView(BaseModel):
@@ -125,7 +142,7 @@ class DraftView(BaseModel):
     expires_at: datetime
     resolved_at: Optional[datetime]
     payload: Dict[str, Any]
-    outcome: Optional[DraftOutcome]
+    outcome: Optional[StoredOutcome]
 
 
 # kind -> payload model, one entry per registered tool.

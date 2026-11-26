@@ -61,8 +61,13 @@ def to_view(draft: Draft) -> DraftView:
         expires_at=draft.expires_at,
         resolved_at=draft.resolved_at,
         payload=draft.payload,
-        outcome=draft.outcome,
+        outcome=None if draft.outcome is None else outcomes.readable(draft.outcome),
     )
+
+
+def _strict(outcome: DraftOutcome) -> dict[str, Any]:
+    """What is stored, checked again: only values this version knows are written."""
+    return json.loads(DraftOutcome(**outcome.dict()).json())
 
 
 @dataclass(frozen=True)
@@ -150,7 +155,7 @@ def keep_applying(key: DraftKey, outcome: DraftOutcome) -> DraftView | None:
             session,
             *key.matches(),
             Draft.state == "applying",
-            outcome=json.loads(outcome.json()),
+            outcome=_strict(outcome),
             updated_at=Draft.updated_at,
         )
         return None if draft is None else to_view(draft)
@@ -186,7 +191,7 @@ def resolve(
             Draft.state == from_state,
             state=state,
             resolved_at=sa.func.now(),
-            outcome=None if outcome is None else json.loads(outcome.json()),
+            outcome=None if outcome is None else _strict(outcome),
         )
         if draft is None:
             return None
