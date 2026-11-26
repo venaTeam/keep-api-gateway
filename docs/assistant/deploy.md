@@ -75,7 +75,7 @@ role's permission to change alert status and the soft-delete guard.
 | `ASSISTANT_DRAFT_TTL_SECONDS` | 1800 | how long a draft can be confirmed |
 | `ASSISTANT_GATEWAY_WHOAMI_TIMEOUT_SECONDS` | 3 | calls to this app's own routes |
 | `ASSISTANT_GATEWAY_READ_TIMEOUT_SECONDS` | 5 | |
-| `ASSISTANT_GATEWAY_WRITE_TIMEOUT_SECONDS` | 12 | Confirm's write; it has 26 s for everything |
+| `ASSISTANT_GATEWAY_WRITE_TIMEOUT_SECONDS` | 12 | Confirm's status changes (`batch_enrich`); at most 12, because Confirm has 26 s for everything: a larger value is logged and 12 is used |
 | `ASSISTANT_DB_POOL_SIZE` | 3 | per worker, next to the gateway's own pool |
 | `ASSISTANT_DB_MAX_OVERFLOW` | 2 | |
 | `ASSISTANT_DB_POOL_TIMEOUT` | 3 | seconds |
@@ -92,7 +92,7 @@ The database is the gateway's own; `DATABASE_POOL_*` and the like do not reach t
 assistant. A value that cannot be read, or that is not above 0, is logged and the default
 is used. Only `ASSISTANT_DB_MAX_OVERFLOW`, `ASSISTANT_MAX_TOOL_ROUNDS`,
 `ASSISTANT_MAX_DRAFTS_PER_TURN`, `ASSISTANT_FIELDS_CACHE_TTL_SECONDS` and the rate limits
-may be 0.
+may be 0. `ASSISTANT_GATEWAY_WRITE_TIMEOUT_SECONDS` above 12 is logged and 12 is used.
 
 The assistant's connections set `statement_timeout` through the `options` startup
 parameter, in place of an `options` in the connection string. PgBouncer refuses that

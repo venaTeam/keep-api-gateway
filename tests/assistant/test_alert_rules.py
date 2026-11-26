@@ -8,7 +8,11 @@ import pytest
 import yaml
 from prometheus_client import Counter, Gauge, Histogram
 
-from src.services.assistant.config import ENABLED_ENV_VAR, Settings
+from src.services.assistant.config import (
+    ENABLED_ENV_VAR,
+    MAX_WRITE_TIMEOUT_SECONDS,
+    Settings,
+)
 from src.services.assistant.core import metrics
 from src.services.assistant.llm.client import LlmErrorKind
 from src.services.assistant.models.api.draft import OutcomeCode
@@ -185,6 +189,14 @@ def test_the_defaults_are_the_real_ones(set_env):
             assert float(text) == default, env
         else:
             assert text == default, env
+
+
+def test_the_document_gives_the_write_timeouts_maximum():
+    [row] = re.findall(
+        r"^\| `ASSISTANT_GATEWAY_WRITE_TIMEOUT_SECONDS` \|.*$", DEPLOY, re.M
+    )
+    maximum = f"{MAX_WRITE_TIMEOUT_SECONDS:g}"
+    assert f"at most {maximum}" in row and f"{maximum} is used" in row
 
 
 def test_the_document_names_metrics_that_exist():

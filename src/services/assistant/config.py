@@ -15,6 +15,9 @@ logger = logging.getLogger(__name__)
 
 ENABLED_ENV_VAR = "KEEP_ASSISTANT_ENABLED"
 
+# The longest a single write may take, and the default of the batch_enrich writes.
+MAX_WRITE_TIMEOUT_SECONDS = 12.0
+
 
 def _is_true(value: str) -> bool:
     return value.strip().lower() in ("1", "true", "yes", "on")
@@ -32,10 +35,12 @@ def _env(
     cast: Callable[[str], Any] = str,
     *,
     zero: bool = False,
+    maximum: float | None = None,
     repr: bool = True,
 ) -> Any:
     """`zero`: 0 means something sensible here. Below that, and where it does not (0
-    days of retention would delete everything), a number is as unusable as a typo."""
+    days of retention would delete everything), a number is as unusable as a typo.
+    `maximum`: a larger number is logged and the maximum is used."""
 
     def read() -> Any:
         value = os.environ.get(name)
@@ -46,7 +51,6 @@ def _env(
             # Not `<= 0`, which is false for nan.
             if cast in (int, float) and not (result > 0 or (zero and result == 0)):
                 raise ValueError("out of range")
-            return result
         except ValueError:
             # A typo here must not take the whole gateway down.
             logger.error(
@@ -54,6 +58,13 @@ def _env(
                 extra={"setting": name},
             )
             return default
+        if maximum is not None and result > maximum:
+            logger.error(
+                "assistant: setting above its maximum, using the maximum",
+                extra={"setting": name, "maximum": maximum},
+            )
+            return maximum
+        return result
 
     return field(default_factory=read, repr=repr, metadata={"env": name})
 
@@ -78,8 +89,13 @@ class Settings:
     gateway_read_timeout_seconds: float = _env(
         "ASSISTANT_GATEWAY_READ_TIMEOUT_SECONDS", 5.0, float
     )
+    # The batch_enrich writes only; the other writes have their own, fixed. Bounded:
+    # Confirm has 26 s for everything, and a write it cannot wait for it never sends.
     gateway_write_timeout_seconds: float = _env(
-        "ASSISTANT_GATEWAY_WRITE_TIMEOUT_SECONDS", 12.0, float
+        "ASSISTANT_GATEWAY_WRITE_TIMEOUT_SECONDS",
+        MAX_WRITE_TIMEOUT_SECONDS,
+        float,
+        maximum=MAX_WRITE_TIMEOUT_SECONDS,
     )
 
     # LLM. Without a key the chat answers 503 `llm_not_configured`; confirming and

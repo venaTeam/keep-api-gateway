@@ -9,6 +9,7 @@ from src.config import consts
 from src.services.assistant import config
 from src.services.assistant.config import Settings, get_settings, is_enabled
 from src.services.assistant.core import db as db_core
+from src.services.assistant.gateway.client import WRITE_ROUTES
 from tests.assistant.conftest import NO_DATABASE_DSN, TEST_OPENAI_KEY
 
 
@@ -75,6 +76,39 @@ def test_a_number_that_makes_no_sense_falls_back_to_the_default(
     assert [r.setting for r in caplog.records] == (
         [] if allowed else [setting.metadata["env"]]
     )
+
+
+@pytest.mark.parametrize(
+    ("value", "seconds", "logged"),
+    [
+        ("13", 12, True),
+        ("inf", 12, True),
+        ("12", 12, False),
+        ("5", 5, False),
+        ("0.2", 0.2, False),
+        ("0", 12, True),
+        ("-1", 12, True),
+        ("nan", 12, True),
+    ],
+)
+def test_the_write_timeout_is_at_most_12_seconds(set_env, caplog, value, seconds, logged):
+    """Under Confirm's 26 s a longer write could never be sent: Confirm would be off
+    without anybody saying so."""
+    set_env("ASSISTANT_GATEWAY_WRITE_TIMEOUT_SECONDS", value)
+    with caplog.at_level(logging.ERROR):
+        assert get_settings().gateway_write_timeout_seconds == seconds
+    assert [r.setting for r in caplog.records] == (
+        ["ASSISTANT_GATEWAY_WRITE_TIMEOUT_SECONDS"] if logged else []
+    )
+
+
+def test_the_write_timeout_drives_the_rows_without_their_own(set_env):
+    set_env("ASSISTANT_GATEWAY_WRITE_TIMEOUT_SECONDS", "30")
+    assert config.MAX_WRITE_TIMEOUT_SECONDS == 12
+    for name, route in WRITE_ROUTES.items():
+        assert route.timeout() <= 12, name
+    set_env("ASSISTANT_GATEWAY_WRITE_TIMEOUT_SECONDS", "5")
+    assert WRITE_ROUTES["batch_enrich"].timeout() == 5
 
 
 @pytest.mark.parametrize("value", ["nan", "-inf"])
