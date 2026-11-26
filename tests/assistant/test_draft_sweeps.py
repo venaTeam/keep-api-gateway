@@ -4,8 +4,9 @@ import threading
 
 import pytest
 
-from src.services.assistant.bl import drafts_bl, outcomes, sweeps
+from src.services.assistant.bl import drafts_bl, sweeps
 from src.services.assistant.core import metrics
+from src.services.assistant.kinds import alert_set
 from src.services.assistant.models.api.draft import ChangeAlertStatusPayload
 from src.services.assistant.models.db import Conversation, Draft
 from tests.assistant.conftest import OTHER_TENANT, TENANT
@@ -207,14 +208,14 @@ def test_what_was_known_is_kept(db, conversation):
     """Which alerts needed no change is not forgotten."""
     payload = ChangeAlertStatusPayload.parse_obj(draft_payload("fp-1", "fp-2"))
     settled = {
-        "fp-1": outcomes.AlertOutcome(
+        "fp-1": alert_set.AlertOutcome(
             fingerprint="fp-1",
             name="name of fp-1",
             result="skipped",
             status_after="acknowledged",
         )
     }
-    _, outcome = outcomes.pending(payload, settled, "unknown")
+    _, outcome = alert_set.pending(payload, settled, "unknown")
     draft = applying(db, conversation, since=ago(hours=1))
     drafts_bl.keep_applying(
         drafts_bl.DraftKey(draft, TENANT, "ops@example.com", conversation), outcome

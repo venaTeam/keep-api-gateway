@@ -36,6 +36,7 @@ from src.services.assistant.models.api.draft import (
     SkippedAlert,
     TargetStatus,
 )
+from src.services.assistant.kinds.alert_status import NAME, WRITE_SCOPE
 from src.services.assistant.tools.base import (
     NewDraft,
     ToolContext,
@@ -43,9 +44,6 @@ from src.services.assistant.tools.base import (
     ToolSpec,
     tool_error,
 )
-
-NAME = "change_alert_status"
-WRITE_SCOPE = "write:alert"
 
 MAX_CEL_CHARS = 2000
 MAX_NOTE_CHARS = 2000

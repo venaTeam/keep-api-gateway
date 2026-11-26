@@ -15,8 +15,8 @@ from src.services.assistant.models.api.conversation import (
     TimelineDraft,
     TimelineMessage,
 )
+from src.services.assistant.kinds.registry import PAYLOAD_MODELS
 from src.services.assistant.models.api.draft import (
-    PAYLOAD_MODELS,
     AlertOutcome,
     ChangeAlertStatusPayload,
     DraftAlert,

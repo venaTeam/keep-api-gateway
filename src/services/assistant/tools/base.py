@@ -1,7 +1,7 @@
 """What every tool provides. A tool only reads and proposes: it has no write path.
 
-A new tool is one module with a ToolSpec, plus its line in the registry and its
-payload model in PAYLOAD_MODELS.
+A new tool is one module with a ToolSpec, plus its line in the registry. A tool that
+makes drafts also has a kind of the same name in `kinds/registry.py`.
 """
 import json
 import uuid

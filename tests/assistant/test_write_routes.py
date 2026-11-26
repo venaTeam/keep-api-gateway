@@ -8,7 +8,7 @@ from types import MappingProxyType
 import httpx
 import pytest
 
-from src.services.assistant.bl.confirm_bl import status_change
+from src.services.assistant.kinds.alert_status import status_change
 from src.services.assistant.gateway import client as client_module
 from src.services.assistant.gateway.client import (
     MAX_RUNNING_CALLS,

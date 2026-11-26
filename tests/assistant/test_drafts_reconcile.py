@@ -6,8 +6,9 @@ import logging
 import httpx
 import pytest
 
-from src.services.assistant.bl import drafts_bl, outcomes, reconcile_bl
+from src.services.assistant.bl import drafts_bl, reconcile_bl
 from src.services.assistant.core import metrics
+from src.services.assistant.kinds import alert_set
 from src.services.assistant.models.db import Conversation, Draft
 from tests.assistant.logs import rendered
 from tests.assistant.rows import (
@@ -394,7 +395,7 @@ async def test_a_bug_does_not_hide_the_conversation(
     def fail(*args, **options):
         raise RuntimeError(CANARY)
 
-    monkeypatch.setattr(outcomes, "verified", fail)
+    monkeypatch.setattr(alert_set, "verified", fail)
     applying(db, conversation)
     with caplog.at_level(logging.DEBUG):
         [view] = await look(app, conversation)

@@ -146,7 +146,3 @@ class DraftView(BaseModel):
     resolved_at: Optional[datetime]
     payload: Dict[str, Any]
     outcome: Optional[StoredOutcome]
-
-
-# kind -> payload model, one entry per registered tool.
-PAYLOAD_MODELS = {"change_alert_status": ChangeAlertStatusPayload}

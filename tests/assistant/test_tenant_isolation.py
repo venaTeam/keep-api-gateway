@@ -4,7 +4,7 @@ import uuid
 
 import pytest
 
-from src.services.assistant.bl import drafts_bl, outcomes, timeline
+from src.services.assistant.bl import drafts_bl, timeline
 from src.services.assistant.bl.conversations_bl import (
     NewMessage,
     TurnLost,
@@ -13,6 +13,7 @@ from src.services.assistant.bl.conversations_bl import (
     start_turn,
 )
 from src.services.assistant.exceptions import AssistantError
+from src.services.assistant.kinds import alert_set
 from src.services.assistant.models.api.draft import ChangeAlertStatusPayload
 from src.services.assistant.models.db import Conversation, Draft
 from tests.assistant.conftest import OTHER_TENANT, TENANT
@@ -98,7 +99,7 @@ def test_a_draft_cannot_be_changed_as_someone_else(db, stranger):
     before = read(db, Draft, draft), read(db, Conversation, conversation)
     forged = drafts_bl.DraftKey(draft, stranger.tenant_id, stranger.email, conversation)
     payload = ChangeAlertStatusPayload.parse_obj(draft_payload("fp-1"))
-    _, outcome = outcomes.pending(payload, {}, "unknown")
+    _, outcome = alert_set.pending(payload, {}, "unknown")
     drafts_bl.revert(forged)
     assert drafts_bl.keep_applying(forged, outcome) is None
     assert drafts_bl.claim_look(forged, 30) is None

@@ -1,42 +1,47 @@
-"""Confirm: the only code that changes alerts, and only those the user's card listed.
+"""Confirm: the only code that writes, and only what the draft's card showed.
 
 The gateway's own route decides whether the user may. Between the user's click and the
 answer a draft is `applying`: nobody else can confirm it. Whatever happens before the
-write puts it back to `pending`; after the write nothing does, because the alerts may
-have been changed.
+write puts it back to `pending`; after the write nothing does, because the write may
+have changed something.
+
+The draft's kind plans the writes and reads through a ReadGateway; this module alone
+holds the client and sends them.
 """
 import asyncio
 import logging
 import time
 import uuid
-from typing import Any
 
 from src.services.assistant.bl import drafts_bl, outcomes
-from src.services.assistant.bl.outcomes import Decision
 from src.services.assistant.core import metrics
 from src.services.assistant.core.work import OngoingWork, log_failure, run_db
 from src.services.assistant.exceptions import AssistantError
-from src.services.assistant.gateway.client import FetchResult, GatewayClient
+from src.services.assistant.gateway.client import GatewayClient, WriteAnswer
 from src.services.assistant.gateway.errors import (
     GatewayError,
     GatewayForbidden,
     GatewayUnauthorized,
     GatewayUnavailable,
 )
-from src.services.assistant.models.api.draft import (
-    PAYLOAD_MODELS,
-    ChangeAlertStatusPayload,
-    DraftView,
-    GatewayResult,
-    TargetStatus,
+from src.services.assistant.gateway.reader import ReadGateway
+from src.services.assistant.kinds.base import (
+    ConfirmContext,
+    ConfirmPlan,
+    Decision,
+    Sent,
+    Step,
+    WriteRequest,
 )
+from src.services.assistant.kinds.registry import KINDS
+from src.services.assistant.models.api.draft import DraftView
 from src.services.assistant.models.identity import Identity
 
 logger = logging.getLogger(__name__)
 
 # From the moment the request came in. Next's proxy gives up after 30 s of silence.
 BUDGET_SECONDS = 26.0
-# Either look at the alerts, before and after the write.
+# Either look, before and after the write.
 READ_SECONDS = 4.0
 # The write (12 s), the second look and the last transaction. A write that is sent with
 # less than this could not be reported any more.
@@ -45,26 +50,6 @@ NEEDED_FOR_WRITE_SECONDS = 17.0
 FINISH_SECONDS = 1.0
 # A shutting-down worker stops waiting for the write in time to say so.
 LEAVE_AT_SHUTDOWN_SECONDS = 1.5
-
-
-def status_change(
-    fingerprints: list[str],
-    status: TargetStatus,
-    note: str | None,
-    dispose_on_new_alert: bool,
-) -> tuple[dict[str, Any], dict[str, str]]:
-    """The body and query of the `batch_enrich` write: what the UI sends for the same
-    change."""
-    enrichments: dict[str, Any] = {"status": status}
-    if status != "suppressed":
-        enrichments["dismiss_mode"] = None
-        enrichments["dismissed_until"] = None
-    if note:
-        enrichments["note"] = note
-    return (
-        {"fingerprints": fingerprints, "enrichments": enrichments},
-        {"dispose_on_new_alert": "true" if dispose_on_new_alert else "false"},
-    )
 
 
 async def confirm(
@@ -130,35 +115,34 @@ class _Attempt:
         return draft
 
     async def _decide(self) -> Decision:
-        payload: ChangeAlertStatusPayload = PAYLOAD_MODELS[self._draft.kind].parse_obj(
-            self._draft.payload
-        )
-        settled = outcomes.before_write(payload, await self._look_before(payload))
-        to_write = [
-            alert.fingerprint
-            for alert in payload.alerts
-            if alert.fingerprint not in settled
-        ]
-        if not to_write:
-            return outcomes.nothing_to_change(payload, settled)
-        result = await self._write(payload, to_write)
-        if result in outcomes.REFUSED:
-            return outcomes.refused(payload, settled, result)
-        # The gateway may still be writing: a look now would show a half-way state.
-        now = None if result == "unknown" else await self._look_after(to_write)
-        if now is not None:
-            return outcomes.verified(payload, settled, result, now)
-        if result == "ok":
-            return outcomes.unverified(payload, settled)
-        return outcomes.pending(payload, settled, result)
-
-    async def _look_before(self, payload: ChangeAlertStatusPayload) -> FetchResult:
-        try:
-            return await self._gateway.fetch_alerts_by_fingerprints(
-                self._caller,
-                [alert.fingerprint for alert in payload.alerts],
-                deadline_seconds=READ_SECONDS,
+        kind = KINDS[self._draft.kind]
+        plan = kind.plan(
+            ConfirmContext(
+                reader=ReadGateway(self._gateway, self._caller),
+                caller=self._caller,
+                payload=kind.payload_model.parse_obj(self._draft.payload),
+                confirm_input=None,
+                read_seconds=self._read_seconds,
             )
+        )
+        step = await self._first(plan)
+        sent: list[Sent] = []
+        while isinstance(step, WriteRequest):
+            if len(sent) >= len(plan.rows) or step.endpoint != plan.rows[len(sent)]:
+                raise RuntimeError("a write the plan did not declare")
+            answer = await self._write(step)
+            sent.append(Sent(step, answer))
+            if answer.result == "unknown":
+                # The gateway may still be writing: a look now would show a half-way
+                # state.
+                return "applying", plan.pending(sent)
+            step = await plan.after(sent)
+        return step
+
+    async def _first(self, plan: ConfirmPlan) -> Step:
+        """The look before the write."""
+        try:
+            return await plan.first()
         except GatewayUnauthorized:
             raise AssistantError("unauthenticated") from None
         except GatewayForbidden:
@@ -166,15 +150,13 @@ class _Attempt:
         except GatewayError:
             raise AssistantError("gateway_unavailable") from None
 
-    async def _write(
-        self, payload: ChangeAlertStatusPayload, fingerprints: list[str]
-    ) -> GatewayResult:
-        send_task = asyncio.create_task(self._send(payload, fingerprints))
+    async def _write(self, request: WriteRequest) -> WriteAnswer:
+        send_task = asyncio.create_task(self._send(request))
         await self._work.wait(send_task, leave=LEAVE_AT_SHUTDOWN_SECONDS)
         if not send_task.done():
             send_task.cancel()  # ends the wait for it: the call itself goes on
             if self._sent:
-                return "unknown"
+                return WriteAnswer("unknown")
             raise AssistantError("not_ready")
         try:
             return send_task.result()
@@ -183,15 +165,7 @@ class _Attempt:
             self._sent = False
             raise AssistantError("gateway_unavailable") from None
 
-    async def _send(
-        self, payload: ChangeAlertStatusPayload, fingerprints: list[str]
-    ) -> GatewayResult:
-        body, query = status_change(
-            fingerprints,
-            payload.target_status,
-            payload.note,
-            payload.dispose_on_new_alert,
-        )
+    async def _send(self, request: WriteRequest) -> WriteAnswer:
         # No await between these checks and the call.
         if self._work.draining:
             raise AssistantError("not_ready")
@@ -202,22 +176,17 @@ class _Attempt:
             )
             raise AssistantError("gateway_unavailable")
         self._sent = True
-        answer = await self._gateway.write(
-            self._caller, "batch_enrich", body=body, query=query
+        return await self._gateway.write(
+            self._caller,
+            request.endpoint,
+            body=request.body,
+            path_params=request.path_params,
+            query=request.query,
         )
-        return answer.result
 
-    async def _look_after(self, fingerprints: list[str]) -> FetchResult | None:
-        """What the alerts look like now; None when that cannot be had in time."""
-        seconds = min(READ_SECONDS, self._seconds_left() - FINISH_SECONDS)
-        if seconds <= 0:
-            return None
-        try:
-            return await self._gateway.fetch_alerts_by_fingerprints(
-                self._caller, fingerprints, deadline_seconds=seconds
-            )
-        except GatewayError:
-            return None  # counted and logged by the client
+    def _read_seconds(self) -> float:
+        """How long a look may take now: it must leave the last transaction its time."""
+        return min(READ_SECONDS, self._seconds_left() - FINISH_SECONDS)
 
     def _seconds_left(self) -> float:
         left = self._started + BUDGET_SECONDS - time.monotonic()

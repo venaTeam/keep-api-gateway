@@ -16,8 +16,8 @@ from src.services.assistant.config import get_settings
 from src.services.assistant.gateway.client import Caller, GatewayClient
 from src.services.assistant.gateway.errors import GatewayError
 from src.services.assistant.models.api.chat import ChatContext
+from src.services.assistant.models.api.draft import MAX_ALERTS_PER_DRAFT
 from src.services.assistant.models.identity import Identity
-from src.services.assistant.tools.change_alert_status import MAX_ALERTS_PER_DRAFT
 
 MAX_FIELDS = 300
 MAX_FIELDS_CHARS = 6000

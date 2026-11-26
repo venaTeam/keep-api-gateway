@@ -16,7 +16,9 @@ from src.services.assistant.bl.drafts_bl import DraftKey
 from src.services.assistant.core import metrics
 from src.services.assistant.core.db import get_session
 from src.services.assistant.core.work import log_failure
-from src.services.assistant.models.api.draft import PAYLOAD_MODELS, DraftView
+from src.services.assistant.kinds.base import Decision
+from src.services.assistant.kinds.registry import kind_of
+from src.services.assistant.models.api.draft import DraftView
 from src.services.assistant.models.db import Draft
 
 logger = logging.getLogger(__name__)
@@ -137,11 +139,14 @@ def _close(row: Any) -> None:
     )
 
 
-def _decide(draft: DraftView) -> outcomes.Decision:
+def _decide(draft: DraftView) -> Decision:
     """By the kind; generically when this version cannot read the kind, the payload or
     the stored outcome (left behind by a newer version), so such rows never stay."""
+    kind = kind_of(draft.kind)
+    if kind is None:
+        return outcomes.unreadable_for_good()
     try:
-        payload = PAYLOAD_MODELS[draft.kind].parse_obj(draft.payload)
-        return outcomes.unknown_for_good(payload, draft.outcome)
-    except (KeyError, ValueError):  # pydantic's ValidationError is a ValueError
+        payload = kind.payload_model.parse_obj(draft.payload)
+        return kind.close_unknown(payload, draft.outcome, None)
+    except ValueError:  # pydantic's ValidationError is a ValueError
         return outcomes.unreadable_for_good()

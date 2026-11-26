@@ -10,7 +10,8 @@ import sqlalchemy as sa
 from src.services.assistant.bl import drafts_bl
 from src.services.assistant.config import get_settings
 from src.services.assistant.core import db as db_core
-from src.services.assistant.models.api.draft import PAYLOAD_MODELS, ChangeAlertStatusPayload
+from src.services.assistant.kinds.registry import PAYLOAD_MODELS
+from src.services.assistant.models.api.draft import ChangeAlertStatusPayload
 from src.services.assistant.models.api.stream import ToolOutcomeCode
 from src.services.assistant.models.db import Conversation
 from src.services.assistant.tools import base

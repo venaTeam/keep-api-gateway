@@ -11,6 +11,7 @@ from src.services.assistant.bl import confirm_bl, drafts_bl, outcomes
 from src.services.assistant.core import metrics
 from src.services.assistant.core import work as work_module
 from src.services.assistant.gateway import client as client_module
+from src.services.assistant.kinds import alert_set
 from src.services.assistant.models.api.draft import ChangeAlertStatusPayload
 from src.services.assistant.models.db import Conversation, Draft
 from tests.assistant import golden_stream
@@ -478,14 +479,14 @@ async def test_never_sent(app, db, keep, conversation, draft, failure):
 
 @pytest.mark.asyncio
 async def test_too_many_calls_at_once(app, db, keep, draft, monkeypatch):
-    real = confirm_bl._Attempt._look_before
+    real = alert_set.look_before
 
-    async def then_full(self, payload):
-        found = await real(self, payload)
+    async def then_full(ctx, payload):
+        found = await real(ctx, payload)
         monkeypatch.setattr(client_module, "MAX_RUNNING_CALLS", 0)
         return found
 
-    monkeypatch.setattr(confirm_bl._Attempt, "_look_before", then_full)
+    monkeypatch.setattr(alert_set, "look_before", then_full)
     exchange = await post_confirm(app, draft).finish()
     assert (exchange.status, exchange.code) == (502, "gateway_unavailable")
     assert state_of(db, draft) == "pending"
@@ -579,7 +580,7 @@ def test_the_messages_are_the_ones_of_the_fixture():
     assert len({code for code, _ in texts}) == 10
     payload = ChangeAlertStatusPayload.parse_obj(draft_payload())
     for (code, result), text in texts.items():
-        assert outcomes._outcome(payload, {}, {}, code, result).message == text
+        assert alert_set._outcome(payload, {}, {}, code, result).message == text
 
 
 # --- before the write ---------------------------------------------------------------------
@@ -941,7 +942,7 @@ async def test_a_bug_before_the_write_puts_the_draft_back(
     def fail(*args):
         raise RuntimeError(CANARY)
 
-    monkeypatch.setattr(outcomes, "before_write", fail)
+    monkeypatch.setattr(alert_set, "before_write", fail)
     with caplog.at_level(logging.DEBUG):
         exchange = await post_confirm(app, draft).finish()
     assert (exchange.status, exchange.code) == (500, "internal")
@@ -960,7 +961,7 @@ async def test_a_bug_after_the_write_does_not(
     def fail(*args):
         raise RuntimeError(CANARY)
 
-    monkeypatch.setattr(outcomes, "verified", fail)
+    monkeypatch.setattr(alert_set, "verified", fail)
     exchange = await post_confirm(app, draft).finish()
     assert (exchange.status, exchange.code) == (500, "internal")
     assert state_of(db, draft) == "applying"

@@ -4,8 +4,8 @@ from collections.abc import Callable
 
 import httpx
 
-from src.services.assistant.bl.confirm_bl import status_change
 from src.services.assistant.gateway.client import Caller, GatewayClient
+from src.services.assistant.kinds.alert_status import status_change
 from src.services.assistant.models.api.draft import GatewayResult, TargetStatus
 from src.services.assistant.models.identity import Identity
 

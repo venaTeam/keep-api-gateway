@@ -23,8 +23,9 @@ from src.services.assistant.core.work import (
 )
 from src.services.assistant.gateway.client import GatewayClient
 from src.services.assistant.gateway.transport import IN_PROCESS_URL, InProcessTransport
+from src.services.assistant.kinds.registry import KINDS
 from src.services.assistant.llm.client import LlmErrorKind, build_llm_client
-from src.services.assistant.models.api.draft import PAYLOAD_MODELS, OutcomeCode
+from src.services.assistant.models.api.draft import OutcomeCode
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +62,7 @@ def _start_series() -> None:
     some of these happen once in months."""
     for kind in get_args(LlmErrorKind):
         metrics.llm_errors_total.labels(kind=kind)
-    for kind in PAYLOAD_MODELS:
+    for kind in KINDS:
         for outcome in get_args(OutcomeCode):
             metrics.draft_outcomes_total.labels(kind=kind, outcome=outcome)
         metrics.drafts_total.labels(kind=kind, event="finalized_after_timeout")

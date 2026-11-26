@@ -10,13 +10,11 @@ from src.services.assistant.core import metrics
 from src.services.assistant.core.work import log_failure, run_db
 from src.services.assistant.gateway.client import GatewayClient
 from src.services.assistant.gateway.errors import GatewayError
+from src.services.assistant.gateway.reader import ReadGateway
+from src.services.assistant.kinds.base import DraftKind
+from src.services.assistant.kinds.registry import kind_of
 from src.services.assistant.models.api.conversation import ConversationView
-from src.services.assistant.models.api.draft import (
-    PAYLOAD_MODELS,
-    ChangeAlertStatusPayload,
-    DraftOutcome,
-    DraftView,
-)
+from src.services.assistant.models.api.draft import DraftOutcome, DraftView
 from src.services.assistant.models.identity import Identity
 
 logger = logging.getLogger(__name__)
@@ -47,32 +45,22 @@ async def _reconcile(
     identity: Identity, draft: DraftView, gateway: GatewayClient
 ) -> bool:
     started = time.monotonic()
-    payload = _readable(draft)
-    if payload is None:
+    kind = _readable(draft)
+    if kind is None:
         return False
     try:
         key = drafts_bl.key_of(identity, draft)
         due = await run_db(drafts_bl.claim_look, key, AFTER_SECONDS)
         if due is None:
             return False
-        before_write = outcomes.settled_before_write(due.outcome)
-        now = await gateway.fetch_alerts_by_fingerprints(
-            identity.caller(due.id),
-            [
-                alert.fingerprint
-                for alert in payload.alerts
-                if alert.fingerprint not in before_write
-            ],
-            deadline_seconds=READ_SECONDS,
+        # On behalf of the draft's owner, under the draft's id, as its Confirm.
+        reader = ReadGateway(
+            gateway, identity.caller(due.id), deadline_seconds=READ_SECONDS
         )
-        state, outcome = outcomes.verified(
-            payload,
-            before_write,
-            # Without an outcome the worker ended in the middle of it.
-            due.outcome.gateway_result if due.outcome else "unknown",
-            now,
-            after_timeout=True,
-        )
+        decision = await kind.reconcile(reader, due, None)
+        if decision is None or decision[0] == "applying":
+            return False  # not yet: the next look tries again
+        state, outcome = decision
         settled = await run_db(
             drafts_bl.resolve,
             key,
@@ -105,17 +93,18 @@ async def _reconcile(
     return True
 
 
-def _readable(draft: DraftView) -> ChangeAlertStatusPayload | None:
+def _readable(draft: DraftView) -> DraftKind | None:
     """None: a kind, a payload or a stored outcome this version cannot read, left by a
     newer one that may still be applying it. Such a draft is neither claimed nor
     closed here, and nothing is logged: it is looked at again on every view, and only
     the 24 h sweep closes it."""
-    model = PAYLOAD_MODELS.get(draft.kind)
-    if model is None:
+    kind = kind_of(draft.kind)
+    if kind is None:
         return None
     try:
         if draft.outcome is not None:
             DraftOutcome(**draft.outcome.dict())
-        return model.parse_obj(draft.payload)
+        kind.payload_model.parse_obj(draft.payload)
     except ValueError:  # pydantic's ValidationError is a ValueError
         return None
+    return kind
