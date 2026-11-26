@@ -412,6 +412,40 @@ async def test_a_kind_this_version_does_not_know(app, db, keep, conversation):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "unreadable",
+    [
+        {"kind": "from_the_future"},
+        {"payload": {"kind": CANARY}},
+        {"outcome": pending_outcome(gateway_result=CANARY)},
+    ],
+    ids=["kind", "payload", "outcome"],
+)
+async def test_what_this_version_cannot_read_waits_for_the_sweep(
+    app, db, keep, conversation, caplog, unreadable
+):
+    """Never closed here, and never claimed: looking again and again neither floods
+    the log nor keeps the 24 h sweep away."""
+    draft = applying(db, conversation, **unreadable)
+    before = read(db, Draft, draft)
+    errors = metrics.internal_errors_total.labels(site="reconcile")
+    count = errors._value.get()
+    with caplog.at_level(logging.DEBUG):
+        for _ in range(3):
+            [view] = await look(app, conversation)
+            assert view["state"] == "applying"
+    assert read(db, Draft, draft) == before
+    assert errors._value.get() == count
+    assert keep.looks == []
+    assert not [
+        r
+        for r in caplog.records
+        if r.name.startswith("src.services.assistant") and r.levelno >= logging.WARNING
+    ]
+    assert not [r for r in caplog.records if CANARY in rendered(r)]
+
+
+@pytest.mark.asyncio
 async def test_a_draft_of_someone_else_is_not_touched(app, db, keep):
     theirs = add_conversation(db, created_by="else@example.com")
     draft = applying(db, theirs, created_by="else@example.com")

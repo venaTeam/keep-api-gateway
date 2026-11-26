@@ -11,7 +11,12 @@ from src.services.assistant.core.work import log_failure, run_db
 from src.services.assistant.gateway.client import GatewayClient
 from src.services.assistant.gateway.errors import GatewayError
 from src.services.assistant.models.api.conversation import ConversationView
-from src.services.assistant.models.api.draft import PAYLOAD_MODELS, DraftView
+from src.services.assistant.models.api.draft import (
+    PAYLOAD_MODELS,
+    ChangeAlertStatusPayload,
+    DraftOutcome,
+    DraftView,
+)
 from src.services.assistant.models.identity import Identity
 
 logger = logging.getLogger(__name__)
@@ -42,12 +47,14 @@ async def _reconcile(
     identity: Identity, draft: DraftView, gateway: GatewayClient
 ) -> bool:
     started = time.monotonic()
+    payload = _readable(draft)
+    if payload is None:
+        return False
     try:
         key = drafts_bl.key_of(identity, draft)
         due = await run_db(drafts_bl.claim_look, key, AFTER_SECONDS)
         if due is None:
             return False
-        payload = PAYLOAD_MODELS[due.kind].parse_obj(due.payload)
         before_write = outcomes.settled_before_write(due.outcome)
         now = await gateway.fetch_alerts_by_fingerprints(
             identity.caller(due.id),
@@ -96,3 +103,19 @@ async def _reconcile(
         },
     )
     return True
+
+
+def _readable(draft: DraftView) -> ChangeAlertStatusPayload | None:
+    """None: a kind, a payload or a stored outcome this version cannot read, left by a
+    newer one that may still be applying it. Such a draft is neither claimed nor
+    closed here, and nothing is logged: it is looked at again on every view, and only
+    the 24 h sweep closes it."""
+    model = PAYLOAD_MODELS.get(draft.kind)
+    if model is None:
+        return None
+    try:
+        if draft.outcome is not None:
+            DraftOutcome(**draft.outcome.dict())
+        return model.parse_obj(draft.payload)
+    except ValueError:  # pydantic's ValidationError is a ValueError
+        return None

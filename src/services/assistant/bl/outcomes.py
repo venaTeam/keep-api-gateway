@@ -16,6 +16,7 @@ from src.services.assistant.models.api.draft import (
     DraftAlert,
     DraftOutcome,
     DraftState,
+    PAYLOAD_MODELS,
     DraftView,
     GatewayResult,
     OutcomeCode,
@@ -186,6 +187,23 @@ def unknown_for_good(
     )
 
 
+def unreadable_for_good() -> Decision:
+    """As `unknown_for_good`, for a draft whose kind, payload or stored outcome this
+    version cannot read: nothing about its alerts is claimed."""
+    return "failed", DraftOutcome(
+        code="outcome_unknown",
+        message=_MESSAGES["outcome_unknown"],
+        gateway_result="unknown",
+        applied_count=0,
+        failed_count=0,
+        unconfirmed_count=0,
+        skipped_count=0,
+        not_found_count=0,
+        results=[],
+        finished_at=datetime.now(timezone.utc),
+    )
+
+
 def settled_before_write(outcome: StoredOutcome | None) -> dict[str, AlertOutcome]:
     """As `before_write`, from the outcome of a draft that is still being applied."""
     if outcome is None:
@@ -212,7 +230,9 @@ def discarded_text(draft: DraftView) -> str:
 
 
 def _subject(draft: DraftView) -> str:
-    target = draft.payload.get("target_status")
+    # Of a kind this version does not know, nothing in the payload is understood.
+    known = draft.kind in PAYLOAD_MODELS
+    target = draft.payload.get("target_status") if known else None
     to = f" to {target}" if target in get_args(TargetStatus) else ""
     return f"draft {draft.id} ({draft.kind}{to})"
 

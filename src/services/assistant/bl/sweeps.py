@@ -16,7 +16,7 @@ from src.services.assistant.bl.drafts_bl import DraftKey
 from src.services.assistant.core import metrics
 from src.services.assistant.core.db import get_session
 from src.services.assistant.core.work import log_failure
-from src.services.assistant.models.api.draft import PAYLOAD_MODELS
+from src.services.assistant.models.api.draft import PAYLOAD_MODELS, DraftView
 from src.services.assistant.models.db import Draft
 
 logger = logging.getLogger(__name__)
@@ -117,8 +117,7 @@ def _close_abandoned(stop: threading.Event) -> None:
 def _close(row: Any) -> None:
     key = DraftKey(row.id, row.tenant_id, row.created_by, row.conversation_id)
     draft = drafts_bl.load(key)
-    payload = PAYLOAD_MODELS[draft.kind].parse_obj(draft.payload)
-    state, outcome = outcomes.unknown_for_good(payload, draft.outcome)
+    state, outcome = _decide(draft)
     closed = drafts_bl.resolve(
         key,
         from_state="applying",
@@ -126,6 +125,8 @@ def _close(row: Any) -> None:
         outcome=outcome,
         event=outcomes.event_text(draft, outcome),
         by_user=False,
+        # A newer version's keys stay, for whoever looks into it later.
+        merge_outcome=True,
     )
     if closed is None:
         return  # by another worker
@@ -134,3 +135,13 @@ def _close(row: Any) -> None:
         "assistant: draft closed without a result",
         extra={"tenant_id": key.tenant_id, "draft_id": str(key.id)},
     )
+
+
+def _decide(draft: DraftView) -> outcomes.Decision:
+    """By the kind; generically when this version cannot read the kind, the payload or
+    the stored outcome (left behind by a newer version), so such rows never stay."""
+    try:
+        payload = PAYLOAD_MODELS[draft.kind].parse_obj(draft.payload)
+        return outcomes.unknown_for_good(payload, draft.outcome)
+    except (KeyError, ValueError):  # pydantic's ValidationError is a ValueError
+        return outcomes.unreadable_for_good()
