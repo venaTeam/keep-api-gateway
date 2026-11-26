@@ -1,0 +1,456 @@
+{
+  "tables": {
+    "assistant_conversation": {
+      "check_constraints": [],
+      "columns": [
+        {
+          "identity": null,
+          "name": "active_turn_id",
+          "nullable": true,
+          "server_default": null,
+          "type": "UUID"
+        },
+        {
+          "identity": null,
+          "name": "created_at",
+          "nullable": false,
+          "server_default": "now()",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        },
+        {
+          "identity": null,
+          "name": "created_by",
+          "nullable": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "identity": null,
+          "name": "id",
+          "nullable": false,
+          "server_default": null,
+          "type": "UUID"
+        },
+        {
+          "identity": null,
+          "name": "tenant_id",
+          "nullable": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "identity": null,
+          "name": "title",
+          "nullable": true,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "identity": null,
+          "name": "turn_started_at",
+          "nullable": true,
+          "server_default": null,
+          "type": "TIMESTAMP WITH TIME ZONE"
+        },
+        {
+          "identity": null,
+          "name": "updated_at",
+          "nullable": false,
+          "server_default": "now()",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        }
+      ],
+      "foreign_keys": [
+        {
+          "constrained_columns": [
+            "tenant_id"
+          ],
+          "ondelete": null,
+          "referred_columns": [
+            "id"
+          ],
+          "referred_table": "tenant"
+        }
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "tenant_id",
+            "created_by",
+            "updated_at"
+          ],
+          "name": "ix_assistant_conversation_owner",
+          "unique": false,
+          "where": null
+        },
+        {
+          "columns": [
+            "updated_at"
+          ],
+          "name": "ix_assistant_conversation_updated_at",
+          "unique": false,
+          "where": null
+        }
+      ],
+      "primary_key": [
+        "id"
+      ],
+      "unique_constraints": [
+        {
+          "columns": [
+            "id",
+            "tenant_id"
+          ],
+          "name": "uq_assistant_conversation_id_tenant_id"
+        }
+      ]
+    },
+    "assistant_draft": {
+      "check_constraints": [
+        {
+          "literals": [
+            "applied",
+            "applying",
+            "discarded",
+            "expired",
+            "failed",
+            "partially_applied",
+            "pending"
+          ],
+          "name": "ck_assistant_draft_state"
+        }
+      ],
+      "columns": [
+        {
+          "identity": null,
+          "name": "conversation_id",
+          "nullable": false,
+          "server_default": null,
+          "type": "UUID"
+        },
+        {
+          "identity": null,
+          "name": "created_at",
+          "nullable": false,
+          "server_default": "now()",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        },
+        {
+          "identity": null,
+          "name": "created_by",
+          "nullable": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "identity": null,
+          "name": "expires_at",
+          "nullable": false,
+          "server_default": null,
+          "type": "TIMESTAMP WITH TIME ZONE"
+        },
+        {
+          "identity": null,
+          "name": "id",
+          "nullable": false,
+          "server_default": null,
+          "type": "UUID"
+        },
+        {
+          "identity": null,
+          "name": "kind",
+          "nullable": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "identity": null,
+          "name": "outcome",
+          "nullable": true,
+          "server_default": null,
+          "type": "JSONB"
+        },
+        {
+          "identity": null,
+          "name": "payload",
+          "nullable": false,
+          "server_default": null,
+          "type": "JSONB"
+        },
+        {
+          "identity": null,
+          "name": "permitted",
+          "nullable": false,
+          "server_default": "true",
+          "type": "BOOLEAN"
+        },
+        {
+          "identity": null,
+          "name": "resolved_at",
+          "nullable": true,
+          "server_default": null,
+          "type": "TIMESTAMP WITH TIME ZONE"
+        },
+        {
+          "identity": null,
+          "name": "state",
+          "nullable": false,
+          "server_default": "pending",
+          "type": "VARCHAR"
+        },
+        {
+          "identity": null,
+          "name": "tenant_id",
+          "nullable": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "identity": null,
+          "name": "updated_at",
+          "nullable": false,
+          "server_default": "now()",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        }
+      ],
+      "foreign_keys": [
+        {
+          "constrained_columns": [
+            "conversation_id",
+            "tenant_id"
+          ],
+          "ondelete": null,
+          "referred_columns": [
+            "id",
+            "tenant_id"
+          ],
+          "referred_table": "assistant_conversation"
+        },
+        {
+          "constrained_columns": [
+            "tenant_id"
+          ],
+          "ondelete": null,
+          "referred_columns": [
+            "id"
+          ],
+          "referred_table": "tenant"
+        }
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "conversation_id",
+            "created_at"
+          ],
+          "name": "ix_assistant_draft_conversation",
+          "unique": false,
+          "where": null
+        },
+        {
+          "columns": [
+            "expires_at"
+          ],
+          "name": "ix_assistant_draft_pending_expiry",
+          "unique": false,
+          "where": "state = 'pending'"
+        }
+      ],
+      "primary_key": [
+        "id"
+      ],
+      "unique_constraints": []
+    },
+    "assistant_message": {
+      "check_constraints": [
+        {
+          "literals": [
+            "assistant",
+            "event",
+            "tool",
+            "user"
+          ],
+          "name": "ck_assistant_message_role"
+        },
+        {
+          "literals": [
+            "complete",
+            "error",
+            "interrupted"
+          ],
+          "name": "ck_assistant_message_status"
+        }
+      ],
+      "columns": [
+        {
+          "identity": null,
+          "name": "completion_tokens",
+          "nullable": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "identity": null,
+          "name": "content",
+          "nullable": true,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "identity": null,
+          "name": "conversation_id",
+          "nullable": false,
+          "server_default": null,
+          "type": "UUID"
+        },
+        {
+          "identity": null,
+          "name": "created_at",
+          "nullable": false,
+          "server_default": "now()",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        },
+        {
+          "identity": null,
+          "name": "draft_id",
+          "nullable": true,
+          "server_default": null,
+          "type": "UUID"
+        },
+        {
+          "identity": null,
+          "name": "id",
+          "nullable": false,
+          "server_default": null,
+          "type": "UUID"
+        },
+        {
+          "identity": null,
+          "name": "model",
+          "nullable": true,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "identity": null,
+          "name": "prompt_tokens",
+          "nullable": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "identity": null,
+          "name": "role",
+          "nullable": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "identity": {
+            "always": false,
+            "increment": 1,
+            "start": 1
+          },
+          "name": "seq",
+          "nullable": false,
+          "server_default": null,
+          "type": "BIGINT"
+        },
+        {
+          "identity": null,
+          "name": "status",
+          "nullable": false,
+          "server_default": "complete",
+          "type": "VARCHAR"
+        },
+        {
+          "identity": null,
+          "name": "tenant_id",
+          "nullable": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "identity": null,
+          "name": "tool_call_id",
+          "nullable": true,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "identity": null,
+          "name": "tool_calls",
+          "nullable": true,
+          "server_default": null,
+          "type": "JSONB"
+        }
+      ],
+      "foreign_keys": [
+        {
+          "constrained_columns": [
+            "conversation_id",
+            "tenant_id"
+          ],
+          "ondelete": null,
+          "referred_columns": [
+            "id",
+            "tenant_id"
+          ],
+          "referred_table": "assistant_conversation"
+        },
+        {
+          "constrained_columns": [
+            "draft_id"
+          ],
+          "ondelete": "SET NULL",
+          "referred_columns": [
+            "id"
+          ],
+          "referred_table": "assistant_draft"
+        },
+        {
+          "constrained_columns": [
+            "tenant_id"
+          ],
+          "ondelete": null,
+          "referred_columns": [
+            "id"
+          ],
+          "referred_table": "tenant"
+        }
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "conversation_id",
+            "seq"
+          ],
+          "name": "ix_assistant_message_conversation",
+          "unique": false,
+          "where": null
+        },
+        {
+          "columns": [
+            "draft_id"
+          ],
+          "name": "ix_assistant_message_draft",
+          "unique": false,
+          "where": "draft_id IS NOT NULL"
+        },
+        {
+          "columns": [
+            "conversation_id",
+            "created_at"
+          ],
+          "name": "ix_assistant_message_user_rate",
+          "unique": false,
+          "where": "role = 'user'"
+        }
+      ],
+      "primary_key": [
+        "id"
+      ],
+      "unique_constraints": []
+    }
+  }
+}

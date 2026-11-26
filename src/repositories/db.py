@@ -4351,6 +4351,41 @@ def is_all_alerts_resolved(
     )
 
 
+def get_incident_ids_with_unresolved_alerts(
+    tenant_id: str, incident_ids: List[UUID], session: Session
+) -> set[UUID]:
+    """Which of the incidents still have an alert whose effective status
+    (user's value, else the provider's) is not resolved."""
+    resolved = AlertStatus.RESOLVED.value
+    return set(
+        session.exec(
+            select(Incident.id).where(
+                Incident.tenant_id == tenant_id,
+                Incident.id.in_(incident_ids),
+                # May stop at the first one: an incident can have thousands.
+                exists(
+                    select(1)
+                    .select_from(LastAlertToIncident)
+                    .join(
+                        LastAlert,
+                        and_(
+                            LastAlert.tenant_id == LastAlertToIncident.tenant_id,
+                            LastAlert.fingerprint == LastAlertToIncident.fingerprint,
+                        ),
+                    )
+                    .join(Alert, LastAlert.alert_id == Alert.id)
+                    .where(
+                        LastAlertToIncident.tenant_id == tenant_id,
+                        LastAlertToIncident.incident_id == Incident.id,
+                        LastAlertToIncident.deleted_at == NULL_FOR_DELETED_AT,
+                        func.coalesce(LastAlert.status, Alert.status) != resolved,
+                    )
+                ),
+            )
+        ).all()
+    )
+
+
 def is_all_alerts_in_status(
     fingerprints: Optional[List[str]] = None,
     incident: Optional[Incident] = None,

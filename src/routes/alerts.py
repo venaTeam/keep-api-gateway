@@ -1,9 +1,19 @@
 import logging
+import unicodedata
 from copy import deepcopy
-from typing import List, Optional
+from typing import Iterable, List, Optional
+from urllib.parse import urlsplit
 
 import celpy
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+)
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlmodel import Session
@@ -30,7 +40,6 @@ from src.repositories.db import (
     get_last_alerts,
     get_last_alerts_by_fingerprints,
     get_session,
-    is_all_alerts_resolved,
 )
 
 from src.services.sse import notify_sse
@@ -53,13 +62,13 @@ from src.models.alert import (
     UnEnrichAlertRequestBody,
 )
 from src.models.alert_audit import AlertAuditDto
-from src.models.db.incident import IncidentStatus
-from src.models.db.rule import ResolveOn
 from src.models.facet import FacetOptionsQueryDto
 from src.models.query import CountQueryDto, QueryDto
 from src.models.search_alert import SearchAlertsRequest
 from src.models.time_stamp import TimeStampFilter
 from src.utils.enrichment_helpers import convert_db_alerts_to_dto_alerts
+from src.utils.log_sanitize import sanitize_for_log
+from src.utils.request_id import current_request_id
 from src.utils.time_stamp_helpers import get_time_stamp_filter
 from src.services.identity_manager.authenticatedentity import AuthenticatedEntity
 from src.services.identity_manager.identitymanagerfactory import IdentityManagerFactory
@@ -67,6 +76,53 @@ from src.services.search_engine import SearchEngine
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+_delete_alert_verifier = IdentityManagerFactory.get_auth_verifier(["delete:alert"])
+
+
+def _require_delete_scope(
+    authenticated_entity: AuthenticatedEntity, keys: Iterable[str]
+) -> None:
+    """403 unless the caller may soft-delete, when `deleted` is among the keys.
+
+    The value is irrelevant: setting, clearing and nulling `deleted` are all what
+    `DELETE /alerts` protects with `delete:alert`, while the enrichment routes only
+    need `write:alert`. Every route that takes caller-supplied enrichment keys must
+    call this first, before anything is translated, looked up or written.
+    """
+    if "deleted" in keys:
+        _delete_alert_verifier.authorize(authenticated_entity)
+
+
+def _is_http_url(value) -> bool:
+    """Whether value is an absolute http(s) URL free of whitespace and control chars.
+
+    The character check comes first: URL parsers (this one and the browser's) drop
+    tabs and newlines, so `java\nscript:` would otherwise read as something else.
+    """
+    if not isinstance(value, str) or any(
+        char.isspace() or unicodedata.category(char) == "Cc" for char in value
+    ):
+        return False
+    try:
+        parts = urlsplit(value)
+        return parts.scheme in ("http", "https") and bool(parts.hostname)
+    except ValueError:
+        return False
+
+
+def _reject_unsafe_ticket_url(enrichments: dict) -> None:
+    """422 when `ticket_url` is set to something other than a web link.
+
+    The UI opens the stored value when the ticket is clicked, so a `javascript:` URL
+    would run in the session of whoever clicks it. null and "" clear the field.
+    """
+    ticket_url = enrichments.get("ticket_url")
+    if ticket_url is None or ticket_url == "" or _is_http_url(ticket_url):
+        return
+    raise HTTPException(
+        status_code=422, detail="ticket_url must be an absolute http or https URL"
+    )
 
 
 class AlertHistoryResponse(BaseModel):
@@ -134,9 +190,13 @@ def fetch_alert_facet_options(
             tenant_id=tenant_id, facet_options_query=facet_options_query
         )
     except CelToSqlException as e:
-        logger.exception(
+        logger.warning(
             "Error parsing CEL expression",
-            extra={"cel_expression": facet_options_query.cel, "error": str(e)},
+            extra={
+                "tenant_id": tenant_id,
+                "cel": sanitize_for_log(facet_options_query.cel),
+                "error": sanitize_for_log(e),
+            },
         )
         raise http_exception_from_converter_error(facet_options_query.cel, e) from e
 
@@ -191,7 +251,7 @@ def query_alerts_count(
             msg="Fetched alerts count from DB",
             extra={
                 "tenant_id": tenant_id,
-                "cel_expression": query.cel,
+                "cel_expression": sanitize_for_log(query.cel),
                 "count": total_count,
             },
         )
@@ -205,9 +265,13 @@ def query_alerts_count(
         return response
 
     except CelToSqlException as e:
-        logger.exception(
+        logger.warning(
             "Error parsing CEL expression",
-            extra={"cel_expression": query.cel, "error": str(e)},
+            extra={
+                "tenant_id": tenant_id,
+                "cel": sanitize_for_log(query.cel),
+                "error": sanitize_for_log(e),
+            },
         )
         raise http_exception_from_converter_error(query.cel, e) from e
 
@@ -234,9 +298,13 @@ def query_alerts(
     try:
         db_alerts = query_last_alerts(tenant_id=tenant_id, query=query)
     except CelToSqlException as e:
-        logger.exception(
+        logger.warning(
             "Error parsing CEL expression",
-            extra={"cel_expression": query.cel, "error": str(e)},
+            extra={
+                "tenant_id": tenant_id,
+                "cel": sanitize_for_log(query.cel),
+                "error": sanitize_for_log(e),
+            },
         )
         raise http_exception_from_converter_error(query.cel, e) from e
 
@@ -248,7 +316,7 @@ def query_alerts(
         "Fetched alerts from DB",
         extra={
             "tenant_id": tenant_id,
-            "cel_expression": query.cel,
+            "cel_expression": sanitize_for_log(query.cel),
             "count": len(db_alerts),
         },
     )
@@ -487,9 +555,18 @@ async def batch_enrich_alerts(
     dispose_on_new_alert: Optional[bool] = Query(
         False, description="Dispose on new alert"
     ),
+    # A channel label for the audit trail that any caller can send: never authorize
+    # or trust anything on it.
+    keep_source: Optional[str] = Header(None, alias="X-Keep-Source"),
     session: Session = Depends(get_session),
 ):
+    _require_delete_scope(authenticated_entity, enrich_data.enrichments)
+    _reject_unsafe_ticket_url(enrich_data.enrichments)
+
     tenant_id = authenticated_entity.tenant_id
+    # On every log line below, so a caller's X-Request-ID finds all of them.
+    log_context = {"tenant_id": tenant_id, "request_id": current_request_id()}
+    via_assistant = keep_source == "assistant"
 
     _translate_dismiss_enrichments(enrich_data.enrichments)
 
@@ -505,6 +582,7 @@ async def batch_enrich_alerts(
 
     # If CEL is provided, use it to find matching alerts
     if enrich_data.cel:
+        log_cel = sanitize_for_log(enrich_data.cel)
         try:
             db_alerts = query_last_alerts(
                 tenant_id=tenant_id,
@@ -514,11 +592,7 @@ async def batch_enrich_alerts(
             if not db_alerts:
                 logger.info(
                     "No alerts found matching the CEL query",
-                    extra={
-                        "cel": enrich_data.cel,
-                        "tenant_id": tenant_id,
-                        "alert_count": 0,
-                    },
+                    extra={**log_context, "cel": log_cel, "alert_count": 0},
                 )
                 return {
                     "status": "ok",
@@ -529,25 +603,25 @@ async def batch_enrich_alerts(
             logger.info(
                 "Found alerts matching CEL query",
                 extra={
-                    "cel": enrich_data.cel,
-                    "tenant_id": tenant_id,
+                    **log_context,
+                    "cel": log_cel,
                     "alert_count": len(db_alerts),
                 },
             )
         except CelToSqlException as e:
-            logger.exception(
+            logger.warning(
                 "Error parsing CEL expression",
-                extra={"cel_expression": enrich_data.cel, "error": str(e)},
+                extra={
+                    **log_context,
+                    "cel": log_cel,
+                    "error": sanitize_for_log(e),
+                },
             )
             raise http_exception_from_converter_error(enrich_data.cel, e) from e
         except Exception as e:
             logger.exception(
                 "Failed to process CEL query",
-                extra={
-                    "tenant_id": tenant_id,
-                    "cel_expression": enrich_data.cel,
-                    "error": str(e),
-                },
+                extra={**log_context, "error": sanitize_for_log(e)},
             )
             return {"status": "failed", "message": str(e)}
     else:
@@ -562,7 +636,9 @@ async def batch_enrich_alerts(
             action_description,
             should_check_incidents_resolution,
         ) = enrichment_bl.get_enrichment_metadata(
-            enrich_data.enrichments, authenticated_entity
+            enrich_data.enrichments,
+            authenticated_entity,
+            via_assistant=via_assistant,
         )
 
         enrichments = deepcopy(enrich_data.enrichments)
@@ -598,10 +674,7 @@ async def batch_enrich_alerts(
         except Exception:
             logger.exception(
                 "Failed to push alerts to elasticsearch",
-                extra={
-                    "tenant_id": tenant_id,
-                    "fingerprint_count": len(fingerprints),
-                },
+                extra={**log_context, "fingerprint_count": len(fingerprints)},
             )
             pass
 
@@ -610,14 +683,14 @@ async def batch_enrich_alerts(
             notify_sse(tenant_id, "poll-alerts", {})
         except Exception:
             logger.exception(
-                "Failed to tell client to poll alerts", extra={"tenant_id": tenant_id}
+                "Failed to tell client to poll alerts", extra=log_context
             )
             pass
 
         logger.info(
             "Alerts batch enriched successfully",
             extra={
-                "tenant_id": tenant_id,
+                **log_context,
                 "count": len(fingerprints),
                 "action_type": action_type.value,
             },
@@ -626,16 +699,14 @@ async def batch_enrich_alerts(
 
         # @tb add "and session" cuz I saw AttributeError: 'NoneType' object has no attribute 'add'"
         if should_check_incidents_resolution and session:
-            enrich_alerts_with_incidents(tenant_id=tenant_id, alerts=alerts)
-            for alert in alerts:
-                for incident in alert._incidents:
-                    if (
-                        incident.resolve_on == ResolveOn.ALL.value
-                        and is_all_alerts_resolved(incident=incident, session=session)
-                    ):
-                        incident.status = IncidentStatus.RESOLVED.value
-                        session.add(incident)
-                    session.commit()
+            enrich_alerts_with_incidents(
+                tenant_id=tenant_id, alerts=alerts, session=session
+            )
+            enrichment_bl.resolve_incidents_with_all_alerts_resolved(
+                [incident for alert in alerts for incident in alert._incidents],
+                resolved_by=authenticated_entity.email,
+                via_assistant=via_assistant,
+            )
 
         return {"status": "ok"}
     except HTTPException:
@@ -645,8 +716,8 @@ async def batch_enrich_alerts(
         logger.exception(
             "Failed to enrich alerts batch",
             extra={
-                "tenant_id": tenant_id,
-                "count": len(fingerprints),
+                **log_context,
+                "fingerprint_count": len(fingerprints),
                 "fingerprints_sample": fingerprints[:10],
                 "error": str(e),
             },
@@ -668,6 +739,9 @@ async def enrich_alert(
     ),
     session: Session = Depends(get_session),
 ) -> dict[str, str]:
+    _require_delete_scope(authenticated_entity, enrich_data.enrichments)
+    _reject_unsafe_ticket_url(enrich_data.enrichments)
+
     _translate_dismiss_enrichments(enrich_data.enrichments)
 
     return await _enrich_alert(
@@ -759,7 +833,9 @@ async def _enrich_alert(
 
 
         if should_check_incidents_resolution:
-            enrichement_bl.check_incident_resolution(enriched_alerts_dto[0])
+            enrichement_bl.check_incident_resolution(
+                enriched_alerts_dto[0], resolved_by=authenticated_entity.email
+            )
 
         return {"status": "ok"}
 
@@ -788,6 +864,8 @@ async def unenrich_alert(
         IdentityManagerFactory.get_auth_verifier(["write:alert"])
     ),
 ) -> dict[str, str]:
+    _require_delete_scope(authenticated_entity, enrich_data.enrichments)
+
     tenant_id = authenticated_entity.tenant_id
 
     if "assignees" in enrich_data.enrichments:

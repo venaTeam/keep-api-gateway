@@ -32,6 +32,7 @@ from src.utils.limiter import limiter
 from src.utils.logging import CONFIG as logging_config, setup_logging
 from src.middlewares import LoggingMiddleware, catch_exception
 from src.routes.router_setup import setup_routers
+from src.services.assistant.config import is_enabled as assistant_enabled
 from src.services.producers.event_subscriber import EventSubscriber
 from src.services.identity_manager.identitymanagerfactory import (
     IdentityManagerFactory,
@@ -255,11 +256,23 @@ async def lifespan(app: FastAPI):
         background_tasks.add(incident_metrics_task)
         incident_metrics_task.add_done_callback(background_tasks.discard)
 
+    # Keep Assistant is off by default, and then nothing of it is built.
+    assistant = None
+    if assistant_enabled():
+        from src.services.assistant import lifecycle as assistant
+
+        assistant.start(app)
+
     # yield the background tasks, this is available for the app to use in request context
     yield {"background_tasks": background_tasks}
 
     # Shutdown
-    await shutdown()
+    if assistant is None:
+        await shutdown()
+    else:
+        # Concurrently, for the same reason as the stops in shutdown().
+        await asyncio.gather(shutdown(), assistant.settle(app))
+        await assistant.stop(app)
 
 
 def get_app(
@@ -295,6 +308,12 @@ def get_app(
         return {"message": app.description, "version": KEEP_VERSION}
 
     app.add_middleware(RawContextMiddleware, plugins=(plugins.RequestIdPlugin(),))
+    if assistant_enabled():
+        from src.services.assistant.api.guard import AssistantGuardMiddleware
+
+        # Right outside the request context, whose id it sets; inside CORS, whose
+        # preflights carry no token.
+        app.add_middleware(AssistantGuardMiddleware)
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
     app.add_middleware(
         GZipMiddleware, minimum_size=30 * 1024 * 1024

@@ -1,4 +1,5 @@
 import datetime
+import json
 import logging
 import os
 import re
@@ -42,6 +43,7 @@ from src.models.query import (
     QueryDto,
     SortOptionsDto,
 )
+from src.utils.log_sanitize import sanitize_for_log
 
 logger = logging.getLogger(__name__)
 
@@ -563,6 +565,24 @@ def build_alerts_query(tenant_id, query: QueryDto):
 
     return sql_query
 
+def _log_query_failure(message: str, tenant_id: str, query: QueryDto, error: Exception):
+    """Log a failed alerts query without a traceback.
+
+    The driver error quotes the statement, which embeds the caller's CEL literals.
+    Every caller re-raises, so the traceback is not lost.
+    """
+    logger.error(
+        message,
+        extra={
+            "tenant_id": tenant_id,
+            "query": sanitize_for_log(
+                json.dumps(query.dict(exclude_unset=True), default=str)
+            ),
+            "error": sanitize_for_log(error),
+        },
+    )
+
+
 def query_total_alerts_count(tenant_id, query: QueryDto) -> int:
     query_with_defaults = query.copy()
 
@@ -576,10 +596,7 @@ def query_total_alerts_count(tenant_id, query: QueryDto) -> int:
         except OperationalError as e:
             # A database failure is a failure. Returning 0 here used to make a
             # dead database look like a successful search that matched nothing.
-            logger.exception(
-                "Failed to query alerts count",
-                extra={"tenant_id": tenant_id, "error": str(e)},
-            )
+            _log_query_failure("Failed to query alerts count", tenant_id, query_with_defaults, e)
             raise
 
 
@@ -617,10 +634,7 @@ def query_distinct_alerts_count(tenant_id, query: CountQueryDto) -> int:
             )
             return session.exec(distinct_count_query).one()[0]
         except OperationalError as e:
-            logger.exception(
-                "Failed to query distinct alerts count",
-                extra={"tenant_id": tenant_id, "error": str(e)},
-            )
+            _log_query_failure("Failed to query distinct alerts count", tenant_id, query, e)
             raise
 
 
@@ -682,10 +696,7 @@ def query_missing_alerts_count(tenant_id, query: CountQueryDto) -> int:
             )
             return session.exec(missing_count_query).one()[0]
         except OperationalError as e:
-            logger.exception(
-                "Failed to query missing alerts count",
-                extra={"tenant_id": tenant_id, "error": str(e)},
-            )
+            _log_query_failure("Failed to query missing alerts count", tenant_id, query, e)
             raise
 
 
@@ -715,10 +726,7 @@ def query_last_alerts(tenant_id, query: QueryDto) -> list[Alert]:
         except OperationalError as e:
             # Propagate: an empty list here is indistinguishable from a search
             # that legitimately matched nothing, and hid real outages.
-            logger.exception(
-                "Failed to query alerts",
-                extra={"tenant_id": tenant_id, "error": str(e)},
-            )
+            _log_query_failure("Failed to query alerts", tenant_id, query_with_defaults, e)
             raise
 
         # Process results based on dialect

@@ -1,0 +1,4 @@
+# Vendored byte for byte from other repos; core.autocrlf must not rewrite them.
+assistant_schema.json text eol=lf
+assistant_schema_dump.py text eol=lf
+assistant_stream.json text eol=lf

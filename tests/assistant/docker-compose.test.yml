@@ -1,0 +1,14 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      # Not `keep`: these tests must never be able to reach a real `keep` database.
+      POSTGRES_USER: assistant_test
+      POSTGRES_PASSWORD: assistant_test
+      POSTGRES_DB: assistant_test
+    ports:
+      # Any free port: two runs can overlap (the Stop hook starts one by itself).
+      - "127.0.0.1::5432"
+    # Nothing here outlives the run: no disk, no waiting for one.
+    tmpfs:
+      - /var/lib/postgresql/data

@@ -19,6 +19,7 @@ from src.repositories.cel_to_sql.ast_nodes import (
     UnaryNode,
     UnaryNodeOperator,
 )
+from src.utils.log_sanitize import sanitize_for_log
 
 # Matches such strings:
 # '2025-03-23T15:42:00'
@@ -57,7 +58,10 @@ class CelToAstConverter(lark.visitors.Visitor_Recursive):
             d.visit(celpy_ast)
             return d.stack[0]
         except Exception as e:
-            logger.warning('Error converting "%s" CEL to AST. Error: %s', cel, e)
+            logger.warning(
+                "Error converting CEL to AST",
+                extra={"cel": sanitize_for_log(cel), "error": sanitize_for_log(e)},
+            )
             raise e
 
     def __init__(self) -> None:

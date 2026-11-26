@@ -1,0 +1,1406 @@
+{
+  "read_only": {
+    "batch_enrich": {
+      "body": {
+        "detail": "Read only instance, but non-read scopes requested"
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "enrichments": {
+            "status": "acknowledged"
+          },
+          "fingerprints": [
+            "fp"
+          ]
+        },
+        "method": "POST",
+        "path": "/alerts/batch_enrich"
+      },
+      "status": 403
+    },
+    "whoami": {
+      "body": {
+        "email": "noc@example.com",
+        "role": "noc",
+        "scopes": [
+          "read:*",
+          "write:alert"
+        ],
+        "tenant_id": "keep"
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": null,
+        "method": "GET",
+        "path": "/whoami"
+      },
+      "status": 200
+    }
+  },
+  "read_write": {
+    "alert": {
+      "body": {
+        "alert_hash": null,
+        "alert_rule_url": null,
+        "application": null,
+        "assignee": "ops@example.com",
+        "automation_matched": false,
+        "component": null,
+        "custom_key": null,
+        "deleted": false,
+        "description": "connection refused",
+        "dismissUntil": null,
+        "dismiss_mode": null,
+        "dismissed_until": null,
+        "duplicateReason": null,
+        "environment": "production",
+        "event_id": "00000000-0000-4000-8000-000000000001",
+        "expiry_in_minutes": null,
+        "fingerprint": "fp-rich",
+        "firingCounter": 0,
+        "firingStartTime": null,
+        "firingStartTimeSinceLastResolved": null,
+        "id": "00000000-0000-4000-8000-000000000001",
+        "impact": null,
+        "incident": null,
+        "isFullDuplicate": false,
+        "isPartialDuplicate": false,
+        "key_field": null,
+        "lastReceived": "2026-01-02T03:04:05.678Z",
+        "name": "Database <down>",
+        "network": "nh",
+        "node_name": null,
+        "note": "investigating",
+        "object": null,
+        "operator": null,
+        "providerId": "test",
+        "providerType": "prometheus",
+        "received_at": null,
+        "runbook_url": null,
+        "service": "orders",
+        "severity": "critical",
+        "site": null,
+        "source": [],
+        "startedAt": null,
+        "status": "firing",
+        "tenant_id": "keep",
+        "ticket_provider_id": null,
+        "ticket_type": null,
+        "ticket_url": null,
+        "time_created": null,
+        "timestamp": "2026-01-02T03:04:05.678",
+        "timezone": "Asia/Jerusalem",
+        "unresolvedCounter": 0
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": null,
+        "method": "GET",
+        "path": "/alerts/fp-rich"
+      },
+      "status": 200
+    },
+    "alert_bare": {
+      "body": {
+        "alert_hash": null,
+        "alert_rule_url": null,
+        "application": null,
+        "assignee": null,
+        "automation_matched": false,
+        "component": null,
+        "custom_key": null,
+        "deleted": false,
+        "description": null,
+        "dismissUntil": null,
+        "dismiss_mode": null,
+        "dismissed_until": null,
+        "duplicateReason": null,
+        "environment": "production",
+        "event_id": "00000000-0000-4000-8000-000000000004",
+        "expiry_in_minutes": null,
+        "fingerprint": "fp-bare",
+        "firingCounter": 0,
+        "firingStartTime": null,
+        "firingStartTimeSinceLastResolved": null,
+        "id": "00000000-0000-4000-8000-000000000004",
+        "impact": null,
+        "incident": null,
+        "isFullDuplicate": false,
+        "isPartialDuplicate": false,
+        "key_field": null,
+        "lastReceived": "2026-01-02T03:04:05.678Z",
+        "name": "Bare",
+        "network": "nh",
+        "node_name": null,
+        "note": null,
+        "object": null,
+        "operator": null,
+        "providerId": "test",
+        "providerType": "test",
+        "received_at": null,
+        "runbook_url": null,
+        "service": null,
+        "severity": "info",
+        "site": null,
+        "source": [],
+        "startedAt": null,
+        "status": "firing",
+        "tenant_id": "keep",
+        "ticket_provider_id": null,
+        "ticket_type": null,
+        "ticket_url": null,
+        "time_created": null,
+        "timestamp": "2026-01-02T03:04:05.678",
+        "timezone": "Asia/Jerusalem",
+        "unresolvedCounter": 0
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": null,
+        "method": "GET",
+        "path": "/alerts/fp-bare"
+      },
+      "status": 200
+    },
+    "alert_encoded_fingerprint": {
+      "body": {
+        "alert_hash": null,
+        "alert_rule_url": null,
+        "application": null,
+        "assignee": null,
+        "automation_matched": false,
+        "component": null,
+        "custom_key": null,
+        "deleted": false,
+        "description": null,
+        "dismissUntil": null,
+        "dismiss_mode": null,
+        "dismissed_until": null,
+        "duplicateReason": null,
+        "environment": "production",
+        "event_id": "00000000-0000-4000-8000-000000000003",
+        "expiry_in_minutes": null,
+        "fingerprint": "fp: \u05e9\u05dc\u05d5\u05dd 2",
+        "firingCounter": 0,
+        "firingStartTime": null,
+        "firingStartTimeSinceLastResolved": null,
+        "id": "00000000-0000-4000-8000-000000000003",
+        "impact": null,
+        "incident": null,
+        "isFullDuplicate": false,
+        "isPartialDuplicate": false,
+        "key_field": null,
+        "lastReceived": "2026-01-02T03:04:05.678Z",
+        "name": "Odd fingerprint",
+        "network": "nh",
+        "node_name": null,
+        "note": null,
+        "object": null,
+        "operator": null,
+        "providerId": "test",
+        "providerType": "test",
+        "received_at": null,
+        "runbook_url": null,
+        "service": null,
+        "severity": "info",
+        "site": null,
+        "source": [],
+        "startedAt": null,
+        "status": "firing",
+        "tenant_id": "keep",
+        "ticket_provider_id": null,
+        "ticket_type": null,
+        "ticket_url": null,
+        "time_created": null,
+        "timestamp": "2026-01-02T03:04:05.678",
+        "timezone": "Asia/Jerusalem",
+        "unresolvedCounter": 0
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": null,
+        "method": "GET",
+        "path": "/alerts/fp%3A%20%D7%A9%D7%9C%D7%95%D7%9D%202"
+      },
+      "status": 200
+    },
+    "alert_not_found": {
+      "body": {
+        "detail": "Alert not found"
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": null,
+        "method": "GET",
+        "path": "/alerts/fp-missing"
+      },
+      "status": 404
+    },
+    "alert_slash_not_routed": {
+      "body": {
+        "detail": "Not Found"
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": null,
+        "method": "GET",
+        "path": "/alerts/fp%2Frich"
+      },
+      "status": 404
+    },
+    "alert_slash_other_route": {
+      "body": {
+        "activity": [],
+        "occurrences": [
+          {
+            "alert_hash": null,
+            "alert_rule_url": null,
+            "application": null,
+            "assignee": null,
+            "component": null,
+            "custom_key": null,
+            "deleted": false,
+            "description": "connection refused",
+            "dismissUntil": null,
+            "dismiss_mode": null,
+            "dismissed_until": null,
+            "duplicateReason": null,
+            "environment": "production",
+            "event_id": null,
+            "expiry_in_minutes": null,
+            "fingerprint": "fp-rich",
+            "firingCounter": 0,
+            "firingStartTime": null,
+            "firingStartTimeSinceLastResolved": null,
+            "id": "00000000-0000-4000-8000-000000000001",
+            "impact": null,
+            "incident": null,
+            "isFullDuplicate": false,
+            "isPartialDuplicate": false,
+            "key_field": null,
+            "lastReceived": "2026-01-02T03:04:05.678Z",
+            "name": "Database <down>",
+            "network": "nh",
+            "node_name": null,
+            "note": null,
+            "object": null,
+            "operator": null,
+            "providerId": "test",
+            "providerType": "prometheus",
+            "received_at": null,
+            "runbook_url": null,
+            "service": "orders",
+            "severity": "critical",
+            "site": null,
+            "source": [],
+            "startedAt": null,
+            "status": "firing",
+            "tenant_id": "keep",
+            "ticket_provider_id": null,
+            "ticket_type": null,
+            "ticket_url": null,
+            "time_created": null,
+            "timestamp": "2026-01-02T03:04:05.678",
+            "timezone": "Asia/Jerusalem",
+            "unresolvedCounter": 0
+          }
+        ]
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": null,
+        "method": "GET",
+        "path": "/alerts/fp-rich%2Fhistory"
+      },
+      "status": 200
+    },
+    "alert_unauthenticated": {
+      "body": {
+        "detail": "Missing API Key"
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": null,
+        "method": "GET",
+        "path": "/alerts/fp-rich"
+      },
+      "status": 401
+    },
+    "batch_enrich_bad_request_id": {
+      "body": "",
+      "content_type": null,
+      "request": {
+        "body": {
+          "enrichments": {
+            "dismiss_mode": null,
+            "dismissed_until": null,
+            "note": "on it",
+            "status": "acknowledged"
+          },
+          "fingerprints": [
+            "fp-rich"
+          ]
+        },
+        "method": "POST",
+        "path": "/alerts/batch_enrich?dispose_on_new_alert=false"
+      },
+      "status": 400
+    },
+    "batch_enrich_delete_not_permitted": {
+      "body": {
+        "detail": "You don't have the required scopes to access this resource [required scopes: ['delete:alert']]"
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "enrichments": {
+            "deleted": true
+          },
+          "fingerprints": [
+            "fp-rich"
+          ]
+        },
+        "method": "POST",
+        "path": "/alerts/batch_enrich?dispose_on_new_alert=false"
+      },
+      "status": 403
+    },
+    "batch_enrich_failed": {
+      "body": {
+        "status": "failed"
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "enrichments": {
+            "dismiss_mode": null,
+            "dismissed_until": null,
+            "note": "on it",
+            "status": "acknowledged"
+          },
+          "fingerprints": [
+            "fp-rich"
+          ]
+        },
+        "method": "POST",
+        "path": "/alerts/batch_enrich?dispose_on_new_alert=false"
+      },
+      "status": 200
+    },
+    "batch_enrich_invalid_token": {
+      "body": {
+        "detail": "Invalid JWT token"
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "enrichments": {
+            "dismiss_mode": null,
+            "dismissed_until": null,
+            "note": "on it",
+            "status": "acknowledged"
+          },
+          "fingerprints": [
+            "fp-rich"
+          ]
+        },
+        "method": "POST",
+        "path": "/alerts/batch_enrich?dispose_on_new_alert=false"
+      },
+      "status": 401
+    },
+    "batch_enrich_malformed": {
+      "body": {
+        "detail": [
+          {
+            "loc": [
+              "body",
+              "enrichments"
+            ],
+            "msg": "field required",
+            "type": "value_error.missing"
+          },
+          {
+            "loc": [
+              "body",
+              "fingerprints"
+            ],
+            "msg": "value is not a valid list",
+            "type": "type_error.list"
+          }
+        ]
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "fingerprints": "fp-rich"
+        },
+        "method": "POST",
+        "path": "/alerts/batch_enrich?dispose_on_new_alert=false"
+      },
+      "status": 422
+    },
+    "batch_enrich_no_selector": {
+      "body": {
+        "detail": "Either fingerprints or cel must be provided"
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "enrichments": {
+            "status": "firing"
+          }
+        },
+        "method": "POST",
+        "path": "/alerts/batch_enrich?dispose_on_new_alert=false"
+      },
+      "status": 400
+    },
+    "batch_enrich_not_permitted": {
+      "body": {
+        "detail": "You don't have the required permissions to access this resource"
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "enrichments": {
+            "dismiss_mode": null,
+            "dismissed_until": null,
+            "note": "on it",
+            "status": "acknowledged"
+          },
+          "fingerprints": [
+            "fp-rich"
+          ]
+        },
+        "method": "POST",
+        "path": "/alerts/batch_enrich?dispose_on_new_alert=false"
+      },
+      "status": 403
+    },
+    "batch_enrich_ok": {
+      "body": {
+        "status": "ok"
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "enrichments": {
+            "dismiss_mode": null,
+            "dismissed_until": null,
+            "note": "on it",
+            "status": "acknowledged"
+          },
+          "fingerprints": [
+            "fp-rich"
+          ]
+        },
+        "method": "POST",
+        "path": "/alerts/batch_enrich?dispose_on_new_alert=false"
+      },
+      "status": 200
+    },
+    "batch_enrich_suppress_ok": {
+      "body": {
+        "status": "ok"
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "enrichments": {
+            "status": "suppressed"
+          },
+          "fingerprints": [
+            "fp-bare"
+          ]
+        },
+        "method": "POST",
+        "path": "/alerts/batch_enrich?dispose_on_new_alert=false"
+      },
+      "status": 200
+    },
+    "batch_enrich_unauthenticated": {
+      "body": {
+        "detail": "Missing API Key"
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "enrichments": {
+            "dismiss_mode": null,
+            "dismissed_until": null,
+            "note": "on it",
+            "status": "acknowledged"
+          },
+          "fingerprints": [
+            "fp-rich"
+          ]
+        },
+        "method": "POST",
+        "path": "/alerts/batch_enrich?dispose_on_new_alert=false"
+      },
+      "status": 401
+    },
+    "batch_enrich_unknown_fingerprint": {
+      "body": {
+        "status": "ok"
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "enrichments": {
+            "dismiss_mode": null,
+            "dismissed_until": null,
+            "note": "on it",
+            "status": "acknowledged"
+          },
+          "fingerprints": [
+            "fp-missing"
+          ]
+        },
+        "method": "POST",
+        "path": "/alerts/batch_enrich?dispose_on_new_alert=false"
+      },
+      "status": 200
+    },
+    "batch_enrich_unknown_key": {
+      "body": {
+        "detail": "Unknown enrichment key(s): ['no_such_key']. Allowed: ['assignee', 'automation_matched', 'deleted', 'dismiss_mode', 'dismiss_until', 'dismissed', 'dismissed_until', 'grace_seconds', 'note', 'status', 'status_disposable', 'ticket_provider_id', 'ticket_type', 'ticket_url']"
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "enrichments": {
+            "no_such_key": 1
+          },
+          "fingerprints": [
+            "fp-rich"
+          ]
+        },
+        "method": "POST",
+        "path": "/alerts/batch_enrich?dispose_on_new_alert=false"
+      },
+      "status": 422
+    },
+    "batch_enrich_unsafe_ticket_url": {
+      "body": {
+        "detail": "ticket_url must be an absolute http or https URL"
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "enrichments": {
+            "ticket_url": "javascript:alert(1)"
+          },
+          "fingerprints": [
+            "fp-rich"
+          ]
+        },
+        "method": "POST",
+        "path": "/alerts/batch_enrich?dispose_on_new_alert=false"
+      },
+      "status": 422
+    },
+    "count": {
+      "body": 1,
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "cel": "severity == 'critical'"
+        },
+        "method": "POST",
+        "path": "/alerts/query/count"
+      },
+      "status": 200
+    },
+    "count_invalid_cel": {
+      "body": {
+        "detail": {
+          "code": "INVALID_CEL",
+          "diagnostics": [
+            {
+              "code": "SYNTAX_ERROR",
+              "message": "Error parsing CEL expression: name ==\n     ^\n",
+              "range": {
+                "endColumn": 7,
+                "endLine": 1,
+                "startColumn": 6,
+                "startLine": 1
+              }
+            }
+          ],
+          "message": "The CEL filter is invalid."
+        }
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "cel": "name =="
+        },
+        "method": "POST",
+        "path": "/alerts/query/count"
+      },
+      "status": 400
+    },
+    "facet_fields": {
+      "body": [
+        "id",
+        "name",
+        "status",
+        "severity",
+        "last_received",
+        "firing_start_time",
+        "firing_start_time_since_last_resolved",
+        "firing_counter",
+        "unresolved_counter",
+        "is_full_duplicate",
+        "is_partial_duplicate",
+        "duplicate_reason",
+        "source",
+        "description",
+        "fingerprint",
+        "dismiss_mode",
+        "dismissed_until",
+        "deleted",
+        "assignee",
+        "providerId",
+        "providerType",
+        "note",
+        "started_at",
+        "incident",
+        "object",
+        "component",
+        "site",
+        "impact",
+        "runbook_url",
+        "alert_rule_url",
+        "environment"
+      ],
+      "content_type": "application/json",
+      "request": {
+        "body": null,
+        "method": "GET",
+        "path": "/alerts/facets/fields"
+      },
+      "status": 200
+    },
+    "query_after_write": {
+      "body": {
+        "count": 1,
+        "limit": 21,
+        "offset": 0,
+        "results": [
+          {
+            "alert_hash": null,
+            "alert_rule_url": null,
+            "application": null,
+            "assignee": "ops@example.com",
+            "automation_matched": false,
+            "component": null,
+            "custom_key": null,
+            "deleted": false,
+            "description": "connection refused",
+            "dismissUntil": null,
+            "dismiss_mode": null,
+            "dismissed_until": null,
+            "duplicateReason": null,
+            "environment": "production",
+            "event_id": "00000000-0000-4000-8000-000000000001",
+            "expiry_in_minutes": null,
+            "fingerprint": "fp-rich",
+            "firingCounter": 0,
+            "firingStartTime": null,
+            "firingStartTimeSinceLastResolved": null,
+            "id": "00000000-0000-4000-8000-000000000001",
+            "impact": null,
+            "incident": "00000000-0000-4000-8000-000000000002",
+            "incident_dto": [
+              {
+                "ai_generated_name": null,
+                "alert_sources": [],
+                "alerts_count": 1,
+                "assignee": null,
+                "creation_time": "2026-01-02T03:04:05.678",
+                "end_time": null,
+                "enrichments": {},
+                "fingerprint": null,
+                "generated_summary": "",
+                "id": "00000000-0000-4000-8000-000000000002",
+                "incident_application": "None",
+                "incident_type": "manual",
+                "is_candidate": false,
+                "is_predicted": false,
+                "last_seen_time": null,
+                "merged_at": null,
+                "merged_by": null,
+                "merged_into_incident_id": null,
+                "resolve_on": "never",
+                "rule_fingerprint": "",
+                "rule_id": null,
+                "rule_is_deleted": null,
+                "rule_name": null,
+                "same_incident_in_the_past_id": null,
+                "services": [],
+                "severity": "critical",
+                "start_time": null,
+                "status": "firing",
+                "user_generated_name": "Orders down",
+                "user_summary": ""
+              }
+            ],
+            "isFullDuplicate": false,
+            "isPartialDuplicate": false,
+            "key_field": null,
+            "lastReceived": "2026-01-02T03:04:05.678Z",
+            "name": "Database <down>",
+            "network": "nh",
+            "node_name": null,
+            "note": "on it",
+            "object": null,
+            "operator": null,
+            "providerId": "test",
+            "providerType": "prometheus",
+            "received_at": null,
+            "runbook_url": null,
+            "service": "orders",
+            "severity": "critical",
+            "site": null,
+            "source": [],
+            "startedAt": "2026-01-02T03:04:05.678",
+            "status": "acknowledged",
+            "tenant_id": "keep",
+            "ticket_provider_id": null,
+            "ticket_type": null,
+            "ticket_url": null,
+            "time_created": null,
+            "timestamp": "2026-01-02T03:04:05.678",
+            "timezone": "Asia/Jerusalem",
+            "unresolvedCounter": 0
+          }
+        ]
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "cel": "fingerprint in [\"fp-rich\"]",
+          "limit": 21
+        },
+        "method": "POST",
+        "path": "/alerts/query"
+      },
+      "status": 200
+    },
+    "query_all": {
+      "body": {
+        "count": 4,
+        "limit": 21,
+        "offset": 0,
+        "results": [
+          {
+            "alert_hash": null,
+            "alert_rule_url": null,
+            "application": null,
+            "assignee": "ops@example.com",
+            "automation_matched": false,
+            "component": null,
+            "custom_key": null,
+            "deleted": false,
+            "description": "connection refused",
+            "dismissUntil": null,
+            "dismiss_mode": null,
+            "dismissed_until": null,
+            "duplicateReason": null,
+            "environment": "production",
+            "event_id": "00000000-0000-4000-8000-000000000001",
+            "expiry_in_minutes": null,
+            "fingerprint": "fp-rich",
+            "firingCounter": 0,
+            "firingStartTime": null,
+            "firingStartTimeSinceLastResolved": null,
+            "id": "00000000-0000-4000-8000-000000000001",
+            "impact": null,
+            "incident": "00000000-0000-4000-8000-000000000002",
+            "incident_dto": [
+              {
+                "ai_generated_name": null,
+                "alert_sources": [],
+                "alerts_count": 1,
+                "assignee": null,
+                "creation_time": "2026-01-02T03:04:05.678",
+                "end_time": null,
+                "enrichments": {},
+                "fingerprint": null,
+                "generated_summary": "",
+                "id": "00000000-0000-4000-8000-000000000002",
+                "incident_application": "None",
+                "incident_type": "manual",
+                "is_candidate": false,
+                "is_predicted": false,
+                "last_seen_time": null,
+                "merged_at": null,
+                "merged_by": null,
+                "merged_into_incident_id": null,
+                "resolve_on": "never",
+                "rule_fingerprint": "",
+                "rule_id": null,
+                "rule_is_deleted": null,
+                "rule_name": null,
+                "same_incident_in_the_past_id": null,
+                "services": [],
+                "severity": "critical",
+                "start_time": null,
+                "status": "firing",
+                "user_generated_name": "Orders down",
+                "user_summary": ""
+              }
+            ],
+            "isFullDuplicate": false,
+            "isPartialDuplicate": false,
+            "key_field": null,
+            "lastReceived": "2026-01-02T03:04:05.678Z",
+            "name": "Database <down>",
+            "network": "nh",
+            "node_name": null,
+            "note": "investigating",
+            "object": null,
+            "operator": null,
+            "providerId": "test",
+            "providerType": "prometheus",
+            "received_at": null,
+            "runbook_url": null,
+            "service": "orders",
+            "severity": "critical",
+            "site": null,
+            "source": [],
+            "startedAt": "2026-01-02T03:04:05.678",
+            "status": "firing",
+            "tenant_id": "keep",
+            "ticket_provider_id": null,
+            "ticket_type": null,
+            "ticket_url": null,
+            "time_created": null,
+            "timestamp": "2026-01-02T03:04:05.678",
+            "timezone": "Asia/Jerusalem",
+            "unresolvedCounter": 0
+          },
+          {
+            "alert_hash": null,
+            "alert_rule_url": null,
+            "application": null,
+            "assignee": null,
+            "automation_matched": false,
+            "component": null,
+            "custom_key": null,
+            "deleted": false,
+            "description": null,
+            "dismissUntil": null,
+            "dismiss_mode": null,
+            "dismissed_until": null,
+            "duplicateReason": null,
+            "environment": "production",
+            "event_id": "00000000-0000-4000-8000-000000000003",
+            "expiry_in_minutes": null,
+            "fingerprint": "fp: \u05e9\u05dc\u05d5\u05dd 2",
+            "firingCounter": 0,
+            "firingStartTime": null,
+            "firingStartTimeSinceLastResolved": null,
+            "id": "00000000-0000-4000-8000-000000000003",
+            "impact": null,
+            "incident": null,
+            "isFullDuplicate": false,
+            "isPartialDuplicate": false,
+            "key_field": null,
+            "lastReceived": "2026-01-02T03:04:05.678Z",
+            "name": "Odd fingerprint",
+            "network": "nh",
+            "node_name": null,
+            "note": null,
+            "object": null,
+            "operator": null,
+            "providerId": "test",
+            "providerType": "test",
+            "received_at": null,
+            "runbook_url": null,
+            "service": null,
+            "severity": "info",
+            "site": null,
+            "source": [],
+            "startedAt": "2026-01-02T03:04:05.678",
+            "status": "firing",
+            "tenant_id": "keep",
+            "ticket_provider_id": null,
+            "ticket_type": null,
+            "ticket_url": null,
+            "time_created": null,
+            "timestamp": "2026-01-02T03:04:05.678",
+            "timezone": "Asia/Jerusalem",
+            "unresolvedCounter": 0
+          },
+          {
+            "alert_hash": null,
+            "alert_rule_url": null,
+            "application": null,
+            "assignee": null,
+            "automation_matched": false,
+            "component": null,
+            "custom_key": null,
+            "deleted": false,
+            "description": null,
+            "dismissUntil": null,
+            "dismiss_mode": null,
+            "dismissed_until": null,
+            "duplicateReason": null,
+            "environment": "production",
+            "event_id": "00000000-0000-4000-8000-000000000004",
+            "expiry_in_minutes": null,
+            "fingerprint": "fp-bare",
+            "firingCounter": 0,
+            "firingStartTime": null,
+            "firingStartTimeSinceLastResolved": null,
+            "id": "00000000-0000-4000-8000-000000000004",
+            "impact": null,
+            "incident": null,
+            "isFullDuplicate": false,
+            "isPartialDuplicate": false,
+            "key_field": null,
+            "lastReceived": "2026-01-02T03:04:05.678Z",
+            "name": "Bare",
+            "network": "nh",
+            "node_name": null,
+            "note": null,
+            "object": null,
+            "operator": null,
+            "providerId": "test",
+            "providerType": "test",
+            "received_at": null,
+            "runbook_url": null,
+            "service": null,
+            "severity": "info",
+            "site": null,
+            "source": [],
+            "startedAt": "2026-01-02T03:04:05.678",
+            "status": "firing",
+            "tenant_id": "keep",
+            "ticket_provider_id": null,
+            "ticket_type": null,
+            "ticket_url": null,
+            "time_created": null,
+            "timestamp": "2026-01-02T03:04:05.678",
+            "timezone": "Asia/Jerusalem",
+            "unresolvedCounter": 0
+          },
+          {
+            "alert_hash": null,
+            "alert_rule_url": null,
+            "application": null,
+            "assignee": null,
+            "automation_matched": false,
+            "component": null,
+            "custom_key": null,
+            "deleted": false,
+            "description": null,
+            "dismissUntil": null,
+            "dismiss_mode": "permanent",
+            "dismissed_until": null,
+            "duplicateReason": null,
+            "environment": "production",
+            "event_id": "00000000-0000-4000-8000-000000000005",
+            "expiry_in_minutes": null,
+            "fingerprint": "fp-suppressed",
+            "firingCounter": 0,
+            "firingStartTime": null,
+            "firingStartTimeSinceLastResolved": null,
+            "id": "00000000-0000-4000-8000-000000000005",
+            "impact": null,
+            "incident": null,
+            "isFullDuplicate": false,
+            "isPartialDuplicate": false,
+            "key_field": null,
+            "lastReceived": "2026-01-02T03:04:05.678Z",
+            "name": "Suppressed",
+            "network": "nh",
+            "node_name": null,
+            "note": null,
+            "object": null,
+            "operator": null,
+            "providerId": "test",
+            "providerType": "test",
+            "received_at": null,
+            "runbook_url": null,
+            "service": null,
+            "severity": "warning",
+            "site": null,
+            "source": [],
+            "startedAt": "2026-01-02T03:04:05.678",
+            "status": "suppressed",
+            "tenant_id": "keep",
+            "ticket_provider_id": null,
+            "ticket_type": null,
+            "ticket_url": null,
+            "time_created": null,
+            "timestamp": "2026-01-02T03:04:05.678",
+            "timezone": "Asia/Jerusalem",
+            "unresolvedCounter": 0
+          }
+        ]
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "cel": "",
+          "limit": 21
+        },
+        "method": "POST",
+        "path": "/alerts/query"
+      },
+      "status": 200
+    },
+    "query_bad_request": {
+      "body": {
+        "detail": [
+          {
+            "loc": [
+              "body",
+              "limit"
+            ],
+            "msg": "value is not a valid integer",
+            "type": "type_error.integer"
+          }
+        ]
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "cel": "",
+          "limit": "many"
+        },
+        "method": "POST",
+        "path": "/alerts/query"
+      },
+      "status": 422
+    },
+    "query_by_fingerprints": {
+      "body": {
+        "count": 1,
+        "limit": 21,
+        "offset": 0,
+        "results": [
+          {
+            "alert_hash": null,
+            "alert_rule_url": null,
+            "application": null,
+            "assignee": "ops@example.com",
+            "automation_matched": false,
+            "component": null,
+            "custom_key": null,
+            "deleted": false,
+            "description": "connection refused",
+            "dismissUntil": null,
+            "dismiss_mode": null,
+            "dismissed_until": null,
+            "duplicateReason": null,
+            "environment": "production",
+            "event_id": "00000000-0000-4000-8000-000000000001",
+            "expiry_in_minutes": null,
+            "fingerprint": "fp-rich",
+            "firingCounter": 0,
+            "firingStartTime": null,
+            "firingStartTimeSinceLastResolved": null,
+            "id": "00000000-0000-4000-8000-000000000001",
+            "impact": null,
+            "incident": "00000000-0000-4000-8000-000000000002",
+            "incident_dto": [
+              {
+                "ai_generated_name": null,
+                "alert_sources": [],
+                "alerts_count": 1,
+                "assignee": null,
+                "creation_time": "2026-01-02T03:04:05.678",
+                "end_time": null,
+                "enrichments": {},
+                "fingerprint": null,
+                "generated_summary": "",
+                "id": "00000000-0000-4000-8000-000000000002",
+                "incident_application": "None",
+                "incident_type": "manual",
+                "is_candidate": false,
+                "is_predicted": false,
+                "last_seen_time": null,
+                "merged_at": null,
+                "merged_by": null,
+                "merged_into_incident_id": null,
+                "resolve_on": "never",
+                "rule_fingerprint": "",
+                "rule_id": null,
+                "rule_is_deleted": null,
+                "rule_name": null,
+                "same_incident_in_the_past_id": null,
+                "services": [],
+                "severity": "critical",
+                "start_time": null,
+                "status": "firing",
+                "user_generated_name": "Orders down",
+                "user_summary": ""
+              }
+            ],
+            "isFullDuplicate": false,
+            "isPartialDuplicate": false,
+            "key_field": null,
+            "lastReceived": "2026-01-02T03:04:05.678Z",
+            "name": "Database <down>",
+            "network": "nh",
+            "node_name": null,
+            "note": "investigating",
+            "object": null,
+            "operator": null,
+            "providerId": "test",
+            "providerType": "prometheus",
+            "received_at": null,
+            "runbook_url": null,
+            "service": "orders",
+            "severity": "critical",
+            "site": null,
+            "source": [],
+            "startedAt": "2026-01-02T03:04:05.678",
+            "status": "firing",
+            "tenant_id": "keep",
+            "ticket_provider_id": null,
+            "ticket_type": null,
+            "ticket_url": null,
+            "time_created": null,
+            "timestamp": "2026-01-02T03:04:05.678",
+            "timezone": "Asia/Jerusalem",
+            "unresolvedCounter": 0
+          }
+        ]
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "cel": "fingerprint in [\"fp-rich\", \"fp-missing\"]",
+          "limit": 21
+        },
+        "method": "POST",
+        "path": "/alerts/query"
+      },
+      "status": 200
+    },
+    "query_no_match": {
+      "body": {
+        "count": 0,
+        "limit": 21,
+        "offset": 0,
+        "results": []
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "cel": "name == 'no such alert'",
+          "limit": 21
+        },
+        "method": "POST",
+        "path": "/alerts/query"
+      },
+      "status": 200
+    },
+    "query_not_a_filter": {
+      "body": {
+        "detail": {
+          "code": "INVALID_CEL",
+          "diagnostics": [
+            {
+              "code": "EXPECTED_BOOLEAN",
+              "message": "A CEL filter must evaluate to true or false",
+              "range": {
+                "endColumn": 12,
+                "endLine": 1,
+                "startColumn": 1,
+                "startLine": 1
+              }
+            }
+          ],
+          "message": "The CEL filter is invalid."
+        }
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "cel": "'just text'",
+          "limit": 21
+        },
+        "method": "POST",
+        "path": "/alerts/query"
+      },
+      "status": 400
+    },
+    "query_syntax_error": {
+      "body": {
+        "detail": {
+          "code": "INVALID_CEL",
+          "diagnostics": [
+            {
+              "code": "SYNTAX_ERROR",
+              "message": "Error parsing CEL expression: name ==\n     ^\n",
+              "range": {
+                "endColumn": 7,
+                "endLine": 1,
+                "startColumn": 6,
+                "startLine": 1
+              }
+            }
+          ],
+          "message": "The CEL filter is invalid."
+        }
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "cel": "name ==",
+          "limit": 21
+        },
+        "method": "POST",
+        "path": "/alerts/query"
+      },
+      "status": 400
+    },
+    "query_unknown_field": {
+      "body": {
+        "detail": {
+          "code": "INVALID_CEL",
+          "diagnostics": [
+            {
+              "code": "UNKNOWN_FIELD",
+              "message": "Error while mapping columns: Missing mapping configuration for property \"nosuchfield\"",
+              "range": null
+            }
+          ],
+          "message": "The CEL filter is invalid."
+        }
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "cel": "nosuchfield == 'x'",
+          "limit": 21
+        },
+        "method": "POST",
+        "path": "/alerts/query"
+      },
+      "status": 400
+    },
+    "whoami_admin": {
+      "body": {
+        "email": "admin@example.com",
+        "role": "admin",
+        "scopes": [
+          "read:*",
+          "write:*",
+          "delete:*",
+          "update:*",
+          "execute:*"
+        ],
+        "tenant_id": "keep"
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": null,
+        "method": "GET",
+        "path": "/whoami"
+      },
+      "status": 200
+    },
+    "whoami_editor": {
+      "body": {
+        "email": "editor@example.com",
+        "role": "editor",
+        "scopes": [
+          "read:*",
+          "write:*",
+          "delete:*",
+          "update:*",
+          "execute:*"
+        ],
+        "tenant_id": "keep"
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": null,
+        "method": "GET",
+        "path": "/whoami"
+      },
+      "status": 200
+    },
+    "whoami_forbidden": {
+      "body": {
+        "detail": "You don't have the required scopes to access this resource [required scopes: ['read:settings']]"
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": null,
+        "method": "GET",
+        "path": "/whoami"
+      },
+      "status": 403
+    },
+    "whoami_invalid_token": {
+      "body": {
+        "detail": "Invalid JWT token"
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": null,
+        "method": "GET",
+        "path": "/whoami"
+      },
+      "status": 401
+    },
+    "whoami_no_credentials": {
+      "body": {
+        "detail": "Missing API Key"
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": null,
+        "method": "GET",
+        "path": "/whoami"
+      },
+      "status": 401
+    },
+    "whoami_noc": {
+      "body": {
+        "email": "noc@example.com",
+        "role": "noc",
+        "scopes": [
+          "read:*",
+          "write:alert"
+        ],
+        "tenant_id": "keep"
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": null,
+        "method": "GET",
+        "path": "/whoami"
+      },
+      "status": 200
+    },
+    "whoami_viewer": {
+      "body": {
+        "email": "viewer@example.com",
+        "role": "viewer",
+        "scopes": [
+          "read:*"
+        ],
+        "tenant_id": "keep"
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": null,
+        "method": "GET",
+        "path": "/whoami"
+      },
+      "status": 200
+    }
+  }
+}

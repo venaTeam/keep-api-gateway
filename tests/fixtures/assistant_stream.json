@@ -1,0 +1,3570 @@
+{
+  "vocabulary": {
+    "events": [
+      "conversation",
+      "text_delta",
+      "tool_status",
+      "draft",
+      "error",
+      "done"
+    ],
+    "tool_phases": [
+      "started",
+      "finished"
+    ],
+    "tool_outcomes": [
+      "draft_created",
+      "too_many_matches",
+      "no_matches",
+      "nothing_to_change",
+      "invalid_cel",
+      "invalid_arguments",
+      "unauthenticated",
+      "error"
+    ],
+    "stream_error_codes": [
+      "llm_unavailable",
+      "llm_rejected",
+      "llm_rate_limited",
+      "turn_timeout",
+      "gateway_unavailable",
+      "unauthenticated",
+      "internal"
+    ],
+    "finish_reasons": [
+      "stop",
+      "tool_limit",
+      "length",
+      "error",
+      "cancelled"
+    ],
+    "draft_states": [
+      "pending",
+      "applying",
+      "applied",
+      "partially_applied",
+      "failed",
+      "discarded",
+      "expired"
+    ],
+    "target_statuses": [
+      "firing",
+      "acknowledged",
+      "resolved",
+      "suppressed"
+    ],
+    "outcome_codes": [
+      "applied",
+      "partially_applied",
+      "nothing_to_change",
+      "unverified",
+      "outcome_pending",
+      "not_permitted",
+      "read_only",
+      "failed",
+      "interrupted",
+      "outcome_unknown"
+    ],
+    "gateway_results": [
+      "ok",
+      "failed_response",
+      "rejected",
+      "rejected_maybe_written",
+      "http_error",
+      "read_only",
+      "not_permitted",
+      "unauthenticated",
+      "unknown"
+    ],
+    "alert_results": [
+      "applied",
+      "failed",
+      "unconfirmed",
+      "skipped",
+      "not_found"
+    ],
+    "message_statuses": [
+      "complete",
+      "interrupted",
+      "error"
+    ]
+  },
+  "heartbeat": ": hb\n\n",
+  "response_headers": {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    "X-Accel-Buffering": "no"
+  },
+  "streams": {
+    "draft_created": {
+      "raw": "event: conversation\ndata: {\"conversation_id\": \"00000000-0000-4000-8000-000000000001\", \"user_message_id\": \"00000000-0000-4000-8000-000000000002\", \"turn_id\": \"00000000-0000-4000-8000-000000000003\"}\n\nevent: text_delta\ndata: {\"message_id\": \"00000000-0000-4000-8000-000000000004\", \"delta\": \"Let me look at \"}\n\nevent: text_delta\ndata: {\"message_id\": \"00000000-0000-4000-8000-000000000004\", \"delta\": \"the selected alerts.\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_1\", \"tool\": \"change_alert_status\", \"phase\": \"started\", \"label\": \"Preparing a status change\"}\n\n: hb\n\nevent: draft\ndata: {\"draft\": {\"id\": \"00000000-0000-4000-8000-000000000010\", \"conversation_id\": \"00000000-0000-4000-8000-000000000001\", \"kind\": \"change_alert_status\", \"state\": \"pending\", \"permitted\": true, \"created_at\": \"2026-11-24T10:00:00+00:00\", \"expires_at\": \"2026-11-24T10:30:00+00:00\", \"resolved_at\": null, \"payload\": {\"version\": 1, \"selector\": {\"type\": \"fingerprints\", \"fingerprints\": [\"prod-db-01:cpu\", \"prod-db-02:disk\", \"5d41402abc4b2a76b9719d911017c592\", \"prod-db-03:cpu\", \"unnamed\", \"gone\", \"team/alert\"]}, \"target_status\": \"acknowledged\", \"note\": \"investigating\", \"dispose_on_new_alert\": false, \"matched_count\": 5, \"alerts\": [{\"fingerprint\": \"prod-db-01:cpu\", \"name\": \"High CPU on prod-db-01\", \"severity\": \"critical\", \"from_status\": \"firing\", \"service\": \"postgres\", \"source\": \"prometheus\", \"last_received\": \"2026-11-24T09:58:00.000Z\", \"has_incident\": true, \"has_note\": true}, {\"fingerprint\": \"prod-db-02:disk\", \"name\": \"Disk almost full \\u2039prod-db-02\\u203a \\\"data\\\" \\u00e9\", \"severity\": \"warning\", \"from_status\": \"firing\", \"service\": \"postgres\", \"source\": \"grafana\", \"last_received\": \"2026-11-24T09:59:30.000Z\", \"has_incident\": false, \"has_note\": false}, {\"fingerprint\": \"5d41402abc4b2a76b9719d911017c592\", \"name\": null, \"severity\": null, \"from_status\": null, \"service\": null, \"source\": null, \"last_received\": null, \"has_incident\": null, \"has_note\": false}], \"skipped\": [{\"fingerprint\": \"prod-db-03:cpu\", \"name\": \"High CPU on prod-db-03\", \"status\": \"acknowledged\"}, {\"fingerprint\": \"unnamed\", \"name\": null, \"status\": null}], \"not_found\": [\"gone\"], \"unresolvable\": [\"team/alert\"]}, \"outcome\": null}}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_1\", \"tool\": \"change_alert_status\", \"phase\": \"finished\", \"label\": \"Preparing a status change\", \"outcome\": \"draft_created\"}\n\nevent: text_delta\ndata: {\"message_id\": \"00000000-0000-4000-8000-000000000005\", \"delta\": \"I drafted the change.\\n\\nConfirm it on the **card**: \"}\n\nevent: text_delta\ndata: {\"message_id\": \"00000000-0000-4000-8000-000000000005\", \"delta\": \"3 alerts \\u2192 \\\"acknowledged\\\" \\u2713 \\ud83d\\udc4d\"}\n\nevent: done\ndata: {\"message_id\": \"00000000-0000-4000-8000-000000000005\", \"finish_reason\": \"stop\"}\n\n",
+      "events": [
+        {
+          "event": "conversation",
+          "data": {
+            "conversation_id": "00000000-0000-4000-8000-000000000001",
+            "user_message_id": "00000000-0000-4000-8000-000000000002",
+            "turn_id": "00000000-0000-4000-8000-000000000003"
+          }
+        },
+        {
+          "event": "text_delta",
+          "data": {
+            "message_id": "00000000-0000-4000-8000-000000000004",
+            "delta": "Let me look at "
+          }
+        },
+        {
+          "event": "text_delta",
+          "data": {
+            "message_id": "00000000-0000-4000-8000-000000000004",
+            "delta": "the selected alerts."
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_1",
+            "tool": "change_alert_status",
+            "phase": "started",
+            "label": "Preparing a status change"
+          }
+        },
+        {
+          "event": "draft",
+          "data": {
+            "draft": {
+              "id": "00000000-0000-4000-8000-000000000010",
+              "conversation_id": "00000000-0000-4000-8000-000000000001",
+              "kind": "change_alert_status",
+              "state": "pending",
+              "permitted": true,
+              "created_at": "2026-11-24T10:00:00+00:00",
+              "expires_at": "2026-11-24T10:30:00+00:00",
+              "resolved_at": null,
+              "payload": {
+                "version": 1,
+                "selector": {
+                  "type": "fingerprints",
+                  "fingerprints": [
+                    "prod-db-01:cpu",
+                    "prod-db-02:disk",
+                    "5d41402abc4b2a76b9719d911017c592",
+                    "prod-db-03:cpu",
+                    "unnamed",
+                    "gone",
+                    "team/alert"
+                  ]
+                },
+                "target_status": "acknowledged",
+                "note": "investigating",
+                "dispose_on_new_alert": false,
+                "matched_count": 5,
+                "alerts": [
+                  {
+                    "fingerprint": "prod-db-01:cpu",
+                    "name": "High CPU on prod-db-01",
+                    "severity": "critical",
+                    "from_status": "firing",
+                    "service": "postgres",
+                    "source": "prometheus",
+                    "last_received": "2026-11-24T09:58:00.000Z",
+                    "has_incident": true,
+                    "has_note": true
+                  },
+                  {
+                    "fingerprint": "prod-db-02:disk",
+                    "name": "Disk almost full \u2039prod-db-02\u203a \"data\" \u00e9",
+                    "severity": "warning",
+                    "from_status": "firing",
+                    "service": "postgres",
+                    "source": "grafana",
+                    "last_received": "2026-11-24T09:59:30.000Z",
+                    "has_incident": false,
+                    "has_note": false
+                  },
+                  {
+                    "fingerprint": "5d41402abc4b2a76b9719d911017c592",
+                    "name": null,
+                    "severity": null,
+                    "from_status": null,
+                    "service": null,
+                    "source": null,
+                    "last_received": null,
+                    "has_incident": null,
+                    "has_note": false
+                  }
+                ],
+                "skipped": [
+                  {
+                    "fingerprint": "prod-db-03:cpu",
+                    "name": "High CPU on prod-db-03",
+                    "status": "acknowledged"
+                  },
+                  {
+                    "fingerprint": "unnamed",
+                    "name": null,
+                    "status": null
+                  }
+                ],
+                "not_found": [
+                  "gone"
+                ],
+                "unresolvable": [
+                  "team/alert"
+                ]
+              },
+              "outcome": null
+            }
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_1",
+            "tool": "change_alert_status",
+            "phase": "finished",
+            "label": "Preparing a status change",
+            "outcome": "draft_created"
+          }
+        },
+        {
+          "event": "text_delta",
+          "data": {
+            "message_id": "00000000-0000-4000-8000-000000000005",
+            "delta": "I drafted the change.\n\nConfirm it on the **card**: "
+          }
+        },
+        {
+          "event": "text_delta",
+          "data": {
+            "message_id": "00000000-0000-4000-8000-000000000005",
+            "delta": "3 alerts \u2192 \"acknowledged\" \u2713 \ud83d\udc4d"
+          }
+        },
+        {
+          "event": "done",
+          "data": {
+            "message_id": "00000000-0000-4000-8000-000000000005",
+            "finish_reason": "stop"
+          }
+        }
+      ]
+    },
+    "draft_not_permitted": {
+      "raw": "event: conversation\ndata: {\"conversation_id\": \"00000000-0000-4000-8000-000000000001\", \"user_message_id\": \"00000000-0000-4000-8000-000000000002\", \"turn_id\": \"00000000-0000-4000-8000-000000000003\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_1\", \"tool\": \"change_alert_status\", \"phase\": \"started\", \"label\": \"Preparing a status change\"}\n\nevent: draft\ndata: {\"draft\": {\"id\": \"00000000-0000-4000-8000-000000000011\", \"conversation_id\": \"00000000-0000-4000-8000-000000000001\", \"kind\": \"change_alert_status\", \"state\": \"pending\", \"permitted\": false, \"created_at\": \"2026-11-24T10:00:00+00:00\", \"expires_at\": \"2026-11-24T10:30:00+00:00\", \"resolved_at\": null, \"payload\": {\"version\": 1, \"selector\": {\"type\": \"cel\", \"cel\": \"source.contains(\\\"prometheus\\\") && severity == \\\"critical\\\"\"}, \"target_status\": \"suppressed\", \"note\": null, \"dispose_on_new_alert\": true, \"matched_count\": 1, \"alerts\": [{\"fingerprint\": \"prod-db-01:cpu\", \"name\": \"High CPU on prod-db-01\", \"severity\": \"critical\", \"from_status\": \"firing\", \"service\": \"postgres\", \"source\": \"prometheus\", \"last_received\": \"2026-11-24T09:58:00.000Z\", \"has_incident\": true, \"has_note\": true}], \"skipped\": [], \"not_found\": [], \"unresolvable\": []}, \"outcome\": null}}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_1\", \"tool\": \"change_alert_status\", \"phase\": \"finished\", \"label\": \"Preparing a status change\", \"outcome\": \"draft_created\"}\n\nevent: done\ndata: {\"message_id\": \"00000000-0000-4000-8000-000000000004\", \"finish_reason\": \"length\"}\n\n",
+      "events": [
+        {
+          "event": "conversation",
+          "data": {
+            "conversation_id": "00000000-0000-4000-8000-000000000001",
+            "user_message_id": "00000000-0000-4000-8000-000000000002",
+            "turn_id": "00000000-0000-4000-8000-000000000003"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_1",
+            "tool": "change_alert_status",
+            "phase": "started",
+            "label": "Preparing a status change"
+          }
+        },
+        {
+          "event": "draft",
+          "data": {
+            "draft": {
+              "id": "00000000-0000-4000-8000-000000000011",
+              "conversation_id": "00000000-0000-4000-8000-000000000001",
+              "kind": "change_alert_status",
+              "state": "pending",
+              "permitted": false,
+              "created_at": "2026-11-24T10:00:00+00:00",
+              "expires_at": "2026-11-24T10:30:00+00:00",
+              "resolved_at": null,
+              "payload": {
+                "version": 1,
+                "selector": {
+                  "type": "cel",
+                  "cel": "source.contains(\"prometheus\") && severity == \"critical\""
+                },
+                "target_status": "suppressed",
+                "note": null,
+                "dispose_on_new_alert": true,
+                "matched_count": 1,
+                "alerts": [
+                  {
+                    "fingerprint": "prod-db-01:cpu",
+                    "name": "High CPU on prod-db-01",
+                    "severity": "critical",
+                    "from_status": "firing",
+                    "service": "postgres",
+                    "source": "prometheus",
+                    "last_received": "2026-11-24T09:58:00.000Z",
+                    "has_incident": true,
+                    "has_note": true
+                  }
+                ],
+                "skipped": [],
+                "not_found": [],
+                "unresolvable": []
+              },
+              "outcome": null
+            }
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_1",
+            "tool": "change_alert_status",
+            "phase": "finished",
+            "label": "Preparing a status change",
+            "outcome": "draft_created"
+          }
+        },
+        {
+          "event": "done",
+          "data": {
+            "message_id": "00000000-0000-4000-8000-000000000004",
+            "finish_reason": "length"
+          }
+        }
+      ]
+    },
+    "narrowing": {
+      "raw": "event: conversation\ndata: {\"conversation_id\": \"00000000-0000-4000-8000-000000000001\", \"user_message_id\": \"00000000-0000-4000-8000-000000000002\", \"turn_id\": \"00000000-0000-4000-8000-000000000003\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_1\", \"tool\": \"change_alert_status\", \"phase\": \"started\", \"label\": \"Preparing a status change\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_1\", \"tool\": \"change_alert_status\", \"phase\": \"finished\", \"label\": \"Preparing a status change\", \"outcome\": \"invalid_cel\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_2\", \"tool\": \"change_alert_status\", \"phase\": \"started\", \"label\": \"Preparing a status change\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_2\", \"tool\": \"change_alert_status\", \"phase\": \"finished\", \"label\": \"Preparing a status change\", \"outcome\": \"invalid_arguments\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_3\", \"tool\": \"change_alert_status\", \"phase\": \"started\", \"label\": \"Preparing a status change\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_3\", \"tool\": \"change_alert_status\", \"phase\": \"finished\", \"label\": \"Preparing a status change\", \"outcome\": \"too_many_matches\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_4\", \"tool\": \"change_alert_status\", \"phase\": \"started\", \"label\": \"Preparing a status change\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_4\", \"tool\": \"change_alert_status\", \"phase\": \"finished\", \"label\": \"Preparing a status change\", \"outcome\": \"no_matches\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_5\", \"tool\": \"change_alert_status\", \"phase\": \"started\", \"label\": \"Preparing a status change\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_5\", \"tool\": \"change_alert_status\", \"phase\": \"finished\", \"label\": \"Preparing a status change\", \"outcome\": \"nothing_to_change\"}\n\nevent: text_delta\ndata: {\"message_id\": \"00000000-0000-4000-8000-000000000004\", \"delta\": \"More than 20 alerts match. Can you narrow it down?\"}\n\nevent: done\ndata: {\"message_id\": \"00000000-0000-4000-8000-000000000004\", \"finish_reason\": \"tool_limit\"}\n\n",
+      "events": [
+        {
+          "event": "conversation",
+          "data": {
+            "conversation_id": "00000000-0000-4000-8000-000000000001",
+            "user_message_id": "00000000-0000-4000-8000-000000000002",
+            "turn_id": "00000000-0000-4000-8000-000000000003"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_1",
+            "tool": "change_alert_status",
+            "phase": "started",
+            "label": "Preparing a status change"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_1",
+            "tool": "change_alert_status",
+            "phase": "finished",
+            "label": "Preparing a status change",
+            "outcome": "invalid_cel"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_2",
+            "tool": "change_alert_status",
+            "phase": "started",
+            "label": "Preparing a status change"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_2",
+            "tool": "change_alert_status",
+            "phase": "finished",
+            "label": "Preparing a status change",
+            "outcome": "invalid_arguments"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_3",
+            "tool": "change_alert_status",
+            "phase": "started",
+            "label": "Preparing a status change"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_3",
+            "tool": "change_alert_status",
+            "phase": "finished",
+            "label": "Preparing a status change",
+            "outcome": "too_many_matches"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_4",
+            "tool": "change_alert_status",
+            "phase": "started",
+            "label": "Preparing a status change"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_4",
+            "tool": "change_alert_status",
+            "phase": "finished",
+            "label": "Preparing a status change",
+            "outcome": "no_matches"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_5",
+            "tool": "change_alert_status",
+            "phase": "started",
+            "label": "Preparing a status change"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_5",
+            "tool": "change_alert_status",
+            "phase": "finished",
+            "label": "Preparing a status change",
+            "outcome": "nothing_to_change"
+          }
+        },
+        {
+          "event": "text_delta",
+          "data": {
+            "message_id": "00000000-0000-4000-8000-000000000004",
+            "delta": "More than 20 alerts match. Can you narrow it down?"
+          }
+        },
+        {
+          "event": "done",
+          "data": {
+            "message_id": "00000000-0000-4000-8000-000000000004",
+            "finish_reason": "tool_limit"
+          }
+        }
+      ]
+    },
+    "tool_error": {
+      "raw": "event: conversation\ndata: {\"conversation_id\": \"00000000-0000-4000-8000-000000000001\", \"user_message_id\": \"00000000-0000-4000-8000-000000000002\", \"turn_id\": \"00000000-0000-4000-8000-000000000003\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_1\", \"tool\": \"change_alert_status\", \"phase\": \"started\", \"label\": \"Preparing a status change\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_1\", \"tool\": \"change_alert_status\", \"phase\": \"finished\", \"label\": \"Preparing a status change\", \"outcome\": \"error\"}\n\nevent: error\ndata: {\"code\": \"gateway_unavailable\", \"message\": \"Keep could not be reached. Try again.\", \"retryable\": true}\n\nevent: done\ndata: {\"message_id\": null, \"finish_reason\": \"error\"}\n\n",
+      "events": [
+        {
+          "event": "conversation",
+          "data": {
+            "conversation_id": "00000000-0000-4000-8000-000000000001",
+            "user_message_id": "00000000-0000-4000-8000-000000000002",
+            "turn_id": "00000000-0000-4000-8000-000000000003"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_1",
+            "tool": "change_alert_status",
+            "phase": "started",
+            "label": "Preparing a status change"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_1",
+            "tool": "change_alert_status",
+            "phase": "finished",
+            "label": "Preparing a status change",
+            "outcome": "error"
+          }
+        },
+        {
+          "event": "error",
+          "data": {
+            "code": "gateway_unavailable",
+            "message": "Keep could not be reached. Try again.",
+            "retryable": true
+          }
+        },
+        {
+          "event": "done",
+          "data": {
+            "message_id": null,
+            "finish_reason": "error"
+          }
+        }
+      ]
+    },
+    "cancelled": {
+      "raw": "event: conversation\ndata: {\"conversation_id\": \"00000000-0000-4000-8000-000000000001\", \"user_message_id\": \"00000000-0000-4000-8000-000000000002\", \"turn_id\": \"00000000-0000-4000-8000-000000000003\"}\n\nevent: text_delta\ndata: {\"message_id\": \"00000000-0000-4000-8000-000000000004\", \"delta\": \"I was about to\"}\n\nevent: done\ndata: {\"message_id\": \"00000000-0000-4000-8000-000000000004\", \"finish_reason\": \"cancelled\"}\n\n",
+      "events": [
+        {
+          "event": "conversation",
+          "data": {
+            "conversation_id": "00000000-0000-4000-8000-000000000001",
+            "user_message_id": "00000000-0000-4000-8000-000000000002",
+            "turn_id": "00000000-0000-4000-8000-000000000003"
+          }
+        },
+        {
+          "event": "text_delta",
+          "data": {
+            "message_id": "00000000-0000-4000-8000-000000000004",
+            "delta": "I was about to"
+          }
+        },
+        {
+          "event": "done",
+          "data": {
+            "message_id": "00000000-0000-4000-8000-000000000004",
+            "finish_reason": "cancelled"
+          }
+        }
+      ]
+    },
+    "error_llm_unavailable": {
+      "raw": "event: conversation\ndata: {\"conversation_id\": \"00000000-0000-4000-8000-000000000001\", \"user_message_id\": \"00000000-0000-4000-8000-000000000002\", \"turn_id\": \"00000000-0000-4000-8000-000000000003\"}\n\nevent: error\ndata: {\"code\": \"llm_unavailable\", \"message\": \"The assistant is unavailable right now. Try again.\", \"retryable\": true}\n\nevent: done\ndata: {\"message_id\": null, \"finish_reason\": \"error\"}\n\n",
+      "events": [
+        {
+          "event": "conversation",
+          "data": {
+            "conversation_id": "00000000-0000-4000-8000-000000000001",
+            "user_message_id": "00000000-0000-4000-8000-000000000002",
+            "turn_id": "00000000-0000-4000-8000-000000000003"
+          }
+        },
+        {
+          "event": "error",
+          "data": {
+            "code": "llm_unavailable",
+            "message": "The assistant is unavailable right now. Try again.",
+            "retryable": true
+          }
+        },
+        {
+          "event": "done",
+          "data": {
+            "message_id": null,
+            "finish_reason": "error"
+          }
+        }
+      ]
+    },
+    "error_llm_rejected": {
+      "raw": "event: conversation\ndata: {\"conversation_id\": \"00000000-0000-4000-8000-000000000001\", \"user_message_id\": \"00000000-0000-4000-8000-000000000002\", \"turn_id\": \"00000000-0000-4000-8000-000000000003\"}\n\nevent: error\ndata: {\"code\": \"llm_rejected\", \"message\": \"The assistant could not continue. Start a new conversation.\", \"retryable\": false}\n\nevent: done\ndata: {\"message_id\": null, \"finish_reason\": \"error\"}\n\n",
+      "events": [
+        {
+          "event": "conversation",
+          "data": {
+            "conversation_id": "00000000-0000-4000-8000-000000000001",
+            "user_message_id": "00000000-0000-4000-8000-000000000002",
+            "turn_id": "00000000-0000-4000-8000-000000000003"
+          }
+        },
+        {
+          "event": "error",
+          "data": {
+            "code": "llm_rejected",
+            "message": "The assistant could not continue. Start a new conversation.",
+            "retryable": false
+          }
+        },
+        {
+          "event": "done",
+          "data": {
+            "message_id": null,
+            "finish_reason": "error"
+          }
+        }
+      ]
+    },
+    "error_llm_rate_limited": {
+      "raw": "event: conversation\ndata: {\"conversation_id\": \"00000000-0000-4000-8000-000000000001\", \"user_message_id\": \"00000000-0000-4000-8000-000000000002\", \"turn_id\": \"00000000-0000-4000-8000-000000000003\"}\n\nevent: error\ndata: {\"code\": \"llm_rate_limited\", \"message\": \"The assistant is busy. Try again shortly.\", \"retryable\": true}\n\nevent: done\ndata: {\"message_id\": null, \"finish_reason\": \"error\"}\n\n",
+      "events": [
+        {
+          "event": "conversation",
+          "data": {
+            "conversation_id": "00000000-0000-4000-8000-000000000001",
+            "user_message_id": "00000000-0000-4000-8000-000000000002",
+            "turn_id": "00000000-0000-4000-8000-000000000003"
+          }
+        },
+        {
+          "event": "error",
+          "data": {
+            "code": "llm_rate_limited",
+            "message": "The assistant is busy. Try again shortly.",
+            "retryable": true
+          }
+        },
+        {
+          "event": "done",
+          "data": {
+            "message_id": null,
+            "finish_reason": "error"
+          }
+        }
+      ]
+    },
+    "error_turn_timeout": {
+      "raw": "event: conversation\ndata: {\"conversation_id\": \"00000000-0000-4000-8000-000000000001\", \"user_message_id\": \"00000000-0000-4000-8000-000000000002\", \"turn_id\": \"00000000-0000-4000-8000-000000000003\"}\n\nevent: error\ndata: {\"code\": \"turn_timeout\", \"message\": \"The answer took too long. Try again.\", \"retryable\": true}\n\nevent: done\ndata: {\"message_id\": null, \"finish_reason\": \"error\"}\n\n",
+      "events": [
+        {
+          "event": "conversation",
+          "data": {
+            "conversation_id": "00000000-0000-4000-8000-000000000001",
+            "user_message_id": "00000000-0000-4000-8000-000000000002",
+            "turn_id": "00000000-0000-4000-8000-000000000003"
+          }
+        },
+        {
+          "event": "error",
+          "data": {
+            "code": "turn_timeout",
+            "message": "The answer took too long. Try again.",
+            "retryable": true
+          }
+        },
+        {
+          "event": "done",
+          "data": {
+            "message_id": null,
+            "finish_reason": "error"
+          }
+        }
+      ]
+    },
+    "error_gateway_unavailable": {
+      "raw": "event: conversation\ndata: {\"conversation_id\": \"00000000-0000-4000-8000-000000000001\", \"user_message_id\": \"00000000-0000-4000-8000-000000000002\", \"turn_id\": \"00000000-0000-4000-8000-000000000003\"}\n\nevent: error\ndata: {\"code\": \"gateway_unavailable\", \"message\": \"Keep could not be reached. Try again.\", \"retryable\": true}\n\nevent: done\ndata: {\"message_id\": null, \"finish_reason\": \"error\"}\n\n",
+      "events": [
+        {
+          "event": "conversation",
+          "data": {
+            "conversation_id": "00000000-0000-4000-8000-000000000001",
+            "user_message_id": "00000000-0000-4000-8000-000000000002",
+            "turn_id": "00000000-0000-4000-8000-000000000003"
+          }
+        },
+        {
+          "event": "error",
+          "data": {
+            "code": "gateway_unavailable",
+            "message": "Keep could not be reached. Try again.",
+            "retryable": true
+          }
+        },
+        {
+          "event": "done",
+          "data": {
+            "message_id": null,
+            "finish_reason": "error"
+          }
+        }
+      ]
+    },
+    "error_unauthenticated": {
+      "raw": "event: conversation\ndata: {\"conversation_id\": \"00000000-0000-4000-8000-000000000001\", \"user_message_id\": \"00000000-0000-4000-8000-000000000002\", \"turn_id\": \"00000000-0000-4000-8000-000000000003\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_1\", \"tool\": \"change_alert_status\", \"phase\": \"started\", \"label\": \"Preparing a status change\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_1\", \"tool\": \"change_alert_status\", \"phase\": \"finished\", \"label\": \"Preparing a status change\", \"outcome\": \"unauthenticated\"}\n\nevent: error\ndata: {\"code\": \"unauthenticated\", \"message\": \"Sign in again to use the assistant.\", \"retryable\": false}\n\nevent: done\ndata: {\"message_id\": null, \"finish_reason\": \"error\"}\n\n",
+      "events": [
+        {
+          "event": "conversation",
+          "data": {
+            "conversation_id": "00000000-0000-4000-8000-000000000001",
+            "user_message_id": "00000000-0000-4000-8000-000000000002",
+            "turn_id": "00000000-0000-4000-8000-000000000003"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_1",
+            "tool": "change_alert_status",
+            "phase": "started",
+            "label": "Preparing a status change"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_1",
+            "tool": "change_alert_status",
+            "phase": "finished",
+            "label": "Preparing a status change",
+            "outcome": "unauthenticated"
+          }
+        },
+        {
+          "event": "error",
+          "data": {
+            "code": "unauthenticated",
+            "message": "Sign in again to use the assistant.",
+            "retryable": false
+          }
+        },
+        {
+          "event": "done",
+          "data": {
+            "message_id": null,
+            "finish_reason": "error"
+          }
+        }
+      ]
+    },
+    "error_internal": {
+      "raw": "event: conversation\ndata: {\"conversation_id\": \"00000000-0000-4000-8000-000000000001\", \"user_message_id\": \"00000000-0000-4000-8000-000000000002\", \"turn_id\": \"00000000-0000-4000-8000-000000000003\"}\n\nevent: error\ndata: {\"code\": \"internal\", \"message\": \"Something went wrong. Try again.\", \"retryable\": true}\n\nevent: done\ndata: {\"message_id\": null, \"finish_reason\": \"error\"}\n\n",
+      "events": [
+        {
+          "event": "conversation",
+          "data": {
+            "conversation_id": "00000000-0000-4000-8000-000000000001",
+            "user_message_id": "00000000-0000-4000-8000-000000000002",
+            "turn_id": "00000000-0000-4000-8000-000000000003"
+          }
+        },
+        {
+          "event": "error",
+          "data": {
+            "code": "internal",
+            "message": "Something went wrong. Try again.",
+            "retryable": true
+          }
+        },
+        {
+          "event": "done",
+          "data": {
+            "message_id": null,
+            "finish_reason": "error"
+          }
+        }
+      ]
+    },
+    "truncated": {
+      "raw": "event: conversation\ndata: {\"conversation_id\": \"00000000-0000-4000-8000-000000000001\", \"user_message_id\": \"00000000-0000-4000-8000-000000000002\", \"turn_id\": \"00000000-0000-4000-8000-000000000003\"}\n\nevent: text_delta\ndata: {\"message_id\": \"00000000-0000-4000-8000-000000000004\", \"delta\": \"Let me look at \"}\n\nevent: text_delta\ndata: {\"message_id\": \"00000000-0000-4000-8000-000000000004\", \"delta\": \"the selected alerts.\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_1\", \"tool\": \"change_alert_status\", \"phase\": \"started\", \"label\": \"Preparing a status change\"}\n\n: hb\n\nevent: draft\ndata: {\"draft\": {\"id\": \"00000000-0000-4000-8000-000000000010\", \"conversation_id\": \"00000000-0000-4000-8000-000000000001\", \"kind\": \"change_alert_status\", \"state\": \"pending\", \"permitted\": true, \"created_at\": \"2026-11-24T10:00:00+00:00\", \"expires_at\": \"2026-11-24T10:30:00+00:00\", \"resolved_at\": null, \"payload\": {\"version\": 1, \"selector\": {\"type\": \"fingerprints\", \"fingerprints\": [\"prod-db-01:cpu\", \"prod-db-02:disk\", \"5d41402abc4b2a76b9719d911017c592\", \"prod-db-03:cpu\", \"unnamed\", \"gone\", \"team/alert\"]}, \"target_status\": \"acknowledged\", \"note\": \"investigating\", \"dispose_on_new_alert\": false, \"matched_count\": 5, \"alerts\": [{\"fingerprint\": \"prod-db-01:cpu\", \"name\": \"High CPU on prod-db-01\", \"severity\": \"critical\", \"from_status\": \"firing\", \"service\": \"postgres\", \"source\": \"prometheus\", \"last_received\": \"2026-11-24T09:58:00.000Z\", \"has_incident\": true, \"has_note\": true}, {\"fingerprint\": \"prod-db-02:disk\", \"name\": \"Disk almost full \\u2039prod-db-02\\u203a \\\"data\\\" \\u00e9\", \"severity\": \"warning\", \"from_status\": \"firing\", \"service\": \"postgres\", \"source\": \"grafana\", \"last_received\": \"2026-11-24T09:59:30.000Z\", \"has_incident\": false, \"has_note\": false}, {\"fingerprint\": \"5d41402abc4b2a76b9719d911017c592\", \"name\": null, \"severity\": null, \"from_status\": null, \"service\": null, \"source\": null, \"last_received\": null, \"has_incident\": null, \"has_note\": false}], \"skipped\": [{\"fingerprint\": \"prod-db-03:cpu\", \"name\": \"High CPU on prod-db-03\", \"status\": \"acknowledged\"}, {\"fingerprint\": \"unnamed\", \"name\": null, \"status\": null}], \"not_found\": [\"gone\"], \"unresolvable\": [\"team/alert\"]}, \"outcome\": null}}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_1\", \"tool\": \"change_alert_status\", \"phase\": \"finished\", \"label\": \"Preparing a status change\", \"outcome\": \"draft_created\"}\n\nevent: text_delta\ndata: {\"message_id\": \"00000000-0000-4000-8000-000000000005\", \"delta\": \"I drafted the change.\\n\\nConfirm it on the **card**: \"}\n\nevent: text_delta\ndata: {\"message_id\": \"00000000-0000-4000-8000-000000000005\", \"delta\": \"3 alerts \\u2192 \\\"acknowledged\\\" \\u2713 \\ud83d\\udc4d\"}\n\nevent: done\ndata: {\"message_id\": \"00000000-0000-",
+      "events": [
+        {
+          "event": "conversation",
+          "data": {
+            "conversation_id": "00000000-0000-4000-8000-000000000001",
+            "user_message_id": "00000000-0000-4000-8000-000000000002",
+            "turn_id": "00000000-0000-4000-8000-000000000003"
+          }
+        },
+        {
+          "event": "text_delta",
+          "data": {
+            "message_id": "00000000-0000-4000-8000-000000000004",
+            "delta": "Let me look at "
+          }
+        },
+        {
+          "event": "text_delta",
+          "data": {
+            "message_id": "00000000-0000-4000-8000-000000000004",
+            "delta": "the selected alerts."
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_1",
+            "tool": "change_alert_status",
+            "phase": "started",
+            "label": "Preparing a status change"
+          }
+        },
+        {
+          "event": "draft",
+          "data": {
+            "draft": {
+              "id": "00000000-0000-4000-8000-000000000010",
+              "conversation_id": "00000000-0000-4000-8000-000000000001",
+              "kind": "change_alert_status",
+              "state": "pending",
+              "permitted": true,
+              "created_at": "2026-11-24T10:00:00+00:00",
+              "expires_at": "2026-11-24T10:30:00+00:00",
+              "resolved_at": null,
+              "payload": {
+                "version": 1,
+                "selector": {
+                  "type": "fingerprints",
+                  "fingerprints": [
+                    "prod-db-01:cpu",
+                    "prod-db-02:disk",
+                    "5d41402abc4b2a76b9719d911017c592",
+                    "prod-db-03:cpu",
+                    "unnamed",
+                    "gone",
+                    "team/alert"
+                  ]
+                },
+                "target_status": "acknowledged",
+                "note": "investigating",
+                "dispose_on_new_alert": false,
+                "matched_count": 5,
+                "alerts": [
+                  {
+                    "fingerprint": "prod-db-01:cpu",
+                    "name": "High CPU on prod-db-01",
+                    "severity": "critical",
+                    "from_status": "firing",
+                    "service": "postgres",
+                    "source": "prometheus",
+                    "last_received": "2026-11-24T09:58:00.000Z",
+                    "has_incident": true,
+                    "has_note": true
+                  },
+                  {
+                    "fingerprint": "prod-db-02:disk",
+                    "name": "Disk almost full \u2039prod-db-02\u203a \"data\" \u00e9",
+                    "severity": "warning",
+                    "from_status": "firing",
+                    "service": "postgres",
+                    "source": "grafana",
+                    "last_received": "2026-11-24T09:59:30.000Z",
+                    "has_incident": false,
+                    "has_note": false
+                  },
+                  {
+                    "fingerprint": "5d41402abc4b2a76b9719d911017c592",
+                    "name": null,
+                    "severity": null,
+                    "from_status": null,
+                    "service": null,
+                    "source": null,
+                    "last_received": null,
+                    "has_incident": null,
+                    "has_note": false
+                  }
+                ],
+                "skipped": [
+                  {
+                    "fingerprint": "prod-db-03:cpu",
+                    "name": "High CPU on prod-db-03",
+                    "status": "acknowledged"
+                  },
+                  {
+                    "fingerprint": "unnamed",
+                    "name": null,
+                    "status": null
+                  }
+                ],
+                "not_found": [
+                  "gone"
+                ],
+                "unresolvable": [
+                  "team/alert"
+                ]
+              },
+              "outcome": null
+            }
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_1",
+            "tool": "change_alert_status",
+            "phase": "finished",
+            "label": "Preparing a status change",
+            "outcome": "draft_created"
+          }
+        },
+        {
+          "event": "text_delta",
+          "data": {
+            "message_id": "00000000-0000-4000-8000-000000000005",
+            "delta": "I drafted the change.\n\nConfirm it on the **card**: "
+          }
+        },
+        {
+          "event": "text_delta",
+          "data": {
+            "message_id": "00000000-0000-4000-8000-000000000005",
+            "delta": "3 alerts \u2192 \"acknowledged\" \u2713 \ud83d\udc4d"
+          }
+        }
+      ]
+    }
+  },
+  "drafts": {
+    "pending": {
+      "id": "00000000-0000-4000-8000-000000000010",
+      "conversation_id": "00000000-0000-4000-8000-000000000001",
+      "kind": "change_alert_status",
+      "state": "pending",
+      "permitted": true,
+      "created_at": "2026-11-24T10:00:00+00:00",
+      "expires_at": "2026-11-24T10:30:00+00:00",
+      "resolved_at": null,
+      "payload": {
+        "version": 1,
+        "selector": {
+          "type": "fingerprints",
+          "fingerprints": [
+            "prod-db-01:cpu",
+            "prod-db-02:disk",
+            "5d41402abc4b2a76b9719d911017c592",
+            "prod-db-03:cpu",
+            "unnamed",
+            "gone",
+            "team/alert"
+          ]
+        },
+        "target_status": "acknowledged",
+        "note": "investigating",
+        "dispose_on_new_alert": false,
+        "matched_count": 5,
+        "alerts": [
+          {
+            "fingerprint": "prod-db-01:cpu",
+            "name": "High CPU on prod-db-01",
+            "severity": "critical",
+            "from_status": "firing",
+            "service": "postgres",
+            "source": "prometheus",
+            "last_received": "2026-11-24T09:58:00.000Z",
+            "has_incident": true,
+            "has_note": true
+          },
+          {
+            "fingerprint": "prod-db-02:disk",
+            "name": "Disk almost full \u2039prod-db-02\u203a \"data\" \u00e9",
+            "severity": "warning",
+            "from_status": "firing",
+            "service": "postgres",
+            "source": "grafana",
+            "last_received": "2026-11-24T09:59:30.000Z",
+            "has_incident": false,
+            "has_note": false
+          },
+          {
+            "fingerprint": "5d41402abc4b2a76b9719d911017c592",
+            "name": null,
+            "severity": null,
+            "from_status": null,
+            "service": null,
+            "source": null,
+            "last_received": null,
+            "has_incident": null,
+            "has_note": false
+          }
+        ],
+        "skipped": [
+          {
+            "fingerprint": "prod-db-03:cpu",
+            "name": "High CPU on prod-db-03",
+            "status": "acknowledged"
+          },
+          {
+            "fingerprint": "unnamed",
+            "name": null,
+            "status": null
+          }
+        ],
+        "not_found": [
+          "gone"
+        ],
+        "unresolvable": [
+          "team/alert"
+        ]
+      },
+      "outcome": null
+    },
+    "pending_not_permitted": {
+      "id": "00000000-0000-4000-8000-000000000011",
+      "conversation_id": "00000000-0000-4000-8000-000000000001",
+      "kind": "change_alert_status",
+      "state": "pending",
+      "permitted": false,
+      "created_at": "2026-11-24T10:00:00+00:00",
+      "expires_at": "2026-11-24T10:30:00+00:00",
+      "resolved_at": null,
+      "payload": {
+        "version": 1,
+        "selector": {
+          "type": "cel",
+          "cel": "source.contains(\"prometheus\") && severity == \"critical\""
+        },
+        "target_status": "suppressed",
+        "note": null,
+        "dispose_on_new_alert": true,
+        "matched_count": 1,
+        "alerts": [
+          {
+            "fingerprint": "prod-db-01:cpu",
+            "name": "High CPU on prod-db-01",
+            "severity": "critical",
+            "from_status": "firing",
+            "service": "postgres",
+            "source": "prometheus",
+            "last_received": "2026-11-24T09:58:00.000Z",
+            "has_incident": true,
+            "has_note": true
+          }
+        ],
+        "skipped": [],
+        "not_found": [],
+        "unresolvable": []
+      },
+      "outcome": null
+    },
+    "applying": {
+      "id": "00000000-0000-4000-8000-000000000012",
+      "conversation_id": "00000000-0000-4000-8000-000000000001",
+      "kind": "change_alert_status",
+      "state": "applying",
+      "permitted": true,
+      "created_at": "2026-11-24T10:00:00+00:00",
+      "expires_at": "2026-11-24T10:30:00+00:00",
+      "resolved_at": null,
+      "payload": {
+        "version": 1,
+        "selector": {
+          "type": "fingerprints",
+          "fingerprints": [
+            "prod-db-01:cpu",
+            "prod-db-02:disk",
+            "5d41402abc4b2a76b9719d911017c592",
+            "prod-db-03:cpu",
+            "unnamed",
+            "gone",
+            "team/alert"
+          ]
+        },
+        "target_status": "acknowledged",
+        "note": "investigating",
+        "dispose_on_new_alert": false,
+        "matched_count": 5,
+        "alerts": [
+          {
+            "fingerprint": "prod-db-01:cpu",
+            "name": "High CPU on prod-db-01",
+            "severity": "critical",
+            "from_status": "firing",
+            "service": "postgres",
+            "source": "prometheus",
+            "last_received": "2026-11-24T09:58:00.000Z",
+            "has_incident": true,
+            "has_note": true
+          },
+          {
+            "fingerprint": "prod-db-02:disk",
+            "name": "Disk almost full \u2039prod-db-02\u203a \"data\" \u00e9",
+            "severity": "warning",
+            "from_status": "firing",
+            "service": "postgres",
+            "source": "grafana",
+            "last_received": "2026-11-24T09:59:30.000Z",
+            "has_incident": false,
+            "has_note": false
+          },
+          {
+            "fingerprint": "5d41402abc4b2a76b9719d911017c592",
+            "name": null,
+            "severity": null,
+            "from_status": null,
+            "service": null,
+            "source": null,
+            "last_received": null,
+            "has_incident": null,
+            "has_note": false
+          }
+        ],
+        "skipped": [
+          {
+            "fingerprint": "prod-db-03:cpu",
+            "name": "High CPU on prod-db-03",
+            "status": "acknowledged"
+          },
+          {
+            "fingerprint": "unnamed",
+            "name": null,
+            "status": null
+          }
+        ],
+        "not_found": [
+          "gone"
+        ],
+        "unresolvable": [
+          "team/alert"
+        ]
+      },
+      "outcome": null
+    },
+    "applying_outcome_pending": {
+      "id": "00000000-0000-4000-8000-000000000013",
+      "conversation_id": "00000000-0000-4000-8000-000000000001",
+      "kind": "change_alert_status",
+      "state": "applying",
+      "permitted": true,
+      "created_at": "2026-11-24T10:00:00+00:00",
+      "expires_at": "2026-11-24T10:30:00+00:00",
+      "resolved_at": null,
+      "payload": {
+        "version": 1,
+        "selector": {
+          "type": "fingerprints",
+          "fingerprints": [
+            "prod-db-01:cpu",
+            "prod-db-02:disk",
+            "5d41402abc4b2a76b9719d911017c592",
+            "prod-db-03:cpu",
+            "unnamed",
+            "gone",
+            "team/alert"
+          ]
+        },
+        "target_status": "acknowledged",
+        "note": "investigating",
+        "dispose_on_new_alert": false,
+        "matched_count": 5,
+        "alerts": [
+          {
+            "fingerprint": "prod-db-01:cpu",
+            "name": "High CPU on prod-db-01",
+            "severity": "critical",
+            "from_status": "firing",
+            "service": "postgres",
+            "source": "prometheus",
+            "last_received": "2026-11-24T09:58:00.000Z",
+            "has_incident": true,
+            "has_note": true
+          },
+          {
+            "fingerprint": "prod-db-02:disk",
+            "name": "Disk almost full \u2039prod-db-02\u203a \"data\" \u00e9",
+            "severity": "warning",
+            "from_status": "firing",
+            "service": "postgres",
+            "source": "grafana",
+            "last_received": "2026-11-24T09:59:30.000Z",
+            "has_incident": false,
+            "has_note": false
+          },
+          {
+            "fingerprint": "5d41402abc4b2a76b9719d911017c592",
+            "name": null,
+            "severity": null,
+            "from_status": null,
+            "service": null,
+            "source": null,
+            "last_received": null,
+            "has_incident": null,
+            "has_note": false
+          }
+        ],
+        "skipped": [
+          {
+            "fingerprint": "prod-db-03:cpu",
+            "name": "High CPU on prod-db-03",
+            "status": "acknowledged"
+          },
+          {
+            "fingerprint": "unnamed",
+            "name": null,
+            "status": null
+          }
+        ],
+        "not_found": [
+          "gone"
+        ],
+        "unresolvable": [
+          "team/alert"
+        ]
+      },
+      "outcome": {
+        "code": "outcome_pending",
+        "message": "Keep is still applying this change.",
+        "gateway_result": "unknown",
+        "applied_count": 0,
+        "failed_count": 0,
+        "unconfirmed_count": 3,
+        "skipped_count": 0,
+        "not_found_count": 0,
+        "results": [
+          {
+            "fingerprint": "prod-db-01:cpu",
+            "name": "High CPU on prod-db-01",
+            "result": "unconfirmed",
+            "status_after": null
+          },
+          {
+            "fingerprint": "prod-db-02:disk",
+            "name": "Disk almost full \u2039prod-db-02\u203a \"data\" \u00e9",
+            "result": "unconfirmed",
+            "status_after": null
+          },
+          {
+            "fingerprint": "5d41402abc4b2a76b9719d911017c592",
+            "name": null,
+            "result": "unconfirmed",
+            "status_after": null
+          }
+        ],
+        "finished_at": null
+      }
+    },
+    "applied": {
+      "id": "00000000-0000-4000-8000-000000000014",
+      "conversation_id": "00000000-0000-4000-8000-000000000001",
+      "kind": "change_alert_status",
+      "state": "applied",
+      "permitted": true,
+      "created_at": "2026-11-24T10:00:00+00:00",
+      "expires_at": "2026-11-24T10:30:00+00:00",
+      "resolved_at": "2026-11-24T10:02:00.123456+00:00",
+      "payload": {
+        "version": 1,
+        "selector": {
+          "type": "fingerprints",
+          "fingerprints": [
+            "prod-db-01:cpu",
+            "prod-db-02:disk",
+            "5d41402abc4b2a76b9719d911017c592",
+            "prod-db-03:cpu",
+            "unnamed",
+            "gone",
+            "team/alert"
+          ]
+        },
+        "target_status": "acknowledged",
+        "note": "investigating",
+        "dispose_on_new_alert": false,
+        "matched_count": 5,
+        "alerts": [
+          {
+            "fingerprint": "prod-db-01:cpu",
+            "name": "High CPU on prod-db-01",
+            "severity": "critical",
+            "from_status": "firing",
+            "service": "postgres",
+            "source": "prometheus",
+            "last_received": "2026-11-24T09:58:00.000Z",
+            "has_incident": true,
+            "has_note": true
+          },
+          {
+            "fingerprint": "prod-db-02:disk",
+            "name": "Disk almost full \u2039prod-db-02\u203a \"data\" \u00e9",
+            "severity": "warning",
+            "from_status": "firing",
+            "service": "postgres",
+            "source": "grafana",
+            "last_received": "2026-11-24T09:59:30.000Z",
+            "has_incident": false,
+            "has_note": false
+          },
+          {
+            "fingerprint": "5d41402abc4b2a76b9719d911017c592",
+            "name": null,
+            "severity": null,
+            "from_status": null,
+            "service": null,
+            "source": null,
+            "last_received": null,
+            "has_incident": null,
+            "has_note": false
+          }
+        ],
+        "skipped": [
+          {
+            "fingerprint": "prod-db-03:cpu",
+            "name": "High CPU on prod-db-03",
+            "status": "acknowledged"
+          },
+          {
+            "fingerprint": "unnamed",
+            "name": null,
+            "status": null
+          }
+        ],
+        "not_found": [
+          "gone"
+        ],
+        "unresolvable": [
+          "team/alert"
+        ]
+      },
+      "outcome": {
+        "code": "applied",
+        "message": "All alerts were changed.",
+        "gateway_result": "ok",
+        "applied_count": 3,
+        "failed_count": 0,
+        "unconfirmed_count": 0,
+        "skipped_count": 0,
+        "not_found_count": 0,
+        "results": [
+          {
+            "fingerprint": "prod-db-01:cpu",
+            "name": "High CPU on prod-db-01",
+            "result": "applied",
+            "status_after": "acknowledged"
+          },
+          {
+            "fingerprint": "prod-db-02:disk",
+            "name": "Disk almost full \u2039prod-db-02\u203a \"data\" \u00e9",
+            "result": "applied",
+            "status_after": "acknowledged"
+          },
+          {
+            "fingerprint": "5d41402abc4b2a76b9719d911017c592",
+            "name": null,
+            "result": "applied",
+            "status_after": "acknowledged"
+          }
+        ],
+        "finished_at": "2026-11-24T10:02:00.123456+00:00"
+      }
+    },
+    "applied_nothing_to_change": {
+      "id": "00000000-0000-4000-8000-000000000015",
+      "conversation_id": "00000000-0000-4000-8000-000000000001",
+      "kind": "change_alert_status",
+      "state": "applied",
+      "permitted": true,
+      "created_at": "2026-11-24T10:00:00+00:00",
+      "expires_at": "2026-11-24T10:30:00+00:00",
+      "resolved_at": "2026-11-24T10:02:00.123456+00:00",
+      "payload": {
+        "version": 1,
+        "selector": {
+          "type": "fingerprints",
+          "fingerprints": [
+            "prod-db-01:cpu",
+            "prod-db-02:disk",
+            "5d41402abc4b2a76b9719d911017c592",
+            "prod-db-03:cpu",
+            "unnamed",
+            "gone",
+            "team/alert"
+          ]
+        },
+        "target_status": "acknowledged",
+        "note": "investigating",
+        "dispose_on_new_alert": false,
+        "matched_count": 5,
+        "alerts": [
+          {
+            "fingerprint": "prod-db-01:cpu",
+            "name": "High CPU on prod-db-01",
+            "severity": "critical",
+            "from_status": "firing",
+            "service": "postgres",
+            "source": "prometheus",
+            "last_received": "2026-11-24T09:58:00.000Z",
+            "has_incident": true,
+            "has_note": true
+          },
+          {
+            "fingerprint": "prod-db-02:disk",
+            "name": "Disk almost full \u2039prod-db-02\u203a \"data\" \u00e9",
+            "severity": "warning",
+            "from_status": "firing",
+            "service": "postgres",
+            "source": "grafana",
+            "last_received": "2026-11-24T09:59:30.000Z",
+            "has_incident": false,
+            "has_note": false
+          },
+          {
+            "fingerprint": "5d41402abc4b2a76b9719d911017c592",
+            "name": null,
+            "severity": null,
+            "from_status": null,
+            "service": null,
+            "source": null,
+            "last_received": null,
+            "has_incident": null,
+            "has_note": false
+          }
+        ],
+        "skipped": [
+          {
+            "fingerprint": "prod-db-03:cpu",
+            "name": "High CPU on prod-db-03",
+            "status": "acknowledged"
+          },
+          {
+            "fingerprint": "unnamed",
+            "name": null,
+            "status": null
+          }
+        ],
+        "not_found": [
+          "gone"
+        ],
+        "unresolvable": [
+          "team/alert"
+        ]
+      },
+      "outcome": {
+        "code": "nothing_to_change",
+        "message": "Every alert already had this status.",
+        "gateway_result": null,
+        "applied_count": 0,
+        "failed_count": 0,
+        "unconfirmed_count": 0,
+        "skipped_count": 2,
+        "not_found_count": 1,
+        "results": [
+          {
+            "fingerprint": "prod-db-01:cpu",
+            "name": "High CPU on prod-db-01",
+            "result": "skipped",
+            "status_after": "acknowledged"
+          },
+          {
+            "fingerprint": "prod-db-02:disk",
+            "name": "Disk almost full \u2039prod-db-02\u203a \"data\" \u00e9",
+            "result": "skipped",
+            "status_after": "acknowledged"
+          },
+          {
+            "fingerprint": "5d41402abc4b2a76b9719d911017c592",
+            "name": null,
+            "result": "not_found",
+            "status_after": null
+          }
+        ],
+        "finished_at": "2026-11-24T10:02:00.123456+00:00"
+      }
+    },
+    "applied_unverified": {
+      "id": "00000000-0000-4000-8000-000000000016",
+      "conversation_id": "00000000-0000-4000-8000-000000000001",
+      "kind": "change_alert_status",
+      "state": "applied",
+      "permitted": true,
+      "created_at": "2026-11-24T10:00:00+00:00",
+      "expires_at": "2026-11-24T10:30:00+00:00",
+      "resolved_at": "2026-11-24T10:02:00.123456+00:00",
+      "payload": {
+        "version": 1,
+        "selector": {
+          "type": "fingerprints",
+          "fingerprints": [
+            "prod-db-01:cpu",
+            "prod-db-02:disk",
+            "5d41402abc4b2a76b9719d911017c592",
+            "prod-db-03:cpu",
+            "unnamed",
+            "gone",
+            "team/alert"
+          ]
+        },
+        "target_status": "acknowledged",
+        "note": "investigating",
+        "dispose_on_new_alert": false,
+        "matched_count": 5,
+        "alerts": [
+          {
+            "fingerprint": "prod-db-01:cpu",
+            "name": "High CPU on prod-db-01",
+            "severity": "critical",
+            "from_status": "firing",
+            "service": "postgres",
+            "source": "prometheus",
+            "last_received": "2026-11-24T09:58:00.000Z",
+            "has_incident": true,
+            "has_note": true
+          },
+          {
+            "fingerprint": "prod-db-02:disk",
+            "name": "Disk almost full \u2039prod-db-02\u203a \"data\" \u00e9",
+            "severity": "warning",
+            "from_status": "firing",
+            "service": "postgres",
+            "source": "grafana",
+            "last_received": "2026-11-24T09:59:30.000Z",
+            "has_incident": false,
+            "has_note": false
+          },
+          {
+            "fingerprint": "5d41402abc4b2a76b9719d911017c592",
+            "name": null,
+            "severity": null,
+            "from_status": null,
+            "service": null,
+            "source": null,
+            "last_received": null,
+            "has_incident": null,
+            "has_note": false
+          }
+        ],
+        "skipped": [
+          {
+            "fingerprint": "prod-db-03:cpu",
+            "name": "High CPU on prod-db-03",
+            "status": "acknowledged"
+          },
+          {
+            "fingerprint": "unnamed",
+            "name": null,
+            "status": null
+          }
+        ],
+        "not_found": [
+          "gone"
+        ],
+        "unresolvable": [
+          "team/alert"
+        ]
+      },
+      "outcome": {
+        "code": "unverified",
+        "message": "Keep accepted the change, but it could not be checked.",
+        "gateway_result": "ok",
+        "applied_count": 0,
+        "failed_count": 0,
+        "unconfirmed_count": 3,
+        "skipped_count": 0,
+        "not_found_count": 0,
+        "results": [
+          {
+            "fingerprint": "prod-db-01:cpu",
+            "name": "High CPU on prod-db-01",
+            "result": "unconfirmed",
+            "status_after": null
+          },
+          {
+            "fingerprint": "prod-db-02:disk",
+            "name": "Disk almost full \u2039prod-db-02\u203a \"data\" \u00e9",
+            "result": "unconfirmed",
+            "status_after": null
+          },
+          {
+            "fingerprint": "5d41402abc4b2a76b9719d911017c592",
+            "name": null,
+            "result": "unconfirmed",
+            "status_after": null
+          }
+        ],
+        "finished_at": "2026-11-24T10:02:00.123456+00:00"
+      }
+    },
+    "partially_applied": {
+      "id": "00000000-0000-4000-8000-000000000017",
+      "conversation_id": "00000000-0000-4000-8000-000000000001",
+      "kind": "change_alert_status",
+      "state": "partially_applied",
+      "permitted": true,
+      "created_at": "2026-11-24T10:00:00+00:00",
+      "expires_at": "2026-11-24T10:30:00+00:00",
+      "resolved_at": "2026-11-24T10:02:00.123456+00:00",
+      "payload": {
+        "version": 1,
+        "selector": {
+          "type": "fingerprints",
+          "fingerprints": [
+            "prod-db-01:cpu",
+            "prod-db-02:disk",
+            "5d41402abc4b2a76b9719d911017c592",
+            "prod-db-03:cpu",
+            "unnamed",
+            "gone",
+            "team/alert"
+          ]
+        },
+        "target_status": "acknowledged",
+        "note": "investigating",
+        "dispose_on_new_alert": false,
+        "matched_count": 5,
+        "alerts": [
+          {
+            "fingerprint": "prod-db-01:cpu",
+            "name": "High CPU on prod-db-01",
+            "severity": "critical",
+            "from_status": "firing",
+            "service": "postgres",
+            "source": "prometheus",
+            "last_received": "2026-11-24T09:58:00.000Z",
+            "has_incident": true,
+            "has_note": true
+          },
+          {
+            "fingerprint": "prod-db-02:disk",
+            "name": "Disk almost full \u2039prod-db-02\u203a \"data\" \u00e9",
+            "severity": "warning",
+            "from_status": "firing",
+            "service": "postgres",
+            "source": "grafana",
+            "last_received": "2026-11-24T09:59:30.000Z",
+            "has_incident": false,
+            "has_note": false
+          },
+          {
+            "fingerprint": "5d41402abc4b2a76b9719d911017c592",
+            "name": null,
+            "severity": null,
+            "from_status": null,
+            "service": null,
+            "source": null,
+            "last_received": null,
+            "has_incident": null,
+            "has_note": false
+          }
+        ],
+        "skipped": [
+          {
+            "fingerprint": "prod-db-03:cpu",
+            "name": "High CPU on prod-db-03",
+            "status": "acknowledged"
+          },
+          {
+            "fingerprint": "unnamed",
+            "name": null,
+            "status": null
+          }
+        ],
+        "not_found": [
+          "gone"
+        ],
+        "unresolvable": [
+          "team/alert"
+        ]
+      },
+      "outcome": {
+        "code": "partially_applied",
+        "message": "Some alerts were changed.",
+        "gateway_result": "failed_response",
+        "applied_count": 1,
+        "failed_count": 1,
+        "unconfirmed_count": 1,
+        "skipped_count": 0,
+        "not_found_count": 0,
+        "results": [
+          {
+            "fingerprint": "prod-db-01:cpu",
+            "name": "High CPU on prod-db-01",
+            "result": "applied",
+            "status_after": "acknowledged"
+          },
+          {
+            "fingerprint": "prod-db-02:disk",
+            "name": "Disk almost full \u2039prod-db-02\u203a \"data\" \u00e9",
+            "result": "failed",
+            "status_after": "firing"
+          },
+          {
+            "fingerprint": "5d41402abc4b2a76b9719d911017c592",
+            "name": null,
+            "result": "unconfirmed",
+            "status_after": "firing"
+          }
+        ],
+        "finished_at": "2026-11-24T10:02:00.123456+00:00"
+      }
+    },
+    "failed": {
+      "id": "00000000-0000-4000-8000-000000000018",
+      "conversation_id": "00000000-0000-4000-8000-000000000001",
+      "kind": "change_alert_status",
+      "state": "failed",
+      "permitted": true,
+      "created_at": "2026-11-24T10:00:00+00:00",
+      "expires_at": "2026-11-24T10:30:00+00:00",
+      "resolved_at": "2026-11-24T10:02:00.123456+00:00",
+      "payload": {
+        "version": 1,
+        "selector": {
+          "type": "fingerprints",
+          "fingerprints": [
+            "prod-db-01:cpu",
+            "prod-db-02:disk",
+            "5d41402abc4b2a76b9719d911017c592",
+            "prod-db-03:cpu",
+            "unnamed",
+            "gone",
+            "team/alert"
+          ]
+        },
+        "target_status": "acknowledged",
+        "note": "investigating",
+        "dispose_on_new_alert": false,
+        "matched_count": 5,
+        "alerts": [
+          {
+            "fingerprint": "prod-db-01:cpu",
+            "name": "High CPU on prod-db-01",
+            "severity": "critical",
+            "from_status": "firing",
+            "service": "postgres",
+            "source": "prometheus",
+            "last_received": "2026-11-24T09:58:00.000Z",
+            "has_incident": true,
+            "has_note": true
+          },
+          {
+            "fingerprint": "prod-db-02:disk",
+            "name": "Disk almost full \u2039prod-db-02\u203a \"data\" \u00e9",
+            "severity": "warning",
+            "from_status": "firing",
+            "service": "postgres",
+            "source": "grafana",
+            "last_received": "2026-11-24T09:59:30.000Z",
+            "has_incident": false,
+            "has_note": false
+          },
+          {
+            "fingerprint": "5d41402abc4b2a76b9719d911017c592",
+            "name": null,
+            "severity": null,
+            "from_status": null,
+            "service": null,
+            "source": null,
+            "last_received": null,
+            "has_incident": null,
+            "has_note": false
+          }
+        ],
+        "skipped": [
+          {
+            "fingerprint": "prod-db-03:cpu",
+            "name": "High CPU on prod-db-03",
+            "status": "acknowledged"
+          },
+          {
+            "fingerprint": "unnamed",
+            "name": null,
+            "status": null
+          }
+        ],
+        "not_found": [
+          "gone"
+        ],
+        "unresolvable": [
+          "team/alert"
+        ]
+      },
+      "outcome": {
+        "code": "failed",
+        "message": "No alert was changed.",
+        "gateway_result": "http_error",
+        "applied_count": 0,
+        "failed_count": 3,
+        "unconfirmed_count": 0,
+        "skipped_count": 0,
+        "not_found_count": 0,
+        "results": [
+          {
+            "fingerprint": "prod-db-01:cpu",
+            "name": "High CPU on prod-db-01",
+            "result": "failed",
+            "status_after": "firing"
+          },
+          {
+            "fingerprint": "prod-db-02:disk",
+            "name": "Disk almost full \u2039prod-db-02\u203a \"data\" \u00e9",
+            "result": "failed",
+            "status_after": "firing"
+          },
+          {
+            "fingerprint": "5d41402abc4b2a76b9719d911017c592",
+            "name": null,
+            "result": "failed",
+            "status_after": "firing"
+          }
+        ],
+        "finished_at": "2026-11-24T10:02:00.123456+00:00"
+      }
+    },
+    "failed_rejected": {
+      "id": "00000000-0000-4000-8000-000000000019",
+      "conversation_id": "00000000-0000-4000-8000-000000000001",
+      "kind": "change_alert_status",
+      "state": "failed",
+      "permitted": true,
+      "created_at": "2026-11-24T10:00:00+00:00",
+      "expires_at": "2026-11-24T10:30:00+00:00",
+      "resolved_at": "2026-11-24T10:02:00.123456+00:00",
+      "payload": {
+        "version": 1,
+        "selector": {
+          "type": "fingerprints",
+          "fingerprints": [
+            "prod-db-01:cpu",
+            "prod-db-02:disk",
+            "5d41402abc4b2a76b9719d911017c592",
+            "prod-db-03:cpu",
+            "unnamed",
+            "gone",
+            "team/alert"
+          ]
+        },
+        "target_status": "acknowledged",
+        "note": "investigating",
+        "dispose_on_new_alert": false,
+        "matched_count": 5,
+        "alerts": [
+          {
+            "fingerprint": "prod-db-01:cpu",
+            "name": "High CPU on prod-db-01",
+            "severity": "critical",
+            "from_status": "firing",
+            "service": "postgres",
+            "source": "prometheus",
+            "last_received": "2026-11-24T09:58:00.000Z",
+            "has_incident": true,
+            "has_note": true
+          },
+          {
+            "fingerprint": "prod-db-02:disk",
+            "name": "Disk almost full \u2039prod-db-02\u203a \"data\" \u00e9",
+            "severity": "warning",
+            "from_status": "firing",
+            "service": "postgres",
+            "source": "grafana",
+            "last_received": "2026-11-24T09:59:30.000Z",
+            "has_incident": false,
+            "has_note": false
+          },
+          {
+            "fingerprint": "5d41402abc4b2a76b9719d911017c592",
+            "name": null,
+            "severity": null,
+            "from_status": null,
+            "service": null,
+            "source": null,
+            "last_received": null,
+            "has_incident": null,
+            "has_note": false
+          }
+        ],
+        "skipped": [
+          {
+            "fingerprint": "prod-db-03:cpu",
+            "name": "High CPU on prod-db-03",
+            "status": "acknowledged"
+          },
+          {
+            "fingerprint": "unnamed",
+            "name": null,
+            "status": null
+          }
+        ],
+        "not_found": [
+          "gone"
+        ],
+        "unresolvable": [
+          "team/alert"
+        ]
+      },
+      "outcome": {
+        "code": "failed",
+        "message": "Keep refused the change.",
+        "gateway_result": "rejected",
+        "applied_count": 0,
+        "failed_count": 3,
+        "unconfirmed_count": 0,
+        "skipped_count": 0,
+        "not_found_count": 0,
+        "results": [
+          {
+            "fingerprint": "prod-db-01:cpu",
+            "name": "High CPU on prod-db-01",
+            "result": "failed",
+            "status_after": null
+          },
+          {
+            "fingerprint": "prod-db-02:disk",
+            "name": "Disk almost full \u2039prod-db-02\u203a \"data\" \u00e9",
+            "result": "failed",
+            "status_after": null
+          },
+          {
+            "fingerprint": "5d41402abc4b2a76b9719d911017c592",
+            "name": null,
+            "result": "failed",
+            "status_after": null
+          }
+        ],
+        "finished_at": "2026-11-24T10:02:00.123456+00:00"
+      }
+    },
+    "failed_rejected_maybe_written": {
+      "id": "00000000-0000-4000-8000-000000000020",
+      "conversation_id": "00000000-0000-4000-8000-000000000001",
+      "kind": "change_alert_status",
+      "state": "failed",
+      "permitted": true,
+      "created_at": "2026-11-24T10:00:00+00:00",
+      "expires_at": "2026-11-24T10:30:00+00:00",
+      "resolved_at": "2026-11-24T10:02:00.123456+00:00",
+      "payload": {
+        "version": 1,
+        "selector": {
+          "type": "fingerprints",
+          "fingerprints": [
+            "prod-db-01:cpu",
+            "prod-db-02:disk",
+            "5d41402abc4b2a76b9719d911017c592",
+            "prod-db-03:cpu",
+            "unnamed",
+            "gone",
+            "team/alert"
+          ]
+        },
+        "target_status": "acknowledged",
+        "note": "investigating",
+        "dispose_on_new_alert": false,
+        "matched_count": 5,
+        "alerts": [
+          {
+            "fingerprint": "prod-db-01:cpu",
+            "name": "High CPU on prod-db-01",
+            "severity": "critical",
+            "from_status": "firing",
+            "service": "postgres",
+            "source": "prometheus",
+            "last_received": "2026-11-24T09:58:00.000Z",
+            "has_incident": true,
+            "has_note": true
+          },
+          {
+            "fingerprint": "prod-db-02:disk",
+            "name": "Disk almost full \u2039prod-db-02\u203a \"data\" \u00e9",
+            "severity": "warning",
+            "from_status": "firing",
+            "service": "postgres",
+            "source": "grafana",
+            "last_received": "2026-11-24T09:59:30.000Z",
+            "has_incident": false,
+            "has_note": false
+          },
+          {
+            "fingerprint": "5d41402abc4b2a76b9719d911017c592",
+            "name": null,
+            "severity": null,
+            "from_status": null,
+            "service": null,
+            "source": null,
+            "last_received": null,
+            "has_incident": null,
+            "has_note": false
+          }
+        ],
+        "skipped": [
+          {
+            "fingerprint": "prod-db-03:cpu",
+            "name": "High CPU on prod-db-03",
+            "status": "acknowledged"
+          },
+          {
+            "fingerprint": "unnamed",
+            "name": null,
+            "status": null
+          }
+        ],
+        "not_found": [
+          "gone"
+        ],
+        "unresolvable": [
+          "team/alert"
+        ]
+      },
+      "outcome": {
+        "code": "failed",
+        "message": "No alert was changed.",
+        "gateway_result": "rejected_maybe_written",
+        "applied_count": 0,
+        "failed_count": 3,
+        "unconfirmed_count": 0,
+        "skipped_count": 0,
+        "not_found_count": 0,
+        "results": [
+          {
+            "fingerprint": "prod-db-01:cpu",
+            "name": "High CPU on prod-db-01",
+            "result": "failed",
+            "status_after": "firing"
+          },
+          {
+            "fingerprint": "prod-db-02:disk",
+            "name": "Disk almost full \u2039prod-db-02\u203a \"data\" \u00e9",
+            "result": "failed",
+            "status_after": "firing"
+          },
+          {
+            "fingerprint": "5d41402abc4b2a76b9719d911017c592",
+            "name": null,
+            "result": "failed",
+            "status_after": "firing"
+          }
+        ],
+        "finished_at": "2026-11-24T10:02:00.123456+00:00"
+      }
+    },
+    "failed_not_permitted": {
+      "id": "00000000-0000-4000-8000-000000000021",
+      "conversation_id": "00000000-0000-4000-8000-000000000001",
+      "kind": "change_alert_status",
+      "state": "failed",
+      "permitted": false,
+      "created_at": "2026-11-24T10:00:00+00:00",
+      "expires_at": "2026-11-24T10:30:00+00:00",
+      "resolved_at": "2026-11-24T10:02:00.123456+00:00",
+      "payload": {
+        "version": 1,
+        "selector": {
+          "type": "fingerprints",
+          "fingerprints": [
+            "prod-db-01:cpu",
+            "prod-db-02:disk",
+            "5d41402abc4b2a76b9719d911017c592",
+            "prod-db-03:cpu",
+            "unnamed",
+            "gone",
+            "team/alert"
+          ]
+        },
+        "target_status": "acknowledged",
+        "note": "investigating",
+        "dispose_on_new_alert": false,
+        "matched_count": 5,
+        "alerts": [
+          {
+            "fingerprint": "prod-db-01:cpu",
+            "name": "High CPU on prod-db-01",
+            "severity": "critical",
+            "from_status": "firing",
+            "service": "postgres",
+            "source": "prometheus",
+            "last_received": "2026-11-24T09:58:00.000Z",
+            "has_incident": true,
+            "has_note": true
+          },
+          {
+            "fingerprint": "prod-db-02:disk",
+            "name": "Disk almost full \u2039prod-db-02\u203a \"data\" \u00e9",
+            "severity": "warning",
+            "from_status": "firing",
+            "service": "postgres",
+            "source": "grafana",
+            "last_received": "2026-11-24T09:59:30.000Z",
+            "has_incident": false,
+            "has_note": false
+          },
+          {
+            "fingerprint": "5d41402abc4b2a76b9719d911017c592",
+            "name": null,
+            "severity": null,
+            "from_status": null,
+            "service": null,
+            "source": null,
+            "last_received": null,
+            "has_incident": null,
+            "has_note": false
+          }
+        ],
+        "skipped": [
+          {
+            "fingerprint": "prod-db-03:cpu",
+            "name": "High CPU on prod-db-03",
+            "status": "acknowledged"
+          },
+          {
+            "fingerprint": "unnamed",
+            "name": null,
+            "status": null
+          }
+        ],
+        "not_found": [
+          "gone"
+        ],
+        "unresolvable": [
+          "team/alert"
+        ]
+      },
+      "outcome": {
+        "code": "not_permitted",
+        "message": "You do not have permission to change alert status.",
+        "gateway_result": "not_permitted",
+        "applied_count": 0,
+        "failed_count": 3,
+        "unconfirmed_count": 0,
+        "skipped_count": 0,
+        "not_found_count": 0,
+        "results": [
+          {
+            "fingerprint": "prod-db-01:cpu",
+            "name": "High CPU on prod-db-01",
+            "result": "failed",
+            "status_after": null
+          },
+          {
+            "fingerprint": "prod-db-02:disk",
+            "name": "Disk almost full \u2039prod-db-02\u203a \"data\" \u00e9",
+            "result": "failed",
+            "status_after": null
+          },
+          {
+            "fingerprint": "5d41402abc4b2a76b9719d911017c592",
+            "name": null,
+            "result": "failed",
+            "status_after": null
+          }
+        ],
+        "finished_at": "2026-11-24T10:02:00.123456+00:00"
+      }
+    },
+    "failed_read_only": {
+      "id": "00000000-0000-4000-8000-000000000022",
+      "conversation_id": "00000000-0000-4000-8000-000000000001",
+      "kind": "change_alert_status",
+      "state": "failed",
+      "permitted": true,
+      "created_at": "2026-11-24T10:00:00+00:00",
+      "expires_at": "2026-11-24T10:30:00+00:00",
+      "resolved_at": "2026-11-24T10:02:00.123456+00:00",
+      "payload": {
+        "version": 1,
+        "selector": {
+          "type": "fingerprints",
+          "fingerprints": [
+            "prod-db-01:cpu",
+            "prod-db-02:disk",
+            "5d41402abc4b2a76b9719d911017c592",
+            "prod-db-03:cpu",
+            "unnamed",
+            "gone",
+            "team/alert"
+          ]
+        },
+        "target_status": "acknowledged",
+        "note": "investigating",
+        "dispose_on_new_alert": false,
+        "matched_count": 5,
+        "alerts": [
+          {
+            "fingerprint": "prod-db-01:cpu",
+            "name": "High CPU on prod-db-01",
+            "severity": "critical",
+            "from_status": "firing",
+            "service": "postgres",
+            "source": "prometheus",
+            "last_received": "2026-11-24T09:58:00.000Z",
+            "has_incident": true,
+            "has_note": true
+          },
+          {
+            "fingerprint": "prod-db-02:disk",
+            "name": "Disk almost full \u2039prod-db-02\u203a \"data\" \u00e9",
+            "severity": "warning",
+            "from_status": "firing",
+            "service": "postgres",
+            "source": "grafana",
+            "last_received": "2026-11-24T09:59:30.000Z",
+            "has_incident": false,
+            "has_note": false
+          },
+          {
+            "fingerprint": "5d41402abc4b2a76b9719d911017c592",
+            "name": null,
+            "severity": null,
+            "from_status": null,
+            "service": null,
+            "source": null,
+            "last_received": null,
+            "has_incident": null,
+            "has_note": false
+          }
+        ],
+        "skipped": [
+          {
+            "fingerprint": "prod-db-03:cpu",
+            "name": "High CPU on prod-db-03",
+            "status": "acknowledged"
+          },
+          {
+            "fingerprint": "unnamed",
+            "name": null,
+            "status": null
+          }
+        ],
+        "not_found": [
+          "gone"
+        ],
+        "unresolvable": [
+          "team/alert"
+        ]
+      },
+      "outcome": {
+        "code": "read_only",
+        "message": "Keep is in read-only mode.",
+        "gateway_result": "read_only",
+        "applied_count": 0,
+        "failed_count": 3,
+        "unconfirmed_count": 0,
+        "skipped_count": 0,
+        "not_found_count": 0,
+        "results": [
+          {
+            "fingerprint": "prod-db-01:cpu",
+            "name": "High CPU on prod-db-01",
+            "result": "failed",
+            "status_after": null
+          },
+          {
+            "fingerprint": "prod-db-02:disk",
+            "name": "Disk almost full \u2039prod-db-02\u203a \"data\" \u00e9",
+            "result": "failed",
+            "status_after": null
+          },
+          {
+            "fingerprint": "5d41402abc4b2a76b9719d911017c592",
+            "name": null,
+            "result": "failed",
+            "status_after": null
+          }
+        ],
+        "finished_at": "2026-11-24T10:02:00.123456+00:00"
+      }
+    },
+    "failed_unauthenticated": {
+      "id": "00000000-0000-4000-8000-000000000023",
+      "conversation_id": "00000000-0000-4000-8000-000000000001",
+      "kind": "change_alert_status",
+      "state": "failed",
+      "permitted": true,
+      "created_at": "2026-11-24T10:00:00+00:00",
+      "expires_at": "2026-11-24T10:30:00+00:00",
+      "resolved_at": "2026-11-24T10:02:00.123456+00:00",
+      "payload": {
+        "version": 1,
+        "selector": {
+          "type": "fingerprints",
+          "fingerprints": [
+            "prod-db-01:cpu",
+            "prod-db-02:disk",
+            "5d41402abc4b2a76b9719d911017c592",
+            "prod-db-03:cpu",
+            "unnamed",
+            "gone",
+            "team/alert"
+          ]
+        },
+        "target_status": "acknowledged",
+        "note": "investigating",
+        "dispose_on_new_alert": false,
+        "matched_count": 5,
+        "alerts": [
+          {
+            "fingerprint": "prod-db-01:cpu",
+            "name": "High CPU on prod-db-01",
+            "severity": "critical",
+            "from_status": "firing",
+            "service": "postgres",
+            "source": "prometheus",
+            "last_received": "2026-11-24T09:58:00.000Z",
+            "has_incident": true,
+            "has_note": true
+          },
+          {
+            "fingerprint": "prod-db-02:disk",
+            "name": "Disk almost full \u2039prod-db-02\u203a \"data\" \u00e9",
+            "severity": "warning",
+            "from_status": "firing",
+            "service": "postgres",
+            "source": "grafana",
+            "last_received": "2026-11-24T09:59:30.000Z",
+            "has_incident": false,
+            "has_note": false
+          },
+          {
+            "fingerprint": "5d41402abc4b2a76b9719d911017c592",
+            "name": null,
+            "severity": null,
+            "from_status": null,
+            "service": null,
+            "source": null,
+            "last_received": null,
+            "has_incident": null,
+            "has_note": false
+          }
+        ],
+        "skipped": [
+          {
+            "fingerprint": "prod-db-03:cpu",
+            "name": "High CPU on prod-db-03",
+            "status": "acknowledged"
+          },
+          {
+            "fingerprint": "unnamed",
+            "name": null,
+            "status": null
+          }
+        ],
+        "not_found": [
+          "gone"
+        ],
+        "unresolvable": [
+          "team/alert"
+        ]
+      },
+      "outcome": {
+        "code": "failed",
+        "message": "Your session expired before the change was made.",
+        "gateway_result": "unauthenticated",
+        "applied_count": 0,
+        "failed_count": 3,
+        "unconfirmed_count": 0,
+        "skipped_count": 0,
+        "not_found_count": 0,
+        "results": [
+          {
+            "fingerprint": "prod-db-01:cpu",
+            "name": "High CPU on prod-db-01",
+            "result": "failed",
+            "status_after": null
+          },
+          {
+            "fingerprint": "prod-db-02:disk",
+            "name": "Disk almost full \u2039prod-db-02\u203a \"data\" \u00e9",
+            "result": "failed",
+            "status_after": null
+          },
+          {
+            "fingerprint": "5d41402abc4b2a76b9719d911017c592",
+            "name": null,
+            "result": "failed",
+            "status_after": null
+          }
+        ],
+        "finished_at": "2026-11-24T10:02:00.123456+00:00"
+      }
+    },
+    "failed_interrupted": {
+      "id": "00000000-0000-4000-8000-000000000024",
+      "conversation_id": "00000000-0000-4000-8000-000000000001",
+      "kind": "change_alert_status",
+      "state": "failed",
+      "permitted": true,
+      "created_at": "2026-11-24T10:00:00+00:00",
+      "expires_at": "2026-11-24T10:30:00+00:00",
+      "resolved_at": "2026-11-24T10:02:00.123456+00:00",
+      "payload": {
+        "version": 1,
+        "selector": {
+          "type": "fingerprints",
+          "fingerprints": [
+            "prod-db-01:cpu",
+            "prod-db-02:disk",
+            "5d41402abc4b2a76b9719d911017c592",
+            "prod-db-03:cpu",
+            "unnamed",
+            "gone",
+            "team/alert"
+          ]
+        },
+        "target_status": "acknowledged",
+        "note": "investigating",
+        "dispose_on_new_alert": false,
+        "matched_count": 5,
+        "alerts": [
+          {
+            "fingerprint": "prod-db-01:cpu",
+            "name": "High CPU on prod-db-01",
+            "severity": "critical",
+            "from_status": "firing",
+            "service": "postgres",
+            "source": "prometheus",
+            "last_received": "2026-11-24T09:58:00.000Z",
+            "has_incident": true,
+            "has_note": true
+          },
+          {
+            "fingerprint": "prod-db-02:disk",
+            "name": "Disk almost full \u2039prod-db-02\u203a \"data\" \u00e9",
+            "severity": "warning",
+            "from_status": "firing",
+            "service": "postgres",
+            "source": "grafana",
+            "last_received": "2026-11-24T09:59:30.000Z",
+            "has_incident": false,
+            "has_note": false
+          },
+          {
+            "fingerprint": "5d41402abc4b2a76b9719d911017c592",
+            "name": null,
+            "severity": null,
+            "from_status": null,
+            "service": null,
+            "source": null,
+            "last_received": null,
+            "has_incident": null,
+            "has_note": false
+          }
+        ],
+        "skipped": [
+          {
+            "fingerprint": "prod-db-03:cpu",
+            "name": "High CPU on prod-db-03",
+            "status": "acknowledged"
+          },
+          {
+            "fingerprint": "unnamed",
+            "name": null,
+            "status": null
+          }
+        ],
+        "not_found": [
+          "gone"
+        ],
+        "unresolvable": [
+          "team/alert"
+        ]
+      },
+      "outcome": {
+        "code": "interrupted",
+        "message": "The change was interrupted and no alert was changed.",
+        "gateway_result": "unknown",
+        "applied_count": 0,
+        "failed_count": 2,
+        "unconfirmed_count": 1,
+        "skipped_count": 0,
+        "not_found_count": 0,
+        "results": [
+          {
+            "fingerprint": "prod-db-01:cpu",
+            "name": "High CPU on prod-db-01",
+            "result": "failed",
+            "status_after": "firing"
+          },
+          {
+            "fingerprint": "prod-db-02:disk",
+            "name": "Disk almost full \u2039prod-db-02\u203a \"data\" \u00e9",
+            "result": "failed",
+            "status_after": "firing"
+          },
+          {
+            "fingerprint": "5d41402abc4b2a76b9719d911017c592",
+            "name": null,
+            "result": "unconfirmed",
+            "status_after": "firing"
+          }
+        ],
+        "finished_at": "2026-11-24T10:02:00.123456+00:00"
+      }
+    },
+    "failed_outcome_unknown": {
+      "id": "00000000-0000-4000-8000-000000000025",
+      "conversation_id": "00000000-0000-4000-8000-000000000001",
+      "kind": "change_alert_status",
+      "state": "failed",
+      "permitted": true,
+      "created_at": "2026-11-24T10:00:00+00:00",
+      "expires_at": "2026-11-24T10:30:00+00:00",
+      "resolved_at": "2026-11-24T10:02:00.123456+00:00",
+      "payload": {
+        "version": 1,
+        "selector": {
+          "type": "fingerprints",
+          "fingerprints": [
+            "prod-db-01:cpu",
+            "prod-db-02:disk",
+            "5d41402abc4b2a76b9719d911017c592",
+            "prod-db-03:cpu",
+            "unnamed",
+            "gone",
+            "team/alert"
+          ]
+        },
+        "target_status": "acknowledged",
+        "note": "investigating",
+        "dispose_on_new_alert": false,
+        "matched_count": 5,
+        "alerts": [
+          {
+            "fingerprint": "prod-db-01:cpu",
+            "name": "High CPU on prod-db-01",
+            "severity": "critical",
+            "from_status": "firing",
+            "service": "postgres",
+            "source": "prometheus",
+            "last_received": "2026-11-24T09:58:00.000Z",
+            "has_incident": true,
+            "has_note": true
+          },
+          {
+            "fingerprint": "prod-db-02:disk",
+            "name": "Disk almost full \u2039prod-db-02\u203a \"data\" \u00e9",
+            "severity": "warning",
+            "from_status": "firing",
+            "service": "postgres",
+            "source": "grafana",
+            "last_received": "2026-11-24T09:59:30.000Z",
+            "has_incident": false,
+            "has_note": false
+          },
+          {
+            "fingerprint": "5d41402abc4b2a76b9719d911017c592",
+            "name": null,
+            "severity": null,
+            "from_status": null,
+            "service": null,
+            "source": null,
+            "last_received": null,
+            "has_incident": null,
+            "has_note": false
+          }
+        ],
+        "skipped": [
+          {
+            "fingerprint": "prod-db-03:cpu",
+            "name": "High CPU on prod-db-03",
+            "status": "acknowledged"
+          },
+          {
+            "fingerprint": "unnamed",
+            "name": null,
+            "status": null
+          }
+        ],
+        "not_found": [
+          "gone"
+        ],
+        "unresolvable": [
+          "team/alert"
+        ]
+      },
+      "outcome": {
+        "code": "outcome_unknown",
+        "message": "The result of this change could not be determined.",
+        "gateway_result": "unknown",
+        "applied_count": 0,
+        "failed_count": 0,
+        "unconfirmed_count": 3,
+        "skipped_count": 0,
+        "not_found_count": 0,
+        "results": [
+          {
+            "fingerprint": "prod-db-01:cpu",
+            "name": "High CPU on prod-db-01",
+            "result": "unconfirmed",
+            "status_after": null
+          },
+          {
+            "fingerprint": "prod-db-02:disk",
+            "name": "Disk almost full \u2039prod-db-02\u203a \"data\" \u00e9",
+            "result": "unconfirmed",
+            "status_after": null
+          },
+          {
+            "fingerprint": "5d41402abc4b2a76b9719d911017c592",
+            "name": null,
+            "result": "unconfirmed",
+            "status_after": null
+          }
+        ],
+        "finished_at": "2026-11-24T10:02:00.123456+00:00"
+      }
+    },
+    "discarded": {
+      "id": "00000000-0000-4000-8000-000000000026",
+      "conversation_id": "00000000-0000-4000-8000-000000000001",
+      "kind": "change_alert_status",
+      "state": "discarded",
+      "permitted": true,
+      "created_at": "2026-11-24T10:00:00+00:00",
+      "expires_at": "2026-11-24T10:30:00+00:00",
+      "resolved_at": "2026-11-24T10:02:00.123456+00:00",
+      "payload": {
+        "version": 1,
+        "selector": {
+          "type": "fingerprints",
+          "fingerprints": [
+            "prod-db-01:cpu",
+            "prod-db-02:disk",
+            "5d41402abc4b2a76b9719d911017c592",
+            "prod-db-03:cpu",
+            "unnamed",
+            "gone",
+            "team/alert"
+          ]
+        },
+        "target_status": "acknowledged",
+        "note": "investigating",
+        "dispose_on_new_alert": false,
+        "matched_count": 5,
+        "alerts": [
+          {
+            "fingerprint": "prod-db-01:cpu",
+            "name": "High CPU on prod-db-01",
+            "severity": "critical",
+            "from_status": "firing",
+            "service": "postgres",
+            "source": "prometheus",
+            "last_received": "2026-11-24T09:58:00.000Z",
+            "has_incident": true,
+            "has_note": true
+          },
+          {
+            "fingerprint": "prod-db-02:disk",
+            "name": "Disk almost full \u2039prod-db-02\u203a \"data\" \u00e9",
+            "severity": "warning",
+            "from_status": "firing",
+            "service": "postgres",
+            "source": "grafana",
+            "last_received": "2026-11-24T09:59:30.000Z",
+            "has_incident": false,
+            "has_note": false
+          },
+          {
+            "fingerprint": "5d41402abc4b2a76b9719d911017c592",
+            "name": null,
+            "severity": null,
+            "from_status": null,
+            "service": null,
+            "source": null,
+            "last_received": null,
+            "has_incident": null,
+            "has_note": false
+          }
+        ],
+        "skipped": [
+          {
+            "fingerprint": "prod-db-03:cpu",
+            "name": "High CPU on prod-db-03",
+            "status": "acknowledged"
+          },
+          {
+            "fingerprint": "unnamed",
+            "name": null,
+            "status": null
+          }
+        ],
+        "not_found": [
+          "gone"
+        ],
+        "unresolvable": [
+          "team/alert"
+        ]
+      },
+      "outcome": null
+    },
+    "expired": {
+      "id": "00000000-0000-4000-8000-000000000027",
+      "conversation_id": "00000000-0000-4000-8000-000000000001",
+      "kind": "change_alert_status",
+      "state": "expired",
+      "permitted": true,
+      "created_at": "2026-11-24T10:00:00+00:00",
+      "expires_at": "2026-11-24T10:30:00+00:00",
+      "resolved_at": "2026-11-24T10:02:00.123456+00:00",
+      "payload": {
+        "version": 1,
+        "selector": {
+          "type": "fingerprints",
+          "fingerprints": [
+            "prod-db-01:cpu",
+            "prod-db-02:disk",
+            "5d41402abc4b2a76b9719d911017c592",
+            "prod-db-03:cpu",
+            "unnamed",
+            "gone",
+            "team/alert"
+          ]
+        },
+        "target_status": "acknowledged",
+        "note": "investigating",
+        "dispose_on_new_alert": false,
+        "matched_count": 5,
+        "alerts": [
+          {
+            "fingerprint": "prod-db-01:cpu",
+            "name": "High CPU on prod-db-01",
+            "severity": "critical",
+            "from_status": "firing",
+            "service": "postgres",
+            "source": "prometheus",
+            "last_received": "2026-11-24T09:58:00.000Z",
+            "has_incident": true,
+            "has_note": true
+          },
+          {
+            "fingerprint": "prod-db-02:disk",
+            "name": "Disk almost full \u2039prod-db-02\u203a \"data\" \u00e9",
+            "severity": "warning",
+            "from_status": "firing",
+            "service": "postgres",
+            "source": "grafana",
+            "last_received": "2026-11-24T09:59:30.000Z",
+            "has_incident": false,
+            "has_note": false
+          },
+          {
+            "fingerprint": "5d41402abc4b2a76b9719d911017c592",
+            "name": null,
+            "severity": null,
+            "from_status": null,
+            "service": null,
+            "source": null,
+            "last_received": null,
+            "has_incident": null,
+            "has_note": false
+          }
+        ],
+        "skipped": [
+          {
+            "fingerprint": "prod-db-03:cpu",
+            "name": "High CPU on prod-db-03",
+            "status": "acknowledged"
+          },
+          {
+            "fingerprint": "unnamed",
+            "name": null,
+            "status": null
+          }
+        ],
+        "not_found": [
+          "gone"
+        ],
+        "unresolvable": [
+          "team/alert"
+        ]
+      },
+      "outcome": null
+    }
+  },
+  "conversations": {
+    "finished": {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "title": "acknowledge these with the note investigating",
+      "created_at": "2026-11-24T10:00:00+00:00",
+      "updated_at": "2026-11-24T10:02:00.123456+00:00",
+      "turn_in_progress": false,
+      "has_more": true,
+      "items": [
+        {
+          "type": "message",
+          "id": "00000000-0000-4000-8000-000000000002",
+          "role": "user",
+          "content": "acknowledge these with the note investigating",
+          "status": "complete",
+          "created_at": "2026-11-24T10:00:00+00:00"
+        },
+        {
+          "type": "message",
+          "id": "00000000-0000-4000-8000-000000000004",
+          "role": "assistant",
+          "content": "Let me look at the selected alerts.",
+          "status": "complete",
+          "created_at": "2026-11-24T10:00:00+00:00"
+        },
+        {
+          "type": "draft",
+          "draft": {
+            "id": "00000000-0000-4000-8000-000000000014",
+            "conversation_id": "00000000-0000-4000-8000-000000000001",
+            "kind": "change_alert_status",
+            "state": "applied",
+            "permitted": true,
+            "created_at": "2026-11-24T10:00:00+00:00",
+            "expires_at": "2026-11-24T10:30:00+00:00",
+            "resolved_at": "2026-11-24T10:02:00.123456+00:00",
+            "payload": {
+              "version": 1,
+              "selector": {
+                "type": "fingerprints",
+                "fingerprints": [
+                  "prod-db-01:cpu",
+                  "prod-db-02:disk",
+                  "5d41402abc4b2a76b9719d911017c592",
+                  "prod-db-03:cpu",
+                  "unnamed",
+                  "gone",
+                  "team/alert"
+                ]
+              },
+              "target_status": "acknowledged",
+              "note": "investigating",
+              "dispose_on_new_alert": false,
+              "matched_count": 5,
+              "alerts": [
+                {
+                  "fingerprint": "prod-db-01:cpu",
+                  "name": "High CPU on prod-db-01",
+                  "severity": "critical",
+                  "from_status": "firing",
+                  "service": "postgres",
+                  "source": "prometheus",
+                  "last_received": "2026-11-24T09:58:00.000Z",
+                  "has_incident": true,
+                  "has_note": true
+                },
+                {
+                  "fingerprint": "prod-db-02:disk",
+                  "name": "Disk almost full \u2039prod-db-02\u203a \"data\" \u00e9",
+                  "severity": "warning",
+                  "from_status": "firing",
+                  "service": "postgres",
+                  "source": "grafana",
+                  "last_received": "2026-11-24T09:59:30.000Z",
+                  "has_incident": false,
+                  "has_note": false
+                },
+                {
+                  "fingerprint": "5d41402abc4b2a76b9719d911017c592",
+                  "name": null,
+                  "severity": null,
+                  "from_status": null,
+                  "service": null,
+                  "source": null,
+                  "last_received": null,
+                  "has_incident": null,
+                  "has_note": false
+                }
+              ],
+              "skipped": [
+                {
+                  "fingerprint": "prod-db-03:cpu",
+                  "name": "High CPU on prod-db-03",
+                  "status": "acknowledged"
+                },
+                {
+                  "fingerprint": "unnamed",
+                  "name": null,
+                  "status": null
+                }
+              ],
+              "not_found": [
+                "gone"
+              ],
+              "unresolvable": [
+                "team/alert"
+              ]
+            },
+            "outcome": {
+              "code": "applied",
+              "message": "All alerts were changed.",
+              "gateway_result": "ok",
+              "applied_count": 3,
+              "failed_count": 0,
+              "unconfirmed_count": 0,
+              "skipped_count": 0,
+              "not_found_count": 0,
+              "results": [
+                {
+                  "fingerprint": "prod-db-01:cpu",
+                  "name": "High CPU on prod-db-01",
+                  "result": "applied",
+                  "status_after": "acknowledged"
+                },
+                {
+                  "fingerprint": "prod-db-02:disk",
+                  "name": "Disk almost full \u2039prod-db-02\u203a \"data\" \u00e9",
+                  "result": "applied",
+                  "status_after": "acknowledged"
+                },
+                {
+                  "fingerprint": "5d41402abc4b2a76b9719d911017c592",
+                  "name": null,
+                  "result": "applied",
+                  "status_after": "acknowledged"
+                }
+              ],
+              "finished_at": "2026-11-24T10:02:00.123456+00:00"
+            }
+          }
+        },
+        {
+          "type": "message",
+          "id": "00000000-0000-4000-8000-000000000005",
+          "role": "assistant",
+          "content": "I drafted the change.",
+          "status": "complete",
+          "created_at": "2026-11-24T10:00:00+00:00"
+        }
+      ]
+    },
+    "in_progress": {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "title": null,
+      "created_at": "2026-11-24T10:00:00+00:00",
+      "updated_at": "2026-11-24T10:00:00+00:00",
+      "turn_in_progress": true,
+      "has_more": false,
+      "items": [
+        {
+          "type": "message",
+          "id": "00000000-0000-4000-8000-000000000002",
+          "role": "user",
+          "content": "resolve them",
+          "status": "complete",
+          "created_at": "2026-11-24T10:00:00+00:00"
+        },
+        {
+          "type": "message",
+          "id": "00000000-0000-4000-8000-000000000004",
+          "role": "assistant",
+          "content": "I was about to",
+          "status": "interrupted",
+          "created_at": "2026-11-24T10:00:00+00:00"
+        },
+        {
+          "type": "message",
+          "id": "00000000-0000-4000-8000-000000000006",
+          "role": "user",
+          "content": "try again",
+          "status": "complete",
+          "created_at": "2026-11-24T10:00:00+00:00"
+        },
+        {
+          "type": "message",
+          "id": "00000000-0000-4000-8000-000000000007",
+          "role": "assistant",
+          "content": "Looking",
+          "status": "error",
+          "created_at": "2026-11-24T10:00:00+00:00"
+        },
+        {
+          "type": "draft",
+          "draft": {
+            "id": "00000000-0000-4000-8000-000000000013",
+            "conversation_id": "00000000-0000-4000-8000-000000000001",
+            "kind": "change_alert_status",
+            "state": "applying",
+            "permitted": true,
+            "created_at": "2026-11-24T10:00:00+00:00",
+            "expires_at": "2026-11-24T10:30:00+00:00",
+            "resolved_at": null,
+            "payload": {
+              "version": 1,
+              "selector": {
+                "type": "fingerprints",
+                "fingerprints": [
+                  "prod-db-01:cpu",
+                  "prod-db-02:disk",
+                  "5d41402abc4b2a76b9719d911017c592",
+                  "prod-db-03:cpu",
+                  "unnamed",
+                  "gone",
+                  "team/alert"
+                ]
+              },
+              "target_status": "acknowledged",
+              "note": "investigating",
+              "dispose_on_new_alert": false,
+              "matched_count": 5,
+              "alerts": [
+                {
+                  "fingerprint": "prod-db-01:cpu",
+                  "name": "High CPU on prod-db-01",
+                  "severity": "critical",
+                  "from_status": "firing",
+                  "service": "postgres",
+                  "source": "prometheus",
+                  "last_received": "2026-11-24T09:58:00.000Z",
+                  "has_incident": true,
+                  "has_note": true
+                },
+                {
+                  "fingerprint": "prod-db-02:disk",
+                  "name": "Disk almost full \u2039prod-db-02\u203a \"data\" \u00e9",
+                  "severity": "warning",
+                  "from_status": "firing",
+                  "service": "postgres",
+                  "source": "grafana",
+                  "last_received": "2026-11-24T09:59:30.000Z",
+                  "has_incident": false,
+                  "has_note": false
+                },
+                {
+                  "fingerprint": "5d41402abc4b2a76b9719d911017c592",
+                  "name": null,
+                  "severity": null,
+                  "from_status": null,
+                  "service": null,
+                  "source": null,
+                  "last_received": null,
+                  "has_incident": null,
+                  "has_note": false
+                }
+              ],
+              "skipped": [
+                {
+                  "fingerprint": "prod-db-03:cpu",
+                  "name": "High CPU on prod-db-03",
+                  "status": "acknowledged"
+                },
+                {
+                  "fingerprint": "unnamed",
+                  "name": null,
+                  "status": null
+                }
+              ],
+              "not_found": [
+                "gone"
+              ],
+              "unresolvable": [
+                "team/alert"
+              ]
+            },
+            "outcome": {
+              "code": "outcome_pending",
+              "message": "Keep is still applying this change.",
+              "gateway_result": "unknown",
+              "applied_count": 0,
+              "failed_count": 0,
+              "unconfirmed_count": 3,
+              "skipped_count": 0,
+              "not_found_count": 0,
+              "results": [
+                {
+                  "fingerprint": "prod-db-01:cpu",
+                  "name": "High CPU on prod-db-01",
+                  "result": "unconfirmed",
+                  "status_after": null
+                },
+                {
+                  "fingerprint": "prod-db-02:disk",
+                  "name": "Disk almost full \u2039prod-db-02\u203a \"data\" \u00e9",
+                  "result": "unconfirmed",
+                  "status_after": null
+                },
+                {
+                  "fingerprint": "5d41402abc4b2a76b9719d911017c592",
+                  "name": null,
+                  "result": "unconfirmed",
+                  "status_after": null
+                }
+              ],
+              "finished_at": null
+            }
+          }
+        }
+      ]
+    }
+  },
+  "errors": {
+    "unauthenticated": {
+      "status": 401,
+      "headers": {},
+      "body": {
+        "errors": [
+          {
+            "field": null,
+            "code": "unauthenticated",
+            "message": "Sign in again to use the assistant."
+          }
+        ],
+        "detail": "Sign in again to use the assistant."
+      }
+    },
+    "forbidden": {
+      "status": 403,
+      "headers": {},
+      "body": {
+        "errors": [
+          {
+            "field": null,
+            "code": "forbidden",
+            "message": "You do not have access to the assistant."
+          }
+        ],
+        "detail": "You do not have access to the assistant."
+      }
+    },
+    "identity_unavailable": {
+      "status": 403,
+      "headers": {},
+      "body": {
+        "errors": [
+          {
+            "field": null,
+            "code": "identity_unavailable",
+            "message": "Your account has no email address, so the assistant cannot be used."
+          }
+        ],
+        "detail": "Your account has no email address, so the assistant cannot be used."
+      }
+    },
+    "conversation_not_found": {
+      "status": 404,
+      "headers": {},
+      "body": {
+        "errors": [
+          {
+            "field": null,
+            "code": "conversation_not_found",
+            "message": "Conversation not found."
+          }
+        ],
+        "detail": "Conversation not found."
+      }
+    },
+    "draft_not_found": {
+      "status": 404,
+      "headers": {},
+      "body": {
+        "errors": [
+          {
+            "field": null,
+            "code": "draft_not_found",
+            "message": "Draft not found."
+          }
+        ],
+        "detail": "Draft not found."
+      }
+    },
+    "turn_in_progress": {
+      "status": 409,
+      "headers": {},
+      "body": {
+        "errors": [
+          {
+            "field": null,
+            "code": "turn_in_progress",
+            "message": "The assistant is still answering in this conversation."
+          }
+        ],
+        "detail": "The assistant is still answering in this conversation."
+      }
+    },
+    "draft_not_pending": {
+      "status": 409,
+      "headers": {},
+      "body": {
+        "errors": [
+          {
+            "field": null,
+            "code": "draft_not_pending",
+            "message": "This draft was already handled."
+          }
+        ],
+        "detail": "This draft was already handled.",
+        "draft": {
+          "id": "00000000-0000-4000-8000-000000000014",
+          "conversation_id": "00000000-0000-4000-8000-000000000001",
+          "kind": "change_alert_status",
+          "state": "applied",
+          "permitted": true,
+          "created_at": "2026-11-24T10:00:00+00:00",
+          "expires_at": "2026-11-24T10:30:00+00:00",
+          "resolved_at": "2026-11-24T10:02:00.123456+00:00",
+          "payload": {
+            "version": 1,
+            "selector": {
+              "type": "fingerprints",
+              "fingerprints": [
+                "prod-db-01:cpu",
+                "prod-db-02:disk",
+                "5d41402abc4b2a76b9719d911017c592",
+                "prod-db-03:cpu",
+                "unnamed",
+                "gone",
+                "team/alert"
+              ]
+            },
+            "target_status": "acknowledged",
+            "note": "investigating",
+            "dispose_on_new_alert": false,
+            "matched_count": 5,
+            "alerts": [
+              {
+                "fingerprint": "prod-db-01:cpu",
+                "name": "High CPU on prod-db-01",
+                "severity": "critical",
+                "from_status": "firing",
+                "service": "postgres",
+                "source": "prometheus",
+                "last_received": "2026-11-24T09:58:00.000Z",
+                "has_incident": true,
+                "has_note": true
+              },
+              {
+                "fingerprint": "prod-db-02:disk",
+                "name": "Disk almost full \u2039prod-db-02\u203a \"data\" \u00e9",
+                "severity": "warning",
+                "from_status": "firing",
+                "service": "postgres",
+                "source": "grafana",
+                "last_received": "2026-11-24T09:59:30.000Z",
+                "has_incident": false,
+                "has_note": false
+              },
+              {
+                "fingerprint": "5d41402abc4b2a76b9719d911017c592",
+                "name": null,
+                "severity": null,
+                "from_status": null,
+                "service": null,
+                "source": null,
+                "last_received": null,
+                "has_incident": null,
+                "has_note": false
+              }
+            ],
+            "skipped": [
+              {
+                "fingerprint": "prod-db-03:cpu",
+                "name": "High CPU on prod-db-03",
+                "status": "acknowledged"
+              },
+              {
+                "fingerprint": "unnamed",
+                "name": null,
+                "status": null
+              }
+            ],
+            "not_found": [
+              "gone"
+            ],
+            "unresolvable": [
+              "team/alert"
+            ]
+          },
+          "outcome": {
+            "code": "applied",
+            "message": "All alerts were changed.",
+            "gateway_result": "ok",
+            "applied_count": 3,
+            "failed_count": 0,
+            "unconfirmed_count": 0,
+            "skipped_count": 0,
+            "not_found_count": 0,
+            "results": [
+              {
+                "fingerprint": "prod-db-01:cpu",
+                "name": "High CPU on prod-db-01",
+                "result": "applied",
+                "status_after": "acknowledged"
+              },
+              {
+                "fingerprint": "prod-db-02:disk",
+                "name": "Disk almost full \u2039prod-db-02\u203a \"data\" \u00e9",
+                "result": "applied",
+                "status_after": "acknowledged"
+              },
+              {
+                "fingerprint": "5d41402abc4b2a76b9719d911017c592",
+                "name": null,
+                "result": "applied",
+                "status_after": "acknowledged"
+              }
+            ],
+            "finished_at": "2026-11-24T10:02:00.123456+00:00"
+          }
+        }
+      }
+    },
+    "draft_expired": {
+      "status": 409,
+      "headers": {},
+      "body": {
+        "errors": [
+          {
+            "field": null,
+            "code": "draft_expired",
+            "message": "This draft has expired."
+          }
+        ],
+        "detail": "This draft has expired.",
+        "draft": {
+          "id": "00000000-0000-4000-8000-000000000027",
+          "conversation_id": "00000000-0000-4000-8000-000000000001",
+          "kind": "change_alert_status",
+          "state": "expired",
+          "permitted": true,
+          "created_at": "2026-11-24T10:00:00+00:00",
+          "expires_at": "2026-11-24T10:30:00+00:00",
+          "resolved_at": "2026-11-24T10:02:00.123456+00:00",
+          "payload": {
+            "version": 1,
+            "selector": {
+              "type": "fingerprints",
+              "fingerprints": [
+                "prod-db-01:cpu",
+                "prod-db-02:disk",
+                "5d41402abc4b2a76b9719d911017c592",
+                "prod-db-03:cpu",
+                "unnamed",
+                "gone",
+                "team/alert"
+              ]
+            },
+            "target_status": "acknowledged",
+            "note": "investigating",
+            "dispose_on_new_alert": false,
+            "matched_count": 5,
+            "alerts": [
+              {
+                "fingerprint": "prod-db-01:cpu",
+                "name": "High CPU on prod-db-01",
+                "severity": "critical",
+                "from_status": "firing",
+                "service": "postgres",
+                "source": "prometheus",
+                "last_received": "2026-11-24T09:58:00.000Z",
+                "has_incident": true,
+                "has_note": true
+              },
+              {
+                "fingerprint": "prod-db-02:disk",
+                "name": "Disk almost full \u2039prod-db-02\u203a \"data\" \u00e9",
+                "severity": "warning",
+                "from_status": "firing",
+                "service": "postgres",
+                "source": "grafana",
+                "last_received": "2026-11-24T09:59:30.000Z",
+                "has_incident": false,
+                "has_note": false
+              },
+              {
+                "fingerprint": "5d41402abc4b2a76b9719d911017c592",
+                "name": null,
+                "severity": null,
+                "from_status": null,
+                "service": null,
+                "source": null,
+                "last_received": null,
+                "has_incident": null,
+                "has_note": false
+              }
+            ],
+            "skipped": [
+              {
+                "fingerprint": "prod-db-03:cpu",
+                "name": "High CPU on prod-db-03",
+                "status": "acknowledged"
+              },
+              {
+                "fingerprint": "unnamed",
+                "name": null,
+                "status": null
+              }
+            ],
+            "not_found": [
+              "gone"
+            ],
+            "unresolvable": [
+              "team/alert"
+            ]
+          },
+          "outcome": null
+        }
+      }
+    },
+    "draft_applying": {
+      "status": 409,
+      "headers": {},
+      "body": {
+        "errors": [
+          {
+            "field": null,
+            "code": "draft_applying",
+            "message": "This draft is already being applied."
+          }
+        ],
+        "detail": "This draft is already being applied.",
+        "draft": {
+          "id": "00000000-0000-4000-8000-000000000012",
+          "conversation_id": "00000000-0000-4000-8000-000000000001",
+          "kind": "change_alert_status",
+          "state": "applying",
+          "permitted": true,
+          "created_at": "2026-11-24T10:00:00+00:00",
+          "expires_at": "2026-11-24T10:30:00+00:00",
+          "resolved_at": null,
+          "payload": {
+            "version": 1,
+            "selector": {
+              "type": "fingerprints",
+              "fingerprints": [
+                "prod-db-01:cpu",
+                "prod-db-02:disk",
+                "5d41402abc4b2a76b9719d911017c592",
+                "prod-db-03:cpu",
+                "unnamed",
+                "gone",
+                "team/alert"
+              ]
+            },
+            "target_status": "acknowledged",
+            "note": "investigating",
+            "dispose_on_new_alert": false,
+            "matched_count": 5,
+            "alerts": [
+              {
+                "fingerprint": "prod-db-01:cpu",
+                "name": "High CPU on prod-db-01",
+                "severity": "critical",
+                "from_status": "firing",
+                "service": "postgres",
+                "source": "prometheus",
+                "last_received": "2026-11-24T09:58:00.000Z",
+                "has_incident": true,
+                "has_note": true
+              },
+              {
+                "fingerprint": "prod-db-02:disk",
+                "name": "Disk almost full \u2039prod-db-02\u203a \"data\" \u00e9",
+                "severity": "warning",
+                "from_status": "firing",
+                "service": "postgres",
+                "source": "grafana",
+                "last_received": "2026-11-24T09:59:30.000Z",
+                "has_incident": false,
+                "has_note": false
+              },
+              {
+                "fingerprint": "5d41402abc4b2a76b9719d911017c592",
+                "name": null,
+                "severity": null,
+                "from_status": null,
+                "service": null,
+                "source": null,
+                "last_received": null,
+                "has_incident": null,
+                "has_note": false
+              }
+            ],
+            "skipped": [
+              {
+                "fingerprint": "prod-db-03:cpu",
+                "name": "High CPU on prod-db-03",
+                "status": "acknowledged"
+              },
+              {
+                "fingerprint": "unnamed",
+                "name": null,
+                "status": null
+              }
+            ],
+            "not_found": [
+              "gone"
+            ],
+            "unresolvable": [
+              "team/alert"
+            ]
+          },
+          "outcome": null
+        }
+      }
+    },
+    "payload_too_large": {
+      "status": 413,
+      "headers": {},
+      "body": {
+        "errors": [
+          {
+            "field": null,
+            "code": "payload_too_large",
+            "message": "The request is too large."
+          }
+        ],
+        "detail": "The request is too large."
+      }
+    },
+    "rate_limited": {
+      "status": 429,
+      "headers": {
+        "Retry-After": "30"
+      },
+      "body": {
+        "errors": [
+          {
+            "field": null,
+            "code": "rate_limited",
+            "message": "Too many messages. Try again shortly."
+          }
+        ],
+        "detail": "Too many messages. Try again shortly."
+      }
+    },
+    "too_many_active_turns": {
+      "status": 429,
+      "headers": {
+        "Retry-After": "5"
+      },
+      "body": {
+        "errors": [
+          {
+            "field": null,
+            "code": "too_many_active_turns",
+            "message": "Too many answers are in progress. Try again shortly."
+          }
+        ],
+        "detail": "Too many answers are in progress. Try again shortly."
+      }
+    },
+    "internal": {
+      "status": 500,
+      "headers": {},
+      "body": {
+        "errors": [
+          {
+            "field": null,
+            "code": "internal",
+            "message": "Something went wrong."
+          }
+        ],
+        "detail": "Something went wrong."
+      }
+    },
+    "gateway_unavailable": {
+      "status": 502,
+      "headers": {},
+      "body": {
+        "errors": [
+          {
+            "field": null,
+            "code": "gateway_unavailable",
+            "message": "Keep could not be reached. Try again."
+          }
+        ],
+        "detail": "Keep could not be reached. Try again."
+      }
+    },
+    "gateway_incompatible": {
+      "status": 503,
+      "headers": {},
+      "body": {
+        "errors": [
+          {
+            "field": null,
+            "code": "gateway_incompatible",
+            "message": "The assistant is not available with this Keep version."
+          }
+        ],
+        "detail": "The assistant is not available with this Keep version."
+      }
+    },
+    "llm_not_configured": {
+      "status": 503,
+      "headers": {},
+      "body": {
+        "errors": [
+          {
+            "field": null,
+            "code": "llm_not_configured",
+            "message": "The assistant is not configured."
+          }
+        ],
+        "detail": "The assistant is not configured."
+      }
+    },
+    "validation": {
+      "status": 400,
+      "headers": {},
+      "body": {
+        "errors": [
+          {
+            "field": "message",
+            "code": "field_required",
+            "message": "This field is required."
+          }
+        ],
+        "detail": "This field is required."
+      }
+    }
+  }
+}

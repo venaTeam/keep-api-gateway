@@ -4,8 +4,9 @@ from datetime import datetime
 import pytest
 
 from src.models.alert import AlertStatus
-from src.models.db.alert import LastAlert
+from src.models.db.alert import AlertAudit, LastAlert
 from tests.fixtures.client import client, setup_api_key, test_app  # noqa
+from tests.fixtures.identity import bearer_headers
 
 
 def _last_alerts(db_session) -> dict:
@@ -396,3 +397,71 @@ def test_batch_enrich_cel_dispose_on_new_alert(
     assert row.status == "resolved"
     assert row.note == "Temporary resolution note"
     assert row.status_disposable is True
+
+
+# X-Keep-Source header -> is the audit description marked. Only the exact value
+# counts: the header is a channel label, not something to normalize.
+SOURCE_HEADERS = [
+    ("assistant", True),
+    (None, False),
+    ("ui", False),
+    ("api", False),
+    ("Assistant", False),
+    ("assistant-evil", False),
+    ("", False),
+]
+
+
+@pytest.mark.parametrize("source,marked", SOURCE_HEADERS)
+@pytest.mark.parametrize("form", ["fingerprints", "cel"])
+@pytest.mark.parametrize("test_app", ["SINGLE_TENANT"], indirect=True)
+@pytest.mark.parametrize("elastic_client", [False], indirect=True)
+def test_batch_enrich_marks_assistant_in_audit(
+    db_session, client, test_app, create_alert, elastic_client, form, source, marked
+):
+    """The audit trail says when a change was confirmed in Keep Assistant."""
+    create_alert("fp-1", AlertStatus.FIRING, datetime.utcnow(), {"name": "one"})
+    headers = bearer_headers("noc")
+    if source is not None:
+        headers["X-Keep-Source"] = source
+    selector = {"fingerprints": ["fp-1"]} if form == "fingerprints" else {
+        "cel": "name == 'one'"
+    }
+
+    response = client.post(
+        "/alerts/batch_enrich",
+        headers=headers,
+        json={
+            **selector,
+            "enrichments": {"status": "acknowledged", "note": "investigating"},
+        },
+    )
+
+    assert (response.status_code, response.json()) == (200, {"status": "ok"})
+    assert _last_alerts(db_session)["fp-1"].status == "acknowledged"
+    audit = db_session.query(AlertAudit).one()
+    marker = " via Keep Assistant" if marked else ""
+    assert audit.description == (
+        "Alert status was changed to acknowledged by noc@example.com"
+        f"{marker} - With note: investigating"
+    )
+    # The author stays the authenticated user either way.
+    assert audit.user_id == "noc@example.com"
+
+
+@pytest.mark.parametrize("test_app", ["SINGLE_TENANT"], indirect=True)
+@pytest.mark.parametrize("elastic_client", [False], indirect=True)
+def test_marker_header_grants_nothing(
+    db_session, client, test_app, create_alert, elastic_client
+):
+    create_alert("fp-1", AlertStatus.FIRING, datetime.utcnow(), {"name": "one"})
+    headers = bearer_headers("viewer", **{"X-Keep-Source": "assistant"})
+
+    response = client.post(
+        "/alerts/batch_enrich",
+        headers=headers,
+        json={"fingerprints": ["fp-1"], "enrichments": {"status": "acknowledged"}},
+    )
+
+    assert response.status_code == 403
+    assert _last_alerts(db_session)["fp-1"].status is None

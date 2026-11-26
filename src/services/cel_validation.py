@@ -34,6 +34,7 @@ from src.repositories.cel_to_sql.ast_nodes import LogicalNode, Node, is_boolean_
 from src.repositories.cel_to_sql.sql_providers.base import (
     CelToSqlException,
 )
+from src.utils.log_sanitize import sanitize_for_log
 
 logger = logging.getLogger(__name__)
 
@@ -266,7 +267,7 @@ def invalid_cel_http_exception(
     logger.info(
         "Rejecting invalid CEL filter",
         extra={
-            "cel": cel,
+            "cel": sanitize_for_log(cel),
             "diagnostic_codes": [d.code for d in (diagnostics or [])],
         },
     )
