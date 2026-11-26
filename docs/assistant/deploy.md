@@ -60,6 +60,7 @@ role's permission to change alert status and the soft-delete guard.
 | `OPENAI_MODEL_NAME` | `gpt-4o-2024-08-06` | |
 | `OPENAI_BASE_URL` | OpenAI's | https, without credentials in it |
 | `ASSISTANT_OPENAI_TIMEOUT_SECONDS` | 60 | one LLM call |
+| `ASSISTANT_OPENAI_REASONING_EFFORT` | not sent | `none` for models that refuse function tools on chat completions otherwise, such as `gpt-6-luna` |
 | `ASSISTANT_TURN_DEADLINE_SECONDS` | 90 | one chat turn |
 | `ASSISTANT_MAX_TOOL_ROUNDS` | 4 | per turn |
 | `ASSISTANT_MAX_DRAFTS_PER_TURN` | 3 | |

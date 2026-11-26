@@ -90,6 +90,9 @@ class Settings:
     openai_timeout_seconds: float = _env(
         "ASSISTANT_OPENAI_TIMEOUT_SECONDS", 60.0, float
     )
+    # Newer models refuse function tools on chat completions unless it is `none`.
+    # Empty: not sent.
+    openai_reasoning_effort: str = _env("ASSISTANT_OPENAI_REASONING_EFFORT", "")
 
     # Chat turn
     turn_deadline_seconds: float = _env("ASSISTANT_TURN_DEADLINE_SECONDS", 90.0, float)

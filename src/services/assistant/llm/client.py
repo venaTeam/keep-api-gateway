@@ -245,9 +245,10 @@ class OpenAiLlmClient:
         safety_identifier: str | None,
     ) -> dict[str, Any]:
         # Fields the pinned SDK has no parameter for.
-        extra: dict[str, Any] = {
-            "max_completion_tokens": get_settings().max_completion_tokens
-        }
+        settings = get_settings()
+        extra: dict[str, Any] = {"max_completion_tokens": settings.max_completion_tokens}
+        if settings.openai_reasoning_effort:
+            extra["reasoning_effort"] = settings.openai_reasoning_effort
         request: dict[str, Any] = {
             "model": self.model,
             "messages": messages,

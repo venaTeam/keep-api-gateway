@@ -164,6 +164,19 @@ async def test_custom_base_url_gets_no_openai_only_fields():
 
 
 @pytest.mark.asyncio
+async def test_reasoning_effort_only_when_it_is_set(set_env):
+    """Newer models refuse function tools on chat completions unless it is `none`."""
+    fake = FakeOpenAi(ANSWER)
+    await collect(fake.client())
+    assert "reasoning_effort" not in fake.body()
+    set_env("ASSISTANT_OPENAI_REASONING_EFFORT", "none")
+    for base_url in ("", "https://proxy.test/v1"):
+        fake = FakeOpenAi(ANSWER)
+        await collect(fake.client(base_url))
+        assert fake.body()["reasoning_effort"] == "none"
+
+
+@pytest.mark.asyncio
 async def test_no_safety_identifier_when_none_is_given():
     fake = FakeOpenAi(ANSWER)
     await collect(fake.client())
