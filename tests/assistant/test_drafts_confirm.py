@@ -28,7 +28,13 @@ from tests.assistant.rows import (
     read,
     skipped_alert,
 )
-from tests.assistant.running import Keep, equip, post_confirm, until
+from tests.assistant.running import (
+    Keep,
+    equip,
+    post_confirm,
+    take_every_chat_place,
+    until,
+)
 
 CANARY = "canary-7c01de"
 FIRING = {"fp-1": "firing", "fp-2": "firing"}
@@ -491,6 +497,27 @@ async def test_too_many_calls_at_once(app, db, keep, draft, monkeypatch):
     assert (exchange.status, exchange.code) == (502, "gateway_unavailable")
     assert state_of(db, draft) == "pending"
     assert keep.writes == []
+
+
+@pytest.mark.asyncio
+async def test_chats_holding_every_place_they_may_leave_confirm_its_own(
+    app, db, keep, draft
+):
+    """Who is asking, both looks and the write: no chat call can take their places."""
+    client = app.state.assistant_gateway
+    chats, release = await take_every_chat_place(keep, client)
+    try:
+        body = await confirm(app, draft)
+    finally:
+        release.set()
+    assert (body["state"], body["outcome"]["code"]) == ("applied", "applied")
+    assert [r.url.path for r in keep.requests if r.url.path != "/held"] == [
+        "/whoami",
+        "/alerts/query",
+        "/alerts/batch_enrich",
+        "/alerts/query",
+    ]
+    await asyncio.gather(*chats, return_exceptions=True)
 
 
 # --- the second look ------------------------------------------------------------------------

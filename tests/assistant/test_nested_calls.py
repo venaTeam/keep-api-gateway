@@ -1,22 +1,32 @@
 """Calls of the gateway's own routes inside the process: each one runs in a task of its
 own, which no deadline and no disconnect ends."""
+import ast
 import asyncio
+import itertools
 import logging
 import threading
 import time
 from collections import Counter
+from pathlib import Path
+from types import MappingProxyType
 
 import httpx
 import pytest
 from fastapi import FastAPI, Request
 from starlette.concurrency import run_in_threadpool
 
+import src.services.assistant
 from src.services.assistant import lifecycle
 from src.services.assistant.config import ENABLED_ENV_VAR
+from src.services.assistant.core import metrics
+from src.services.assistant.gateway import client as client_module
 from src.services.assistant.gateway.client import (
-    MAX_CONCURRENT_ALERT_READS,
-    MAX_FILTER_CALLS,
+    CALL_CLASSES,
+    MAX_CHAT_CALLS,
+    MAX_CRITICAL_ALERT_READS,
+    MAX_CRITICAL_CALLS,
     MAX_RUNNING_CALLS,
+    CallClass,
     Caller,
     GatewayClient,
 )
@@ -36,6 +46,13 @@ from tests.assistant.logs import rendered
 from tests.fixtures.identity import bearer_headers
 
 CANARY = "canary-7d20c4"
+PACKAGE = Path(src.services.assistant.__file__).parent
+FILTER_LIMIT = CALL_CLASSES["filter"].limit
+ALERT_LIMIT = CALL_CLASSES["alert"].limit
+# A chat's call that belongs to no class: the alert-set query of a lookup.
+GENERAL = "general"
+CHAT = Caller(TOKEN, "00000000-0000-4000-8000-0000000000c1")
+CRITICAL = Caller(TOKEN, "00000000-0000-4000-8000-0000000000c2")
 
 
 def in_process(app) -> GatewayClient:
@@ -78,6 +95,74 @@ class SlowGateway:
 @pytest.fixture()
 def slow():
     return SlowGateway()
+
+
+class Held:
+    """Calls to /held wait for `release`; everything else is answered at once."""
+
+    def __init__(self):
+        self.release = asyncio.Event()
+        self.started = 0
+        self.fake = FakeGateway(self.handle)
+
+    async def handle(self, request):
+        path = request.url.path
+        if path == "/held":
+            self.started += 1
+            await self.release.wait()
+            return httpx.Response(200, json={})
+        if path == "/whoami":
+            return httpx.Response(200, json=whoami())
+        if path == "/alerts/query":
+            return httpx.Response(200, json=query_result(alert("a")))
+        if path == "/alerts/batch_enrich":
+            return httpx.Response(200, json={"status": "ok"})
+        if path.startswith("/alerts/"):
+            return httpx.Response(200, json=alert(path.removeprefix("/alerts/")))
+        return httpx.Response(200, json={})
+
+
+@pytest.fixture()
+def held():
+    return Held()
+
+
+def class_call(
+    client: GatewayClient,
+    name: str,
+    *,
+    who: Caller = CHAT,
+    critical: bool = False,
+    deadline_seconds: float | None = None,
+    path: str = "/held",
+):
+    """A read of class `name` (GENERAL: of none)."""
+    return client._read(
+        who,
+        name,
+        "GET",
+        path,
+        call_class=None if name == GENERAL else name,
+        critical=critical,
+        deadline_seconds=deadline_seconds,
+    )
+
+
+async def take_places(client: GatewayClient, name: str, most: int) -> list:
+    """Up to `most` held calls of `name`, each started before the next; stops at the
+    first one refused. The ones that got a place."""
+    running = []
+    for _ in range(most):
+        before = len(client._running)
+        task = asyncio.create_task(class_call(client, name))
+        await until(lambda: task.done() or len(client._running) > before)
+        if task.done():
+            with pytest.raises(GatewayUnavailable) as caught:
+                task.result()
+            assert caught.value.sent is False
+            break
+        running.append(task)
+    return running
 
 
 # --- what a nested route sees --------------------------------------------------
@@ -261,7 +346,7 @@ async def test_waiting_for_writes_is_bounded_and_counts_no_reads(slow):
 @pytest.mark.asyncio
 async def test_abandoned_calls_count_until_they_end(slow):
     client = slow.fake.client()
-    for _ in range(MAX_RUNNING_CALLS - 1):
+    for _ in range(MAX_CHAT_CALLS):
         with pytest.raises(GatewayUnavailable) as caught:
             await client._send(
                 caller(), "query", "POST", "/alerts/query", timeout=0.01, body={}
@@ -271,6 +356,15 @@ async def test_abandoned_calls_count_until_they_end(slow):
     with pytest.raises(GatewayUnavailable) as caught:
         await client.query_alerts(caller(), "true", 21)
     assert caught.value.sent is False
+    assert slow.started == MAX_CHAT_CALLS
+
+    # The place before the last is for who is asking, and Confirm's and reconcile's
+    # looks.
+    with pytest.raises(GatewayUnavailable) as caught:
+        await client._send(
+            caller(), "whoami", "GET", "/whoami", timeout=0.01, critical=True
+        )
+    assert caught.value.sent is True
     with pytest.raises(GatewayUnavailable) as caught:
         await client.whoami(caller())
     assert caught.value.sent is False
@@ -314,7 +408,7 @@ async def test_slow_filters_leave_places_for_everything_else(set_env):
         assert await client.count_alerts(caller(), "slow") is None
         with pytest.raises(GatewayUnavailable):
             await client.query_alerts(caller(), "slow", 21)
-    assert len(filters) == MAX_FILTER_CALLS
+    assert len(filters) == FILTER_LIMIT
     for call in (
         client.query_alerts(caller(), "slow", 21),
         client.alert_fields(caller()),
@@ -323,7 +417,7 @@ async def test_slow_filters_leave_places_for_everything_else(set_env):
             await call
         assert caught.value.sent is False
     assert await client.count_alerts(caller(), "slow") is None
-    assert len(filters) == MAX_FILTER_CALLS
+    assert len(filters) == FILTER_LIMIT
 
     assert (await client.whoami(caller()))["tenant_id"] == "keep"
     assert (await client.fetch_alerts_by_fingerprints(caller(), ["a"])).found
@@ -340,25 +434,202 @@ async def test_a_filter_call_waits_for_its_place(slow):
     client = slow.fake.client()
     queries = [
         asyncio.create_task(client.query_alerts(caller(), "true", 21))
-        for _ in range(MAX_FILTER_CALLS + 2)
+        for _ in range(FILTER_LIMIT + 2)
     ]
-    await until(lambda: slow.started == MAX_FILTER_CALLS)
+    await until(lambda: slow.started == FILTER_LIMIT)
     slow.release.set()
-    assert await asyncio.gather(*queries) == [[]] * (MAX_FILTER_CALLS + 2)
+    assert await asyncio.gather(*queries) == [[]] * (FILTER_LIMIT + 2)
+
+
+# --- call classes ------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("name", CALL_CLASSES)
+def test_no_class_can_take_every_place(name):
+    limit = CALL_CLASSES[name].limit
+    assert 0 < limit < MAX_RUNNING_CALLS - 1
+    # Nor every place of the chats: one class never shuts out the others.
+    assert limit < MAX_CHAT_CALLS
+
+
+def test_the_places_kept_at_the_top():
+    assert (MAX_CHAT_CALLS, MAX_CRITICAL_CALLS) == (
+        MAX_RUNNING_CALLS - 2,
+        MAX_RUNNING_CALLS - 1,
+    )
+    assert 0 < MAX_CRITICAL_ALERT_READS < MAX_CRITICAL_CALLS
 
 
 @pytest.mark.asyncio
-async def test_a_cancelled_wait_for_a_place_takes_none(slow):
-    client = slow.fake.client()
-    queries = [
-        asyncio.create_task(client.query_alerts(caller(), "true", 21))
-        for _ in range(MAX_FILTER_CALLS + 1)
-    ]
-    await until(lambda: slow.started == MAX_FILTER_CALLS)
-    queries.pop().cancel()
-    slow.release.set()
-    await asyncio.gather(*queries)
-    await until(lambda: client._filter_calls._value == MAX_FILTER_CALLS)
+@pytest.mark.parametrize("name", CALL_CLASSES)
+async def test_a_full_class_makes_the_next_call_wait(name, held):
+    """Several chats at the same moment are not a reason to refuse one."""
+    limit = CALL_CLASSES[name].limit
+    assert CALL_CLASSES[name].waits
+    client = held.fake.client()
+    calls = [asyncio.create_task(class_call(client, name)) for _ in range(limit + 2)]
+    await until(lambda: held.started == limit)
+    await asyncio.sleep(0.05)
+    assert held.started == limit
+    assert not any(call.done() for call in calls)
+    held.release.set()
+    answers = await asyncio.gather(*calls)
+    assert [a.status_code for a in answers] == [200] * (limit + 2)
+    assert held.started == limit + 2
+
+
+@pytest.mark.asyncio
+async def test_a_class_that_does_not_wait_refuses_at_once(held, monkeypatch):
+    monkeypatch.setattr(
+        client_module,
+        "CALL_CLASSES",
+        MappingProxyType({**CALL_CLASSES, "quick": CallClass(limit=1, waits=False)}),
+    )
+    client = held.fake.client()
+    first = asyncio.create_task(class_call(client, "quick"))
+    await until(lambda: held.started == 1)
+    with pytest.raises(GatewayUnavailable) as caught:
+        await class_call(client, "quick", deadline_seconds=5)
+    assert caught.value.sent is False
+    held.release.set()
+    assert (await first).status_code == 200
+    assert (await class_call(client, "quick")).status_code == 200
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", CALL_CLASSES)
+async def test_the_wait_for_a_place_ends_at_the_callers_deadline(name, held):
+    limit = CALL_CLASSES[name].limit
+    client = held.fake.client()
+    running = await take_places(client, name, limit)
+    assert len(running) == limit
+    not_sent = metrics.gateway_requests_total.labels(
+        endpoint=name, status_class="not_sent"
+    )
+    before = not_sent._value.get()
+    started = time.monotonic()
+    with pytest.raises(GatewayUnavailable) as caught:
+        await class_call(client, name, deadline_seconds=0.05)
+    assert caught.value.sent is False
+    assert 0.04 < time.monotonic() - started < 1
+    assert not_sent._value.get() == before + 1
+    assert held.started == limit
+    held.release.set()
+    await asyncio.gather(*running)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", CALL_CLASSES)
+async def test_a_cancelled_wait_for_a_place_takes_none(name, held):
+    limit = CALL_CLASSES[name].limit
+    client = held.fake.client()
+    calls = [asyncio.create_task(class_call(client, name)) for _ in range(limit + 1)]
+    await until(lambda: held.started == limit)
+    calls.pop().cancel()
+    held.release.set()
+    await asyncio.gather(*calls)
+    await until(lambda: client._class_places[name]._value == limit)
+    assert held.started == limit
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", CALL_CLASSES)
+async def test_a_full_class_leaves_places_for_everything_else(name, held):
+    """However slow the calls of one class are, the other chat calls, the critical
+    ones and the write still get a place."""
+    limit = CALL_CLASSES[name].limit
+    client = held.fake.client()
+    running = await take_places(client, name, limit)
+    others = await take_places(client, GENERAL, MAX_RUNNING_CALLS)
+    assert len(others) == MAX_CHAT_CALLS - limit
+    # The same class, critical: no class limit applies.
+    answer = await class_call(
+        client, name, who=CRITICAL, critical=True, path="/fast", deadline_seconds=1
+    )
+    assert answer.status_code == 200
+    assert (await client.whoami(CRITICAL))["tenant_id"] == "keep"
+    assert await write(client) == "ok"
+    held.release.set()
+    await asyncio.gather(*running, *others)
+
+
+@pytest.mark.asyncio
+async def test_a_critical_lookup_reads_alerts_in_places_of_its_own(held):
+    """A chat's single-alert reads never hold up a Confirm's look, nor the reverse."""
+    client = held.fake.client()
+    running = await take_places(client, "alert", ALERT_LIMIT)
+    peak = 0
+
+    async def handle(request):
+        nonlocal peak
+        if request.url.path.startswith("/alerts/q "):
+            peak = max(peak, len(client._running) - ALERT_LIMIT)
+            await asyncio.sleep(0.01)
+        return await held.handle(request)
+
+    held.fake._handler = handle
+    result = await client.fetch_alerts_by_fingerprints(
+        CRITICAL, [f"q {n}" for n in range(6)], critical=True
+    )
+    assert sorted(result.found) == [f"q {n}" for n in range(6)]
+    assert peak == MAX_CRITICAL_ALERT_READS
+    held.release.set()
+    await asyncio.gather(*running)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "order", list(itertools.permutations([*CALL_CLASSES, GENERAL])), ids=str
+)
+async def test_no_mix_of_chat_calls_refuses_a_critical_call(order, held):
+    """Every class at its limit and general chat calls, in any order: who is asking and
+    a Confirm's look still get a place, and so does the write."""
+    client = held.fake.client()
+    running = []
+    for name in order:
+        most = MAX_RUNNING_CALLS if name == GENERAL else CALL_CLASSES[name].limit
+        running += await take_places(client, name, most)
+    assert len(client._running) == len(running) == MAX_CHAT_CALLS
+
+    assert (await client.whoami(CRITICAL))["tenant_id"] == "keep"
+    # A Confirm's look: the alert-set query and a single read.
+    look = await client.fetch_alerts_by_fingerprints(
+        CRITICAL, ["a", "q q"], deadline_seconds=1, critical=True
+    )
+    assert sorted(look.found) == ["a", "q q"]
+    assert await write(client) == "ok"
+
+    # A critical call held up as long as the chats: the write's place stays free.
+    stuck = asyncio.create_task(class_call(client, GENERAL, who=CRITICAL, critical=True))
+    await until(lambda: len(client._running) == MAX_CRITICAL_CALLS)
+    assert await write(client) == "ok"
+    # Two critical calls at once, at full saturation: the second is refused.
+    with pytest.raises(GatewayUnavailable) as caught:
+        await client.whoami(CRITICAL)
+    assert caught.value.sent is False
+    held.release.set()
+    await asyncio.gather(*running, stuck)
+
+
+def test_only_who_is_asking_confirm_and_reconcile_take_critical_places():
+    """Critical places are for the identity check (inside the client), Confirm's looks
+    and reconcile's: no tool, kind or turn asks for them."""
+    allowed = {
+        "gateway/client.py",
+        "gateway/reader.py",
+        "bl/confirm_bl.py",
+        "bl/reconcile_bl.py",
+    }
+    asking = set()
+    for path in PACKAGE.rglob("*.py"):
+        tree = ast.parse(path.read_text("utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and any(
+                keyword.arg == "critical" for keyword in node.keywords
+            ):
+                asking.add(path.relative_to(PACKAGE).as_posix())
+    assert asking <= allowed
+    assert {"bl/confirm_bl.py", "bl/reconcile_bl.py"} <= asking
 
 
 @pytest.mark.asyncio
@@ -369,9 +640,9 @@ async def test_an_alert_read_keeps_its_place_until_the_call_ends(slow):
             await client.fetch_alerts_by_fingerprints(
                 caller(), [f"q {n}" for n in range(15)], deadline_seconds=0.05
             )
-        assert slow.started == MAX_CONCURRENT_ALERT_READS
+        assert slow.started == ALERT_LIMIT
     slow.release.set()
-    await until(lambda: slow.finished == MAX_CONCURRENT_ALERT_READS)
+    await until(lambda: slow.finished == ALERT_LIMIT)
     result = await client.fetch_alerts_by_fingerprints(
         caller(), [f"q {n}" for n in range(15)]
     )
@@ -386,7 +657,7 @@ async def test_a_refused_alert_read_gives_its_place_back(slow):
         for _ in range(MAX_RUNNING_CALLS - 1)
     ]
     await until(lambda: slow.started == MAX_RUNNING_CALLS - 1)
-    for _ in range(MAX_CONCURRENT_ALERT_READS + 1):
+    for _ in range(ALERT_LIMIT + 1):
         with pytest.raises(GatewayUnavailable) as caught:
             await client.fetch_alerts_by_fingerprints(caller(), ["q q"])
         assert caught.value.sent is False
@@ -412,7 +683,7 @@ async def test_one_chats_own_lookup_fits_under_the_cap():
         caller(), [f"q {n}" for n in range(20)]
     )
     assert len(result.not_found) == 20
-    assert counts["peak"] == MAX_CONCURRENT_ALERT_READS < MAX_RUNNING_CALLS
+    assert counts["peak"] == ALERT_LIMIT < MAX_CHAT_CALLS
 
 
 # --- through the real app --------------------------------------------------------
@@ -456,17 +727,20 @@ async def test_a_full_house_of_calls_leaves_the_ui_its_threads(
     monkeypatch.setattr(alerts, "enrich_alerts_with_incidents", lambda t, found: found)
     client = in_process(test_app)
     noc = Caller(role("noc"), REQUEST_ID)
-    # What a lookup of fingerprints sends, which the limit for filters does not count.
+    # What a lookup of fingerprints sends, which the limit for filters does not count:
+    # every place of the chats, and the critical one.
     queries = [
         asyncio.create_task(client._query(noc, "true", 21))
-        for _ in range(MAX_RUNNING_CALLS - 1)
-    ]
+        for _ in range(MAX_CHAT_CALLS)
+    ] + [asyncio.create_task(client._query(noc, "true", 21, critical=True))]
+    assert len(queries) == MAX_RUNNING_CALLS - 1
     try:
         for _ in queries:
             assert await run_in_threadpool(started.acquire, timeout=10)
-        with pytest.raises(GatewayUnavailable) as caught:
-            await client._query(noc, "true", 21)
-        assert caught.value.sent is False
+        for critical in (False, True):
+            with pytest.raises(GatewayUnavailable) as caught:
+                await client._query(noc, "true", 21, critical=critical)
+            assert caught.value.sent is False
         assert not started.acquire(blocking=False)
 
         ui = httpx.AsyncClient(

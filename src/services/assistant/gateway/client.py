@@ -43,15 +43,41 @@ KEEP_SOURCE = "assistant"
 # Running calls of the whole process, abandoned ones included: the gateway's sync
 # routes share one threadpool (40 threads) with every other request of the UI.
 MAX_RUNNING_CALLS = 8
+# The last place is for a write: without it a Confirm ends in nothing. The one below
+# it is for critical calls - who is asking, Confirm's looks before and after its write,
+# reconcile's look - so that no mix of chat calls can refuse them. Chat calls (a turn's
+# and its tools') share the rest.
+MAX_CRITICAL_CALLS = MAX_RUNNING_CALLS - 1
+MAX_CHAT_CALLS = MAX_RUNNING_CALLS - 2
 
-# Of those, calls whose time depends on a filter the model wrote (or on every alert of
-# the tenant). They may be slow, and go on when nobody waits any more: the others - who
-# is asking, the alerts of a draft, and the write - must still find a place.
-MAX_FILTER_CALLS = 4
 
-# Single-alert reads of the whole process: each one makes the gateway call its
-# identity provider. Below the cap above, so that a chat's own lookup fits in it.
-MAX_CONCURRENT_ALERT_READS = 4
+@dataclass(frozen=True)
+class CallClass:
+    """Chat calls of one kind: at most `limit` of the chat places at once."""
+
+    limit: int
+    # With all of them taken: wait for one, up to the caller's deadline. Otherwise the
+    # call is refused at once.
+    waits: bool
+
+
+# A chat read names its class; one without counts only against the chat places.
+# Critical calls skip these limits. No class can take every chat place.
+CALL_CLASSES: Mapping[str, CallClass] = MappingProxyType(
+    {
+        # Calls whose time depends on a filter the model wrote (or on every alert of
+        # the tenant). They may be slow, and go on when nobody waits any more.
+        "filter": CallClass(limit=4, waits=True),
+        # Short reads of the tenant's own lists, and checks.
+        "lookup": CallClass(limit=2, waits=True),
+        # Single-alert reads: each one makes the gateway call its identity provider.
+        "alert": CallClass(limit=4, waits=True),
+    }
+)
+
+# Single-alert reads of critical lookups, of the whole process: places of their own,
+# so that a chat's reads never hold up a Confirm's look.
+MAX_CRITICAL_ALERT_READS = 2
 
 # A blocked event loop fires a deadline late, and the answer is then only a few loop
 # iterations away.
@@ -312,8 +338,11 @@ class GatewayClient:
             cookies=no_cookies,
             headers={"User-Agent": "keep-gateway-assistant"},
         )
-        self._alert_reads = asyncio.Semaphore(MAX_CONCURRENT_ALERT_READS)
-        self._filter_calls = asyncio.Semaphore(MAX_FILTER_CALLS)
+        self._class_places = {
+            name: asyncio.Semaphore(call_class.limit)
+            for name, call_class in CALL_CLASSES.items()
+        }
+        self._critical_alert_reads = asyncio.Semaphore(MAX_CRITICAL_ALERT_READS)
         # Strong references: the event loop itself only holds weak ones.
         self._running: set[asyncio.Task[httpx.Response]] = set()
         self._writes: set[asyncio.Task[httpx.Response]] = set()
@@ -329,14 +358,19 @@ class GatewayClient:
         return len(self._writes)
 
     # --- reads ---------------------------------------------------------------
+    # `deadline_seconds`: for the wait for a place and the answer together (None: the
+    # read timeout, for each). `critical`: for who is asking, Confirm's looks and
+    # reconcile's only; it skips the class limits and may take the critical place.
 
     async def whoami(self, caller: Caller) -> dict[str, Any]:
+        """Critical: every request of the assistant starts with it."""
         response = await self._read(
             caller,
             "whoami",
             "GET",
             "/whoami",
             timeout=get_settings().gateway_whoami_timeout_seconds,
+            critical=True,
         )
         body = _json(response)
         if not isinstance(body, dict):
@@ -344,17 +378,32 @@ class GatewayClient:
         return body
 
     async def query_alerts(
-        self, caller: Caller, cel: str, limit: int
+        self,
+        caller: Caller,
+        cel: str,
+        limit: int,
+        *,
+        deadline_seconds: float | None = None,
+        critical: bool = False,
     ) -> list[FetchedAlert]:
-        slot = await self._filter_place(caller, "query")
-        return await self._query(caller, cel, limit, slot)
+        return await self._query(
+            caller,
+            cel,
+            limit,
+            call_class="filter",
+            deadline_seconds=deadline_seconds,
+            critical=critical,
+        )
 
     async def _query(
         self,
         caller: Caller,
         cel: str,
         limit: int,
-        slot: asyncio.Semaphore | None = None,
+        *,
+        call_class: str | None = None,
+        deadline_seconds: float | None = None,
+        critical: bool = False,
     ) -> list[FetchedAlert]:
         response = await self._read(
             caller,
@@ -362,7 +411,9 @@ class GatewayClient:
             "POST",
             "/alerts/query",
             body={"cel": cel, "limit": limit},
-            slot=slot,
+            call_class=call_class,
+            deadline_seconds=deadline_seconds,
+            critical=critical,
         )
         body = _json(response)
         results = body.get("results") if isinstance(body, dict) else None
@@ -373,7 +424,14 @@ class GatewayClient:
             raise self._bad_response("query")
         return [FetchedAlert(item, incident_known=True) for item in results]
 
-    async def count_alerts(self, caller: Caller, cel: str) -> int | None:
+    async def count_alerts(
+        self,
+        caller: Caller,
+        cel: str,
+        *,
+        deadline_seconds: float | None = None,
+        critical: bool = False,
+    ) -> int | None:
         """The exact number of matches, or None when it cannot be had."""
         try:
             response = await self._read(
@@ -382,7 +440,9 @@ class GatewayClient:
                 "POST",
                 "/alerts/query/count",
                 body={"cel": cel},
-                slot=await self._filter_place(caller, "count"),
+                call_class="filter",
+                deadline_seconds=deadline_seconds,
+                critical=critical,
             )
         except GatewayError:
             return None  # counted and logged by _read
@@ -392,13 +452,21 @@ class GatewayClient:
         self._bad_response("count")
         return None
 
-    async def alert_fields(self, caller: Caller) -> list[str]:
+    async def alert_fields(
+        self,
+        caller: Caller,
+        *,
+        deadline_seconds: float | None = None,
+        critical: bool = False,
+    ) -> list[str]:
         response = await self._read(
             caller,
             "fields",
             "GET",
             "/alerts/facets/fields",
-            slot=await self._filter_place(caller, "fields"),
+            call_class="filter",
+            deadline_seconds=deadline_seconds,
+            critical=critical,
         )
         body = _json(response)
         if not isinstance(body, list):
@@ -412,6 +480,7 @@ class GatewayClient:
         *,
         deadline_seconds: float | None = None,
         known_missing: Collection[str] = (),
+        critical: bool = False,
     ) -> FetchResult:
         """Current state of these alerts, under one overall deadline.
 
@@ -419,6 +488,8 @@ class GatewayClient:
         for the rest and for whatever the query did not return (a "Hide From Feed"
         window hides an alert from queries). `known_missing`: fingerprints an
         earlier read already reported missing; they are not read singly again.
+        The query belongs to no class; the single reads are of class "alert", or,
+        critical, of their own places.
         """
         deadline = (
             get_settings().gateway_read_timeout_seconds
@@ -428,7 +499,11 @@ class GatewayClient:
         try:
             async with asyncio.timeout(deadline):
                 return await self._fetch(
-                    caller, list(dict.fromkeys(fingerprints)), set(known_missing)
+                    caller,
+                    list(dict.fromkeys(fingerprints)),
+                    set(known_missing),
+                    deadline,
+                    critical,
                 )
         except TimeoutError:
             logger.warning(
@@ -442,7 +517,12 @@ class GatewayClient:
             raise GatewayUnavailable("timeout") from None
 
     async def _fetch(
-        self, caller: Caller, fingerprints: list[str], known_missing: set[str]
+        self,
+        caller: Caller,
+        fingerprints: list[str],
+        known_missing: set[str],
+        deadline: float,
+        critical: bool,
     ) -> FetchResult:
         found: dict[str, FetchedAlert] = {}
         in_query = [fp for fp in fingerprints if can_use_cel(fp)]
@@ -454,6 +534,8 @@ class GatewayClient:
                     caller,
                     f"fingerprint in {json.dumps(in_query)}",
                     len(in_query),
+                    deadline_seconds=deadline,
+                    critical=critical,
                 )
             except (QueryFailed, InvalidCel):
                 alerts = []  # every one of them goes through a single read
@@ -468,7 +550,10 @@ class GatewayClient:
                 continue
             (to_read if can_use_path(fp) else unresolvable).append(fp)
 
-        tasks = [asyncio.create_task(self._get_alert(caller, fp)) for fp in to_read]
+        tasks = [
+            asyncio.create_task(self._get_alert(caller, fp, deadline, critical))
+            for fp in to_read
+        ]
         try:
             answers = await asyncio.gather(*tasks)
         except BaseException:
@@ -493,17 +578,18 @@ class GatewayClient:
         )
 
     async def _get_alert(
-        self, caller: Caller, fingerprint: str
+        self, caller: Caller, fingerprint: str, deadline: float, critical: bool
     ) -> dict[str, Any] | None:
         """One alert; None for a 404, an empty dict for a foreign answer."""
-        await self._alert_reads.acquire()
         response = await self._read(
             caller,
             "alert",
             "GET",
             f"/alerts/{quote(fingerprint, safe='')}",
             not_found_ok=True,
-            slot=self._alert_reads,
+            call_class="alert",
+            deadline_seconds=deadline,
+            critical=critical,
         )
         if response.status_code == 404:
             return None
@@ -584,20 +670,46 @@ class GatewayClient:
 
     # --- transport -----------------------------------------------------------
 
-    async def _filter_place(self, caller: Caller, endpoint: str) -> asyncio.Semaphore:
-        """A place among the filter calls, for `slot`. Waits for one as long as for an
-        answer."""
+    def _class_place(
+        self, call_class: str | None, critical: bool
+    ) -> tuple[asyncio.Semaphore | None, bool]:
+        """The limit a read must get a place of, if any, and whether it waits for one."""
+        if critical:
+            # No class limit, except for the single-alert reads of a critical lookup.
+            if call_class == "alert":
+                return self._critical_alert_reads, True
+            return None, False
+        if call_class is None:
+            return None, False
+        return self._class_places[call_class], CALL_CLASSES[call_class].waits
+
+    async def _place(
+        self,
+        caller: Caller,
+        endpoint: str,
+        slot: asyncio.Semaphore,
+        *,
+        waits: bool,
+        seconds: float,
+    ) -> None:
+        """A place of `slot`, held until the call ends. Waits for one up to `seconds`
+        when the class waits."""
         try:
-            async with asyncio.timeout(get_settings().gateway_read_timeout_seconds):
-                await self._filter_calls.acquire()
+            if not waits and slot.locked():
+                raise TimeoutError
+            async with asyncio.timeout(seconds):
+                await slot.acquire()
         except TimeoutError:
-            metrics.gateway_requests_total.labels(
-                endpoint=endpoint, status_class="not_sent"
-            ).inc()
-            raise self._unsuccessful(
-                caller, endpoint, "not_sent", "TooManyCalls", sent=False
-            ) from None
-        return self._filter_calls
+            raise self._not_sent(caller, endpoint, "TooManyCalls") from None
+
+    def _not_sent(
+        self, caller: Caller, endpoint: str, error_type: str
+    ) -> GatewayUnavailable:
+        """A read given up before `_send`, which counts the others."""
+        metrics.gateway_requests_total.labels(
+            endpoint=endpoint, status_class="not_sent"
+        ).inc()
+        return self._unsuccessful(caller, endpoint, "not_sent", error_type, sent=False)
 
     async def _read(
         self,
@@ -609,9 +721,33 @@ class GatewayClient:
         body: dict[str, Any] | None = None,
         timeout: float | None = None,
         not_found_ok: bool = False,
-        slot: asyncio.Semaphore | None = None,
+        call_class: str | None = None,
+        deadline_seconds: float | None = None,
+        critical: bool = False,
     ) -> httpx.Response:
-        """A read whose failures are GatewayErrors."""
+        """A read whose failures are GatewayErrors. `call_class`: its row of
+        CALL_CLASSES, None for a chat call of no class. `deadline_seconds` and
+        `critical` as for the reads above."""
+        started = time.monotonic()
+        seconds = (
+            get_settings().gateway_read_timeout_seconds if timeout is None else timeout
+        )
+        slot, waits = self._class_place(call_class, critical)
+        if slot is not None:
+            await self._place(
+                caller,
+                endpoint,
+                slot,
+                waits=waits,
+                seconds=seconds if deadline_seconds is None else deadline_seconds,
+            )
+        if deadline_seconds is not None:
+            seconds = min(seconds, deadline_seconds - (time.monotonic() - started))
+            if seconds <= 0:
+                # Nobody would wait for its answer.
+                if slot is not None:
+                    slot.release()
+                raise self._not_sent(caller, endpoint, "NoTimeLeft")
         response = await self._send(
             caller,
             endpoint,
@@ -619,11 +755,8 @@ class GatewayClient:
             path,
             body=body,
             slot=slot,
-            timeout=(
-                get_settings().gateway_read_timeout_seconds
-                if timeout is None
-                else timeout
-            ),
+            timeout=seconds,
+            critical=critical,
         )
         status = response.status_code
         if status == 200 or (status == 404 and not_found_ok):
@@ -665,14 +798,21 @@ class GatewayClient:
         headers: dict[str, str] | None = None,
         slot: asyncio.Semaphore | None = None,
         route: WriteRoute | None = None,
+        critical: bool = False,
     ) -> httpx.Response:
         """`slot` is released when the call itself ends, however long nobody has been
-        waiting for it. `route`: the row of a write, checked by `write`."""
+        waiting for it. `route`: the row of a write, checked by `write`. `critical`:
+        a read that may take the place below the write's."""
         started = time.monotonic()
         status_class = "cancelled"
         try:
-            # The last place is for a write: without it a Confirm ends in nothing.
-            places = MAX_RUNNING_CALLS - (route is None)
+            # The last place is the write's, the one below it the critical calls'.
+            if route is not None:
+                places = MAX_RUNNING_CALLS
+            elif critical:
+                places = MAX_RUNNING_CALLS - 1
+            else:
+                places = MAX_RUNNING_CALLS - 2
             # No await between the check and the start, so the cap holds.
             if len(self._running) >= places:
                 if slot is not None:

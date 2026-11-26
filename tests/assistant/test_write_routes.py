@@ -11,7 +11,7 @@ import pytest
 from src.services.assistant.kinds.alert_status import status_change
 from src.services.assistant.gateway import client as client_module
 from src.services.assistant.gateway.client import (
-    MAX_RUNNING_CALLS,
+    MAX_CHAT_CALLS,
     WRITE_ROUTES,
     WriteAnswer,
     WriteRoute,
@@ -395,11 +395,19 @@ class Held:
 async def test_every_row_takes_the_reserved_place(endpoint):
     held = Held()
     client = held.fake.client()
-    for _ in range(MAX_RUNNING_CALLS - 1):
-        with pytest.raises(GatewayUnavailable):
+    # Every other place: the chats' and the critical one.
+    for critical in [False] * MAX_CHAT_CALLS + [True]:
+        with pytest.raises(GatewayUnavailable) as raised:
             await client._send(
-                caller(), "query", "POST", "/alerts/query", timeout=0.01, body={}
+                caller(),
+                "query",
+                "POST",
+                "/alerts/query",
+                timeout=0.01,
+                body={},
+                critical=critical,
             )
+        assert raised.value.sent is True
     with pytest.raises(GatewayUnavailable) as raised:
         await client.whoami(caller())
     assert raised.value.sent is False

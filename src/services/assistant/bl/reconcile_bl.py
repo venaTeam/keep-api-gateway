@@ -53,8 +53,11 @@ async def _reconcile(
         due = await run_db(drafts_bl.claim_look, key, AFTER_SECONDS)
         if due is None:
             return False
-        # Under the draft's id, as its Confirm, within the time of one look.
-        reader = gateway.for_request(due.id, deadline_seconds=READ_SECONDS)
+        # Under the draft's id and in the places of its Confirm, within the time of
+        # one look.
+        reader = gateway.for_request(
+            due.id, deadline_seconds=READ_SECONDS, critical=True
+        )
         decision = await kind.reconcile(reader, due, None)
         if decision is None or decision[0] == "applying":
             return False  # not yet: the next look tries again

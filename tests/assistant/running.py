@@ -9,6 +9,8 @@ from types import SimpleNamespace
 import httpx
 
 from src.services.assistant.core.work import OngoingWork
+from src.services.assistant.gateway.client import Caller, GatewayClient
+from src.services.assistant.gateway.errors import GatewayUnavailable
 from src.services.assistant.llm.client import (
     Finished,
     TextDelta,
@@ -296,6 +298,31 @@ class Keep(FakeGateway):
     @property
     def looks(self) -> list[httpx.Request]:
         return [r for r in self.requests if r.url.path == "/alerts/query"]
+
+
+async def take_every_chat_place(
+    keep: FakeGateway, client: GatewayClient
+) -> tuple[list[asyncio.Task], asyncio.Event]:
+    """Chat calls that wait until the event is set, as many as `client` lets chats run
+    at once: the next one was refused. The calls and the event."""
+    release = asyncio.Event()
+
+    async def held(request: httpx.Request) -> httpx.Response:
+        await release.wait()
+        return httpx.Response(200, json={})
+
+    keep.on("GET", "/held", held)
+    chat = Caller(TOKEN, "00000000-0000-4000-8000-0000000000c1")
+    running: list[asyncio.Task] = []
+    for _ in range(64):
+        before = len(client._running)
+        call = asyncio.create_task(client._read(chat, "held", "GET", "/held"))
+        await until(lambda: call.done() or len(client._running) > before)
+        if call.done():
+            assert isinstance(call.exception(), GatewayUnavailable)
+            return running, release
+        running.append(call)
+    raise AssertionError("no chat call was refused")
 
 
 async def until(condition, timeout: float = 10) -> None:

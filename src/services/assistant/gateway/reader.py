@@ -3,8 +3,9 @@
 It holds the client but offers none of its writes, and it has no way to reach the
 client by name: fixed slots and no `__getattr__`. Confirm alone keeps the client.
 
-A new read is a method here that calls one read method of the client; its (method,
-path template) joins the pin in tests/assistant/test_reader_facade.py.
+A new read is a method here that calls one read method of the client, passing the
+reader's `critical` on; its (method, path template) joins the pin in
+tests/assistant/test_reader_facade.py.
 """
 import dataclasses
 import uuid
@@ -19,7 +20,7 @@ from src.services.assistant.gateway.client import (
 
 
 class ReadGateway:
-    __slots__ = ("_client", "_caller", "_deadline_seconds")
+    __slots__ = ("_client", "_caller", "_deadline_seconds", "_critical")
 
     def __init__(
         self,
@@ -27,31 +28,68 @@ class ReadGateway:
         caller: Caller,
         *,
         deadline_seconds: float | None = None,
+        critical: bool = False,
     ):
-        """`deadline_seconds`: of a read that names none. None: the client's own."""
+        """`deadline_seconds`: of a read that names none. None: the client's own.
+        `critical`: Confirm's and reconcile's reads, which no chat call may keep from
+        a place (see the client's CALL_CLASSES)."""
         self._client = client
         self._caller = caller
         self._deadline_seconds = deadline_seconds
+        self._critical = critical
 
     def for_request(
-        self, request_id: uuid.UUID | str, *, deadline_seconds: float | None = None
+        self,
+        request_id: uuid.UUID | str,
+        *,
+        deadline_seconds: float | None = None,
+        critical: bool = False,
     ) -> "ReadGateway":
         """The same user's reads under another X-Request-ID (a turn's or a draft's id,
-        which the gateway's audit trail then names). `deadline_seconds` as above."""
+        which the gateway's audit trail then names). `deadline_seconds` and `critical`
+        as above: neither is carried over."""
         return ReadGateway(
             self._client,
             dataclasses.replace(self._caller, request_id=str(request_id)),
             deadline_seconds=deadline_seconds,
+            critical=critical,
         )
 
-    async def query_alerts(self, cel: str, limit: int) -> list[FetchedAlert]:
-        return await self._client.query_alerts(self._caller, cel, limit)
+    async def query_alerts(
+        self, cel: str, limit: int, *, deadline_seconds: float | None = None
+    ) -> list[FetchedAlert]:
+        return await self._client.query_alerts(
+            self._caller,
+            cel,
+            limit,
+            deadline_seconds=(
+                self._deadline_seconds if deadline_seconds is None else deadline_seconds
+            ),
+            critical=self._critical,
+        )
 
-    async def count_alerts(self, cel: str) -> int | None:
-        return await self._client.count_alerts(self._caller, cel)
+    async def count_alerts(
+        self, cel: str, *, deadline_seconds: float | None = None
+    ) -> int | None:
+        return await self._client.count_alerts(
+            self._caller,
+            cel,
+            deadline_seconds=(
+                self._deadline_seconds if deadline_seconds is None else deadline_seconds
+            ),
+            critical=self._critical,
+        )
 
-    async def alert_fields(self) -> list[str]:
-        return await self._client.alert_fields(self._caller)
+    async def alert_fields(
+        self, *, deadline_seconds: float | None = None
+    ) -> list[str]:
+        return await self._client.alert_fields(
+            self._caller,
+            deadline_seconds=(
+                self._deadline_seconds if deadline_seconds is None else deadline_seconds
+            ),
+            critical=self._critical,
+        )
 
     async def fetch_alerts_by_fingerprints(
         self,
@@ -67,4 +105,5 @@ class ReadGateway:
                 self._deadline_seconds if deadline_seconds is None else deadline_seconds
             ),
             known_missing=known_missing,
+            critical=self._critical,
         )

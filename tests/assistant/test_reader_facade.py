@@ -57,7 +57,12 @@ def test_nothing_can_be_added_or_looked_up_by_name():
     facade = reader()
     with pytest.raises(AttributeError):
         facade.write = lambda *args: None  # type: ignore[attr-defined]
-    assert ReadGateway.__slots__ == ("_client", "_caller", "_deadline_seconds")
+    assert ReadGateway.__slots__ == (
+        "_client",
+        "_caller",
+        "_deadline_seconds",
+        "_critical",
+    )
     assert not hasattr(facade, "__dict__")
     own = vars(ReadGateway)
     for name in ("__getattr__", "__getattribute__", "__setattr__", "__dir__"):
@@ -205,8 +210,28 @@ class Recorder:
     def __init__(self):
         self.asked: list[tuple[str, tuple, dict]] = []
 
-    async def fetch_alerts_by_fingerprints(self, *args, **options):
-        self.asked.append(("fetch_alerts_by_fingerprints", args, options))
+    def __getattr__(self, name):
+        async def read(*args, **options):
+            self.asked.append((name, args, options))
+
+        return read
+
+
+READ_ORDER = [
+    "query_alerts",
+    "count_alerts",
+    "alert_fields",
+    "fetch_alerts_by_fingerprints",
+]
+
+
+def every_read(facade: ReadGateway) -> None:
+    """Each read of the facade once, in READ_ORDER."""
+    assert set(READ_ORDER) == PUBLIC - {"for_request"}
+    asyncio.run(facade.query_alerts('name == "x"', 5))
+    asyncio.run(facade.count_alerts('name == "x"'))
+    asyncio.run(facade.alert_fields())
+    asyncio.run(facade.fetch_alerts_by_fingerprints(["fp-1"]))
 
 
 def test_a_deadline_set_for_the_reader_is_the_default_of_its_reads():
@@ -218,10 +243,47 @@ def test_a_deadline_set_for_the_reader_is_the_default_of_its_reads():
     unbound = ReadGateway(recorder, caller)  # type: ignore[arg-type]
     asyncio.run(unbound.fetch_alerts_by_fingerprints(["fp-1"], known_missing=["x"]))
     assert [(args, options) for _, args, options in recorder.asked] == [
-        ((caller, ["fp-1"]), {"deadline_seconds": 0.5, "known_missing": ()}),
-        ((caller, ["fp-1"]), {"deadline_seconds": 2, "known_missing": ()}),
-        ((caller, ["fp-1"]), {"deadline_seconds": None, "known_missing": ["x"]}),
+        (
+            (caller, ["fp-1"]),
+            {"deadline_seconds": 0.5, "known_missing": (), "critical": False},
+        ),
+        (
+            (caller, ["fp-1"]),
+            {"deadline_seconds": 2, "known_missing": (), "critical": False},
+        ),
+        (
+            (caller, ["fp-1"]),
+            {"deadline_seconds": None, "known_missing": ["x"], "critical": False},
+        ),
     ]
+    recorder.asked.clear()
+    every_read(bound)
+    assert [(name, o["deadline_seconds"]) for name, _, o in recorder.asked] == [
+        (name, 0.5) for name in READ_ORDER
+    ]
+
+
+def test_a_critical_reader_takes_critical_places_for_every_read():
+    """Confirm's and reconcile's reads: no chat may take their places."""
+    recorder = Recorder()
+    caller = identity().caller(REQUEST_ID)
+    every_read(ReadGateway(recorder, caller, critical=True))  # type: ignore[arg-type]
+    assert [o["critical"] for _, _, o in recorder.asked] == [True] * 4
+    recorder.asked.clear()
+    every_read(ReadGateway(recorder, caller))  # type: ignore[arg-type]
+    assert [o["critical"] for _, _, o in recorder.asked] == [False] * 4
+
+
+def test_a_reader_for_another_request_is_critical_only_when_asked():
+    recorder = Recorder()
+    critical = ReadGateway(
+        recorder,  # type: ignore[arg-type]
+        identity().caller(REQUEST_ID),
+        critical=True,
+    )
+    every_read(critical.for_request(uuid.uuid4()))
+    every_read(critical.for_request(uuid.uuid4(), critical=True))
+    assert [o["critical"] for _, _, o in recorder.asked] == [False] * 4 + [True] * 4
 
 
 def test_a_reader_for_another_request_does_not_keep_the_deadline():
@@ -241,10 +303,12 @@ def test_a_reader_for_another_request_does_not_keep_the_deadline():
 
 
 def test_the_reads_are_the_clients_own():
-    """The same signatures, less the caller: nothing is added on the way."""
+    """The same signatures, less the caller and whether the call is critical, which
+    the reader decides: nothing is added on the way."""
     client = client_module.GatewayClient
     for name in PUBLIC - {"for_request"}:
         theirs = list(inspect.signature(getattr(client, name)).parameters)
         ours = list(inspect.signature(getattr(ReadGateway, name)).parameters)
         assert theirs[:2] == ["self", "caller"]
-        assert ours == ["self", *theirs[2:]], name
+        assert theirs[-1] == "critical", name
+        assert ours == ["self", *theirs[2:-1]], name

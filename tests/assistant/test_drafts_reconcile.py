@@ -20,7 +20,14 @@ from tests.assistant.rows import (
     messages,
     read,
 )
-from tests.assistant.running import Exchange, Keep, equip, post_confirm, until
+from tests.assistant.running import (
+    Exchange,
+    Keep,
+    equip,
+    post_confirm,
+    take_every_chat_place,
+    until,
+)
 
 CANARY = "canary-90be2a"
 KIND = {"kind": "change_alert_status"}
@@ -177,6 +184,23 @@ async def test_the_result(
     # The user only looked.
     assert read(db, Conversation, conversation) == before
     assert len(keep.looks) == 1
+
+
+@pytest.mark.asyncio
+async def test_chats_holding_every_place_they_may_leave_the_look_its_own(
+    app, db, keep, conversation
+):
+    """Who is asking and the look itself: no chat call can take their places."""
+    keep.statuses = {"fp-1": "acknowledged"}
+    applying(db, conversation, "fp-1", outcome=pending_outcome())
+    chats, release = await take_every_chat_place(keep, app.state.assistant_gateway)
+    try:
+        [view] = await look(app, conversation)
+    finally:
+        release.set()
+    assert (view["state"], view["outcome"]["code"]) == ("applied", "applied")
+    assert len(keep.looks) == 1
+    await asyncio.gather(*chats, return_exceptions=True)
 
 
 @pytest.mark.asyncio

@@ -118,7 +118,8 @@ class _Attempt:
         kind = KINDS[self._draft.kind]
         plan = kind.plan(
             ConfirmContext(
-                reader=ReadGateway(self._gateway, self._caller),
+                # Its looks take the place no chat call can.
+                reader=ReadGateway(self._gateway, self._caller, critical=True),
                 caller=self._caller,
                 payload=kind.payload_model.parse_obj(self._draft.payload),
                 confirm_input=None,

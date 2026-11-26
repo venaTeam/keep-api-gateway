@@ -136,9 +136,9 @@ limits, with the caller's address. What bounds it:
 |---|---|
 | Messages per user | 10 a minute, 200 a day |
 | Running turns per user | 2, one per conversation |
-| Calls to the app's own routes | 8 at once per worker, then `gateway_unavailable`. One of them is kept for Confirm's write |
-| Filters the model wrote | 4 of those at once; the next one waits 5 s for its turn |
-| Reads of single alerts | 4 of those at once; the others wait |
+| Calls to the app's own routes | 8 at once per worker, then `gateway_unavailable`: 1 kept for Confirm's write, 1 for critical calls (who is asking, Confirm's looks, reconcile's look), 6 for chats |
+| Filters the model wrote | 4 of the 6 at once; the next one waits 5 s for its turn |
+| Reads of single alerts | 4 of the 6 at once; the others wait. A critical look reads 2 at once, in places of its own |
 | Database threads | 5 per worker, one per connection |
 | Alerts per draft | 20 |
 | Drafts per turn | 3 |
@@ -149,7 +149,10 @@ Running chats stand still for that long.
 
 A call nobody waits for any more (deadline, closed panel) runs to its end and keeps its
 place until then: the query routes have no statement timeout. That is what the 4 for
-filters are for: however slow they are, the other calls still get a place.
+filters are for: however slow they are, the other calls still get a place. However
+many places chats hold, who is asking, a Confirm and its write still get theirs. Two
+critical calls at the same moment, with every chat place taken, can still refuse one:
+`gateway_requests_total{status_class="not_sent"}` counts it.
 
 ## Data
 

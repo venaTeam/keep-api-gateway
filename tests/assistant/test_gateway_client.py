@@ -6,7 +6,7 @@ import pytest
 
 from src.services.assistant.core import metrics
 from src.services.assistant.gateway.client import (
-    MAX_CONCURRENT_ALERT_READS,
+    CALL_CLASSES,
     Caller,
     GatewayClient,
     can_use_cel,
@@ -31,6 +31,7 @@ from tests.assistant.fakes import (
 )
 from tests.assistant.logs import rendered
 
+ALERT_LIMIT = CALL_CLASSES["alert"].limit
 QUERY = ("POST", "/alerts/query")
 COUNT = ("POST", "/alerts/query/count")
 FIELDS = ("GET", "/alerts/facets/fields")
@@ -626,11 +627,11 @@ async def test_lookup_has_one_overall_deadline_and_leaves_only_running_calls(gat
             caller(), [f"q {n}" for n in range(15)], deadline_seconds=0.1
         )
     left = asyncio.all_tasks() - before
-    assert len(left) == len(gateway.requests) == MAX_CONCURRENT_ALERT_READS
+    assert len(left) == len(gateway.requests) == ALERT_LIMIT
     answer.set()
     await asyncio.wait(left, timeout=2)
     assert asyncio.all_tasks() == before
-    assert len(gateway.requests) == MAX_CONCURRENT_ALERT_READS
+    assert len(gateway.requests) == ALERT_LIMIT
 
 
 @pytest.mark.asyncio
@@ -643,7 +644,7 @@ async def test_single_reads_are_limited_across_chats(gateway):
         nonlocal running, peak
         running += 1
         peak = max(peak, running)
-        if running == MAX_CONCURRENT_ALERT_READS:
+        if running == ALERT_LIMIT:
             full.set()
         await release.wait()
         running -= 1
@@ -661,11 +662,11 @@ async def test_single_reads_are_limited_across_chats(gateway):
     await asyncio.wait_for(full.wait(), 2)
     for _ in range(5):
         await asyncio.sleep(0)
-    assert peak == MAX_CONCURRENT_ALERT_READS
+    assert peak == ALERT_LIMIT
     release.set()
     results = await asyncio.gather(*lookups)
     assert all(len(r.not_found) == 8 for r in results)
-    assert peak == MAX_CONCURRENT_ALERT_READS
+    assert peak == ALERT_LIMIT
 
 
 @pytest.mark.asyncio
