@@ -18,7 +18,7 @@ from src.services.assistant.bl.projection import (
     visible_text,
 )
 from src.services.assistant.bl.scopes import has_scope
-from src.services.assistant.gateway.client import Caller, FetchedAlert, can_use_cel, can_use_path
+from src.services.assistant.gateway.client import FetchedAlert, can_use_cel, can_use_path
 from src.services.assistant.gateway.errors import (
     GatewayForbidden,
     GatewayUnauthorized,
@@ -36,6 +36,7 @@ from src.services.assistant.models.api.draft import (
     SkippedAlert,
     TargetStatus,
 )
+from src.services.assistant.gateway.reader import ReadGateway
 from src.services.assistant.kinds.alert_status import NAME, WRITE_SCOPE
 from src.services.assistant.tools.base import (
     NewDraft,
@@ -199,11 +200,11 @@ async def run(context: ToolContext, arguments: str) -> ToolOutcome:
 
     # Minted before any lookup: it is also the X-Request-ID of this run's calls.
     draft_id = uuid.uuid4()
-    caller = context.identity.caller(draft_id)
+    reader = context.gateway.for_request(draft_id)
     try:
         if args.cel:
-            return await _draft_by_cel(context, caller, draft_id, args)
-        return await _draft_by_fingerprints(context, caller, draft_id, args)
+            return await _draft_by_cel(context, reader, draft_id, args)
+        return await _draft_by_fingerprints(context, reader, draft_id, args)
     except InvalidCel as exc:
         return _invalid_cel(exc)
     except QueryFailed:
@@ -223,19 +224,17 @@ async def run(context: ToolContext, arguments: str) -> ToolOutcome:
 
 async def _draft_by_cel(
     context: ToolContext,
-    caller: Caller,
+    reader: ReadGateway,
     draft_id: uuid.UUID,
     args: ChangeAlertStatusArgs,
 ) -> ToolOutcome:
     if context.cel_lookups_left <= 0:
         return tool_error("cel_lookup_limit")
     context.cel_lookups_left -= 1
-    alerts = await context.gateway.query_alerts(
-        caller, args.cel, MAX_ALERTS_PER_DRAFT + 1
-    )
+    alerts = await reader.query_alerts(args.cel, MAX_ALERTS_PER_DRAFT + 1)
     matched = {alert.fingerprint: alert for alert in alerts}
     if len(matched) > MAX_ALERTS_PER_DRAFT:
-        count = await context.gateway.count_alerts(caller, args.cel)
+        count = await reader.count_alerts(args.cel)
         # The alerts can change between the two calls.
         exact = count is not None and count > MAX_ALERTS_PER_DRAFT
         return _too_many(count if exact else None)
@@ -254,13 +253,11 @@ async def _draft_by_cel(
 
 async def _draft_by_fingerprints(
     context: ToolContext,
-    caller: Caller,
+    reader: ReadGateway,
     draft_id: uuid.UUID,
     args: ChangeAlertStatusArgs,
 ) -> ToolOutcome:
-    fetched = await context.gateway.fetch_alerts_by_fingerprints(
-        caller, args.fingerprints
-    )
+    fetched = await reader.fetch_alerts_by_fingerprints(args.fingerprints)
     return _draft(
         context,
         draft_id,

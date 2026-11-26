@@ -1,10 +1,12 @@
 """Test doubles shared by the suites."""
 import json
+import uuid
 from collections.abc import Callable
 
 import httpx
 
 from src.services.assistant.gateway.client import Caller, GatewayClient
+from src.services.assistant.gateway.reader import ReadGateway
 from src.services.assistant.kinds.alert_status import status_change
 from src.services.assistant.models.api.draft import GatewayResult, TargetStatus
 from src.services.assistant.models.identity import Identity
@@ -115,6 +117,10 @@ class FakeGateway:
 
     def client(self) -> GatewayClient:
         return GatewayClient("http://gateway.test", httpx.MockTransport(self.handle))
+
+    def reader(self, who: Identity | None = None) -> ReadGateway:
+        """What kinds, tools and the turn get: reads only, as `who`."""
+        return ReadGateway(self.client(), (who or identity()).caller(uuid.uuid4()))
 
     def paths(self) -> list[str]:
         return [f"{r.method} {r.url.raw_path.decode()}" for r in self.requests]

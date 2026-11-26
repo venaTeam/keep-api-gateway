@@ -7,6 +7,7 @@ from fastapi.responses import Response
 from src.services.assistant.api.deps import (
     get_identity,
     parse_resource_id,
+    request_id,
     request_started,
     require_ready,
 )
@@ -21,6 +22,7 @@ from src.services.assistant.bl import (
 )
 from src.services.assistant.core.work import run_db
 from src.services.assistant.exceptions import AssistantError
+from src.services.assistant.gateway.reader import ReadGateway
 from src.services.assistant.models.api.chat import ChatRequest
 from src.services.assistant.models.api.conversation import ConversationView
 from src.services.assistant.models.api.draft import DraftView
@@ -53,7 +55,7 @@ async def chat(
             identity,
             body,
             conversation_id,
-            state.assistant_gateway,
+            _reader(request, identity),
             state.assistant_llm,
             state.assistant_work,
         )
@@ -64,6 +66,11 @@ async def chat(
         starting.add_done_callback(_stop_unused)
         raise
     return TurnResponse(turn)
+
+
+def _reader(request: Request, identity: Identity) -> ReadGateway:
+    """The caller's reads; Confirm alone gets the client itself."""
+    return ReadGateway(request.app.state.assistant_gateway, identity.caller(request_id()))
 
 
 def _stop_unused(starting: "asyncio.Task[chat_turn.Turn]") -> None:
@@ -83,7 +90,7 @@ async def get_conversation(
     view = await run_db(timeline.load, identity, conversation)
     applying = reconcile_bl.applying(view)
     if applying and await reconcile_bl.reconcile(
-        identity, applying, request.app.state.assistant_gateway
+        identity, applying, _reader(request, identity)
     ):
         view = await run_db(timeline.load, identity, conversation)
     return view

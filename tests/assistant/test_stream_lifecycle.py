@@ -131,7 +131,7 @@ async def test_a_client_that_was_never_there(db, gateway):
         ref,
         identity(),
         ChatRequest(message="hello"),
-        gateway.client(),
+        gateway.reader(),
         FakeLlm([Gate()]),
     )
     turn.start(OngoingWork())
@@ -153,7 +153,7 @@ async def test_a_client_that_left_before_the_response_began(db, gateway, cut_off
     returns that. GZip holds the start back until there is a body."""
     ref = await run_db(start_turn, identity(), None, "hello")
     request = ChatRequest(message="hello")
-    turn = Turn(ref, identity(), request, gateway.client(), FakeLlm([Gate()]))
+    turn = Turn(ref, identity(), request, gateway.reader(), FakeLlm([Gate()]))
     frames = turn.frames
     turn.start(OngoingWork())
     sent = []
@@ -183,7 +183,7 @@ async def test_a_client_that_left_before_the_response_began(db, gateway, cut_off
 async def test_a_failing_stream_is_logged_without_its_text(db, gateway, caplog):
     work = OngoingWork()
     ref = await run_db(start_turn, identity(), None, "hello")
-    turn = Turn(ref, identity(), ChatRequest(message="x"), gateway.client(), FakeLlm())
+    turn = Turn(ref, identity(), ChatRequest(message="x"), gateway.reader(), FakeLlm())
 
     async def broken():
         yield "event: x\n\n"
@@ -530,7 +530,7 @@ async def test_work_that_comes_after_the_drain_is_stopped_too(db, gateway):
     work.drain()
     ref = await run_db(start_turn, identity(), None, "hello")
     turn = Turn(
-        ref, identity(), ChatRequest(message="x"), gateway.client(), FakeLlm([Gate()])
+        ref, identity(), ChatRequest(message="x"), gateway.reader(), FakeLlm([Gate()])
     )
     turn.start(work)
     assert await work.settle(5) == 0

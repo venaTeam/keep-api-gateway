@@ -2,6 +2,7 @@
 its own verifier, through the whole app."""
 import ast
 import re
+import typing
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -13,8 +14,11 @@ from src.models.alert import AlertStatus
 from src.models.db.alert import AlertAudit, LastAlert
 from src.services.assistant.config import ENABLED_ENV_VAR
 from src.services.assistant.gateway.client import WRITE_ROUTES, GatewayClient
+from src.services.assistant.gateway.reader import ReadGateway
 from src.services.assistant.gateway.transport import IN_PROCESS_URL, InProcessTransport
+from src.services.assistant.kinds.base import ConfirmContext
 from src.services.assistant.models.db import Draft
+from src.services.assistant.tools.base import ToolContext
 from src.services.identity_manager import authverifierbase, rbac
 from src.services.identity_manager.identity_managers.db import db_authverifier
 from tests.assistant.rows import add_conversation, add_draft, read
@@ -502,6 +506,26 @@ def test_nothing_of_the_chat_reaches_confirm():
         if path != CONFIRM and mentions(tree, "confirm_bl")
     ]
     assert importers == [ROUTES]
+
+
+def test_only_confirm_holds_the_client():
+    """Kinds, tools, the turn and the look at a conversation get a ReadGateway, which
+    has no write. Besides the client and the reader, only Confirm, the identity check
+    and the lifespan that makes it name the client."""
+    holders = {
+        path.relative_to(PACKAGE.parent.parent).as_posix()
+        for path, tree in sources().items()
+        if any("GatewayClient" in code_names(node) for node in ast.walk(tree))
+    }
+    assert holders == {
+        "services/assistant/gateway/client.py",
+        "services/assistant/gateway/reader.py",
+        "services/assistant/bl/confirm_bl.py",
+        "services/assistant/api/deps.py",
+        "services/assistant/lifecycle.py",
+    }
+    assert typing.get_type_hints(ToolContext)["gateway"] is ReadGateway
+    assert typing.get_type_hints(ConfirmContext)["reader"] is ReadGateway
 
 
 def test_the_rest_of_the_gateway_is_not_used_for_writes():

@@ -33,7 +33,10 @@ def gateway():
 def gather(gateway, request=None, who=None) -> TurnContext:
     return asyncio.run(
         context_bl.gather(
-            who or identity(), gateway.client(), request or ChatContext(), REQUEST_ID
+            who or identity(),
+            gateway.reader(who),
+            request or ChatContext(),
+            REQUEST_ID,
         )
     )
 

@@ -45,7 +45,8 @@ def arguments(**fields) -> str:
 
 
 def context(fake: FakeGateway, **identity_fields) -> ToolContext:
-    return ToolContext(identity=identity(**identity_fields), gateway=fake.client())
+    who = identity(**identity_fields)
+    return ToolContext(identity=who, gateway=fake.reader(who))
 
 
 async def draft_of(fake: FakeGateway, **fields) -> ChangeAlertStatusPayload:

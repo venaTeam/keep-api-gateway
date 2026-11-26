@@ -13,8 +13,8 @@ from typing import Any
 
 from src.services.assistant.bl.projection import project_alert
 from src.services.assistant.config import get_settings
-from src.services.assistant.gateway.client import Caller, GatewayClient
 from src.services.assistant.gateway.errors import GatewayError
+from src.services.assistant.gateway.reader import ReadGateway
 from src.services.assistant.models.api.chat import ChatContext
 from src.services.assistant.models.api.draft import MAX_ALERTS_PER_DRAFT
 from src.services.assistant.models.identity import Identity
@@ -49,15 +49,15 @@ class TurnContext:
 
 async def gather(
     identity: Identity,
-    gateway: GatewayClient,
+    gateway: ReadGateway,
     request: ChatContext,
     request_id: uuid.UUID,
 ) -> TurnContext:
-    caller = identity.caller(request_id)
+    reader = gateway.for_request(request_id)
     notes: list[str] = []
     alerts, fields = await asyncio.gather(
-        _selected_alerts(gateway, caller, request.selected_fingerprints, notes),
-        _fields(gateway, caller, identity.tenant_id, notes),
+        _selected_alerts(reader, request.selected_fingerprints, notes),
+        _fields(reader, identity.tenant_id, notes),
     )
     return TurnContext(
         now=datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -81,14 +81,14 @@ def page_pattern(page: str) -> str | None:
 
 
 async def _selected_alerts(
-    gateway: GatewayClient, caller: Caller, fingerprints: list[str], notes: list[str]
+    reader: ReadGateway, fingerprints: list[str], notes: list[str]
 ) -> list[dict[str, Any]]:
     # More than a draft can hold are no use to the model.
     wanted = fingerprints[:MAX_ALERTS_PER_DRAFT]
     if not wanted:
         return []
     try:
-        result = await gateway.fetch_alerts_by_fingerprints(caller, wanted)
+        result = await reader.fetch_alerts_by_fingerprints(wanted)
     except GatewayError:
         notes.append("The selected alerts could not be read.")
         return []
@@ -99,14 +99,14 @@ async def _selected_alerts(
 
 
 async def _fields(
-    gateway: GatewayClient, caller: Caller, tenant_id: str, notes: list[str]
+    reader: ReadGateway, tenant_id: str, notes: list[str]
 ) -> list[str]:
     # By the tenant the gateway named for this token, never by one a client sent.
     until, names = _fields_cache.get(tenant_id, (0.0, []))
     if time.monotonic() < until:
         return names
     try:
-        names = usable_fields(await gateway.alert_fields(caller))
+        names = usable_fields(await reader.alert_fields())
     except GatewayError:
         notes.append("The other fields could not be read: use the core fields only.")
         return []

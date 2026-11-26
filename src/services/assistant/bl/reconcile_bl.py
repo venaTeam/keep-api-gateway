@@ -8,7 +8,6 @@ import time
 from src.services.assistant.bl import drafts_bl, outcomes
 from src.services.assistant.core import metrics
 from src.services.assistant.core.work import log_failure, run_db
-from src.services.assistant.gateway.client import GatewayClient
 from src.services.assistant.gateway.errors import GatewayError
 from src.services.assistant.gateway.reader import ReadGateway
 from src.services.assistant.kinds.base import DraftKind
@@ -34,15 +33,16 @@ def applying(view: ConversationView) -> list[DraftView]:
 
 
 async def reconcile(
-    identity: Identity, drafts: list[DraftView], gateway: GatewayClient
+    identity: Identity, drafts: list[DraftView], gateway: ReadGateway
 ) -> bool:
-    """Give the drafts that are due their result. Whether any of them has one now."""
+    """Give the drafts that are due their result. Whether any of them has one now.
+    Reads only: nothing is written to alerts here."""
     settled = await asyncio.gather(*(_reconcile(identity, d, gateway) for d in drafts))
     return any(settled)
 
 
 async def _reconcile(
-    identity: Identity, draft: DraftView, gateway: GatewayClient
+    identity: Identity, draft: DraftView, gateway: ReadGateway
 ) -> bool:
     started = time.monotonic()
     kind = _readable(draft)
@@ -53,10 +53,8 @@ async def _reconcile(
         due = await run_db(drafts_bl.claim_look, key, AFTER_SECONDS)
         if due is None:
             return False
-        # On behalf of the draft's owner, under the draft's id, as its Confirm.
-        reader = ReadGateway(
-            gateway, identity.caller(due.id), deadline_seconds=READ_SECONDS
-        )
+        # Under the draft's id, as its Confirm, within the time of one look.
+        reader = gateway.for_request(due.id, deadline_seconds=READ_SECONDS)
         decision = await kind.reconcile(reader, due, None)
         if decision is None or decision[0] == "applying":
             return False  # not yet: the next look tries again

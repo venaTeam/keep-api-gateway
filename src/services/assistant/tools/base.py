@@ -11,7 +11,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from src.services.assistant.gateway.client import GatewayClient
+from src.services.assistant.gateway.reader import ReadGateway
 from src.services.assistant.llm.client import LlmTool
 from src.services.assistant.models.api.stream import StreamErrorCode, ToolOutcomeCode
 from src.services.assistant.models.identity import Identity
@@ -25,7 +25,8 @@ class ToolContext:
     """One turn's view of the world, shared by all its tool calls."""
 
     identity: Identity
-    gateway: GatewayClient
+    # Reads only, under the turn's id; `for_request` gives one under another.
+    gateway: ReadGateway
     # Model-written filters have no early exit on the gateway's side.
     cel_lookups_left: int = MAX_CEL_LOOKUPS_PER_TURN
 

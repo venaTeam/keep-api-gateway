@@ -22,7 +22,7 @@ from src.services.assistant.config import get_settings
 from src.services.assistant.core import metrics
 from src.services.assistant.core.work import OngoingWork, log_failure, run_db
 from src.services.assistant.exceptions import AssistantError
-from src.services.assistant.gateway.client import GatewayClient
+from src.services.assistant.gateway.reader import ReadGateway
 from src.services.assistant.llm.client import (
     Finished,
     LlmClient,
@@ -108,15 +108,16 @@ class Turn:
         ref: TurnRef,
         identity: Identity,
         request: ChatRequest,
-        gateway: GatewayClient,
+        gateway: ReadGateway,
         llm: LlmClient,
     ):
         self.ref = ref
         self._identity = identity
         self._chat_request = request
-        self._gateway = gateway
+        # Reads only: a turn never writes.
+        self._gateway = gateway.for_request(ref.turn_id)
         self._llm = llm
-        self._tools = ToolContext(identity=identity, gateway=gateway)
+        self._tools = ToolContext(identity=identity, gateway=self._gateway)
         self._round = _Round()
         self._rounds = 0
         self._drafts = 0
@@ -427,7 +428,7 @@ async def begin(
     identity: Identity,
     request: ChatRequest,
     conversation_id: uuid.UUID | None,
-    gateway: GatewayClient,
+    gateway: ReadGateway,
     llm: LlmClient,
     work: OngoingWork,
 ) -> Turn:
