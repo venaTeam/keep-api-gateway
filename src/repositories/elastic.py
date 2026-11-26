@@ -39,7 +39,9 @@ class ElasticClient:
                 tenant_id, "search_mode"
             ):
                 self.enabled = False
-                self.logger.debug(f"Elastic is disabled for tenant {tenant_id}")
+                self.logger.debug(
+                    "Elastic is disabled for tenant", extra={"tenant_id": tenant_id}
+                )
                 return
             else:
                 self.enabled = True
@@ -167,21 +169,28 @@ class ElasticClient:
         except BadRequestError as e:
             # means no index. if no alert was indexed, the index is not exist
             if "Unknown index" in str(e):
-                self.logger.warning("Index does not exist yet.")
+                self.logger.warning(
+                    "Index does not exist yet.",
+                    extra={"tenant_id": self.tenant_id, "index": self.alerts_index},
+                )
                 return []
             else:
                 self.logger.exception(
-                    f"Failed to run query in Elastic: {e}",
+                    "Failed to run query in Elastic",
                     extra={
                         "tenant_id": self.tenant_id,
+                        "query": query[:500],
+                        "error": str(e),
                     },
                 )
                 raise Exception(f"Failed to run query in Elastic: {e}")
         except Exception as e:
             self.logger.exception(
-                f"Failed to run query in Elastic: {e}",
+                "Failed to run query in Elastic",
                 extra={
                     "tenant_id": self.tenant_id,
+                    "query": query[:500],
+                    "error": str(e),
                 },
             )
             raise Exception(f"Failed to run query in Elastic: {e}")
@@ -215,13 +224,32 @@ class ElasticClient:
         except BadRequestError as e:
             # means no index. if no alert was indexed, the index is not exist
             if "Unknown index" in str(e):
-                self.logger.warning("Index does not exist yet.")
+                self.logger.warning(
+                    "Index does not exist yet.",
+                    extra={"tenant_id": self.tenant_id, "index": self.alerts_index},
+                )
                 return []
             else:
-                self.logger.error(f"Failed to run query in Elastic: {e}")
+                self.logger.error(
+                    "Failed to run query in Elastic",
+                    extra={
+                        "tenant_id": self.tenant_id,
+                        "query": query[:500],
+                        "index": self.alerts_index,
+                        "error": str(e),
+                    },
+                )
                 raise Exception(f"Failed to run query in Elastic: {e}")
         except Exception as e:
-            self.logger.error(f"Failed to search alerts in Elastic: {e}")
+            self.logger.error(
+                "Failed to search alerts in Elastic",
+                extra={
+                    "tenant_id": self.tenant_id,
+                    "query": query[:500],
+                    "index": self.alerts_index,
+                    "error": str(e),
+                },
+            )
             raise Exception(f"Failed to search alerts in Elastic: {e}")
 
     def index_alert(self, alert: AlertDto):
@@ -241,10 +269,26 @@ class ElasticClient:
             )
         # TODO: retry/pubsub
         except ApiError as e:
-            self.logger.error(f"Failed to index alert to Elastic: {e} {e.errors}")
+            self.logger.error(
+                "Failed to index alert to Elastic",
+                extra={
+                    "tenant_id": self.tenant_id,
+                    "fingerprint": alert.fingerprint,
+                    "index": self.alerts_index,
+                    "error": f"{e} {e.errors}",
+                },
+            )
             raise Exception(f"Failed to index alert to Elastic: {e} {e.errors}")
         except Exception as e:
-            self.logger.error(f"Failed to index alert to Elastic: {e}")
+            self.logger.error(
+                "Failed to index alert to Elastic",
+                extra={
+                    "tenant_id": self.tenant_id,
+                    "fingerprint": alert.fingerprint,
+                    "index": self.alerts_index,
+                    "error": str(e),
+                },
+            )
             raise Exception(f"Failed to index alert to Elastic: {e}")
 
     def index_alerts(self, alerts: list[AlertDto]):
@@ -272,27 +316,63 @@ class ElasticClient:
         try:
             success, failed = bulk(self._client, actions, refresh=self.refresh_strategy)
             self.logger.info(
-                f"Successfully indexed {success} alerts. Failed to index {failed} alerts."
+                "Successfully indexed alerts to Elastic",
+                extra={
+                    "success_count": success,
+                    "failed_count": failed,
+                    "tenant_id": self.tenant_id,
+                    "index": self.alerts_index,
+                },
             )
         except BulkIndexError as e:
-            self.logger.error(f"Failed to index alerts to Elastic: {e} {e.errors}")
+            self.logger.error(
+                "Failed to index alerts to Elastic",
+                extra={
+                    "tenant_id": self.tenant_id,
+                    "index": self.alerts_index,
+                    "count": len(actions),
+                    "error": f"{e} {e.errors}",
+                },
+            )
             raise Exception(f"Failed to index alerts to Elastic: {e} {e.errors}")
         except ApiError as e:
-            self.logger.error(f"Failed to index alerts to Elastic: {e} {e.errors}")
+            self.logger.error(
+                "Failed to index alerts to Elastic",
+                extra={
+                    "tenant_id": self.tenant_id,
+                    "index": self.alerts_index,
+                    "count": len(actions),
+                    "error": f"{e} {e.errors}",
+                },
+            )
             raise Exception(f"Failed to index alerts to Elastic: {e} {e.errors}")
         except Exception as e:
-            self.logger.exception(f"Failed to index alerts to Elastic: {e}")
+            self.logger.exception(
+                "Failed to index alerts to Elastic",
+                extra={
+                    "tenant_id": self.tenant_id,
+                    "index": self.alerts_index,
+                    "count": len(actions),
+                    "error": str(e),
+                },
+            )
             raise Exception(f"Failed to index alerts to Elastic: {e}")
 
     def enrich_alert(self, alert_fingerprint: str, alert_enrichments: dict):
         if not self.enabled:
             return
 
-        self.logger.debug(f"Enriching alert {alert_fingerprint}")
         # get the alert, enrich it and index it
         alert = self._client.get(index=self.alerts_index, id=alert_fingerprint)
         if not alert:
-            self.logger.error(f"Alert with fingerprint {alert_fingerprint} not found")
+            self.logger.error(
+                "Alert with fingerprint not found",
+                extra={
+                    "fingerprint": alert_fingerprint,
+                    "tenant_id": self.tenant_id,
+                    "index": self.alerts_index,
+                },
+            )
             return
 
         # Enrich typed user-state fields on the AlertDto, then re-index.
@@ -302,7 +382,6 @@ class ElasticClient:
         self._apply_enrichments_to_dto(enriched_alert, alert_enrichments)
         # index the enriched alert
         self.index_alert(enriched_alert)
-        self.logger.debug(f"Alert {alert_fingerprint} enriched and indexed")
 
     def drop_index(self):
         if not self.enabled:

@@ -129,6 +129,8 @@ def test_rejected_cel(db_session, client, test_app, logs, name):
 @pytest.mark.parametrize("name", [name for name in REQUESTS if name != "facets"])
 @pytest.mark.parametrize("test_app", ["NO_AUTH"], indirect=True)
 def test_accepted_cel(db_session, client, test_app, logs, name, cel):
+    # The query routes log an accepted expression at DEBUG only.
+    logs.set_level(logging.DEBUG)
     path, body = REQUESTS[name](cel)
 
     response = client.post(path, headers={"x-api-key": "k"}, json=body)

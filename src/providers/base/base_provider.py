@@ -201,7 +201,6 @@ class BaseProvider(metaclass=abc.ABCMeta):
         Enrich alert with provider specific data.
 
         """
-        self.logger.debug("Extracting the fingerprint from the alert")
         event = None
         entity_type: Literal["alert", "incident"] = "alert"
         if "fingerprint" in results:
@@ -226,7 +225,10 @@ class BaseProvider(metaclass=abc.ABCMeta):
             else:
                 self.logger.warning(
                     "No fingerprint found for alert enrichment",
-                    extra={"provider": self.provider_id},
+                    extra={
+                        "provider": self.provider_id,
+                        "tenant_id": self.context_manager.tenant_id,
+                    },
                 )
                 fingerprint = None
         # else, if we are in an event context, use the event fingerprint
@@ -248,10 +250,12 @@ class BaseProvider(metaclass=abc.ABCMeta):
         if not fingerprint:
             self.logger.error(
                 "No fingerprint found for alert enrichment",
-                extra={"provider": self.provider_id},
+                extra={
+                    "provider": self.provider_id,
+                    "tenant_id": self.context_manager.tenant_id,
+                },
             )
             raise Exception("No fingerprint found for alert enrichment")
-        self.logger.debug("Fingerprint extracted", extra={"fingerprint": fingerprint})
 
         _enrichments = {}
         disposable_enrichments = {}
@@ -271,8 +275,6 @@ class BaseProvider(metaclass=abc.ABCMeta):
                 # 1. first convert to results[0][0]["message"]["source"]
                 # 2. use eval
                 elif value.startswith("results["):
-                    self.logger.info("Trying to convert")
-
                     # try convert
                     def convert_dot_to_bracket(match):
                         return f'["{match.group(1)}"]'
@@ -289,7 +291,13 @@ class BaseProvider(metaclass=abc.ABCMeta):
                         )
                     except Exception:
                         self.logger.exception(
-                            "Could not parse results", extra={"value": value}
+                            "Could not parse results",
+                            extra={
+                                "value": value,
+                                "fingerprint": fingerprint,
+                                "provider": self.provider_id,
+                                "tenant_id": self.context_manager.tenant_id,
+                            },
                         )
 
                 if disposable:
@@ -303,11 +311,15 @@ class BaseProvider(metaclass=abc.ABCMeta):
                         setattr(event, enrichment["key"], value)
             except Exception:
                 self.logger.error(
-                    f"Failed to enrich alert - enrichment: {enrichment}",
-                    extra={"fingerprint": fingerprint, "provider": self.provider_id},
+                    "Failed to enrich alert",
+                    extra={
+                        "enrichment": enrichment,
+                        "fingerprint": fingerprint,
+                        "provider": self.provider_id,
+                        "tenant_id": self.context_manager.tenant_id,
+                    },
                 )
                 continue
-        self.logger.info("Enriching alert", extra={"fingerprint": fingerprint})
         try:
             enrichments_bl = EnrichmentsBl(self.context_manager.tenant_id)
             enrichment_string = ", ".join(
@@ -359,13 +371,15 @@ class BaseProvider(metaclass=abc.ABCMeta):
 
         except Exception as e:
             self.logger.error(
-                f"Failed to enrich {entity_type} in db",
-                extra={"fingerprint": fingerprint, "provider": self.provider_id},
+                "Failed to enrich entity in db",
+                extra={
+                    "entity_type": entity_type,
+                    "fingerprint": fingerprint,
+                    "provider": self.provider_id,
+                    "tenant_id": self.context_manager.tenant_id,
+                },
             )
             raise e
-        self.logger.info(
-            f"{entity_type.capitalize()} enriched", extra={"fingerprint": fingerprint}
-        )
 
     def _notify(self, **kwargs):
         """
@@ -459,14 +473,12 @@ class BaseProvider(metaclass=abc.ABCMeta):
                         "provider_type": provider_type,
                     },
                 )
-        logger.debug("Formatting alert")
         formatted_alert = cls._format_alert(event, provider_instance)
         if formatted_alert is None:
             logger.debug(
                 "Provider returned None, which means it decided not to format the alert"
             )
             return None
-        logger.debug("Alert formatted")
         # after the provider calculated the default fingerprint
         #   check if there is a custom deduplication rule and apply
         custom_deduplication_rule = get_custom_deduplication_rule(
@@ -497,6 +509,8 @@ class BaseProvider(metaclass=abc.ABCMeta):
                     "tenant_id": tenant_id,
                     "provider_id": provider_id,
                     "alert_id": alert.id,
+                    "fingerprint": alert.fingerprint,
+                    "rule_id": str(custom_deduplication_rule.id),
                 },
             )
             alert.fingerprint = cls.get_alert_fingerprint(
@@ -783,7 +797,7 @@ class BaseProvider(metaclass=abc.ABCMeta):
         if not isinstance(alert_data, dict):
             self.logger.warning(
                 "We currently support only alert represented as a dict, dismissing alert",
-                extra={"alert": alert},
+                extra={"alert_type": type(alert_data).__name__},
             )
             return
         # now try to build the alert model
@@ -828,10 +842,23 @@ class BaseProvider(metaclass=abc.ABCMeta):
         )
         try:
             response.raise_for_status()
-            self.logger.info("Alert pushed successfully")
+            self.logger.info(
+                "Alert pushed successfully",
+                extra={
+                    "tenant_id": self.context_manager.tenant_id,
+                    "provider_id": self.provider_id,
+                    "status_code": response.status_code,
+                },
+            )
         except Exception:
             self.logger.error(
-                f"Failed to push alert to {self.provider_id}: {response.content}"
+                "Failed to push alert",
+                extra={
+                    "tenant_id": self.context_manager.tenant_id,
+                    "provider_id": self.provider_id,
+                    "status_code": response.status_code,
+                    "response_body": response.text[:1000],
+                },
             )
 
     @classmethod
@@ -927,7 +954,6 @@ class BaseIncidentProvider(BaseProvider):
                         "provider_type": provider_type,
                     },
                 )
-        logger.debug("Formatting Incident")
         return cls._format_incident(event, provider_instance)
 
     def setup_incident_webhook(

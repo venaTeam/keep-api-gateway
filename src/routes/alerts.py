@@ -183,13 +183,6 @@ def fetch_alert_facet_options(
 ) -> dict:
     tenant_id = authenticated_entity.tenant_id
 
-    logger.info(
-        "Fetching alert facets from DB",
-        extra={
-            "tenant_id": tenant_id,
-        },
-    )
-
     # Both the main filter and each per-facet query are converted during
     # execution, and the converter rejects anything that is not a usable filter.
     try:
@@ -207,13 +200,6 @@ def fetch_alert_facet_options(
         )
         raise http_exception_from_converter_error(facet_options_query.cel, e) from e
 
-    logger.info(
-        "Fetched alert facets from DB",
-        extra={
-            "tenant_id": tenant_id,
-        },
-    )
-
     return facet_options
 
 
@@ -227,23 +213,7 @@ def fetch_alert_facets(
     ),
 ) -> list:
     tenant_id = authenticated_entity.tenant_id
-
-    logger.info(
-        "Fetching alert facets from DB",
-        extra={
-            "tenant_id": tenant_id,
-        },
-    )
-
     facets = get_alert_facets(tenant_id=tenant_id)
-
-    logger.info(
-        "Fetched alert facets from DB",
-        extra={
-            "tenant_id": tenant_id,
-        },
-    )
-
     return facets
 
 
@@ -257,22 +227,7 @@ def fetch_alert_facet_fields(
     ),
 ) -> list:
     tenant_id = authenticated_entity.tenant_id
-
-    logger.info(
-        "Fetching alert facet fields from DB",
-        extra={
-            "tenant_id": tenant_id,
-        },
-    )
-
     fields = get_alert_potential_facet_fields(tenant_id=tenant_id)
-
-    logger.info(
-        "Fetched alert facet fields from DB",
-        extra={
-            "tenant_id": tenant_id,
-        },
-    )
     return fields
 
 @router.post(
@@ -286,30 +241,18 @@ def query_alerts_count(
     ),
 ):
     tenant_id = authenticated_entity.tenant_id
-    logger.info(
-        msg="Fetching alerts count from DB",
-        extra={
-            "tenant_id": tenant_id,
-            "cel_expression": sanitize_for_log(query.cel),
-            "group_by": query.group_by.value if query.group_by else None,
-            "incident_status": (
-                query.incident_status.value if query.incident_status else None
-            ),
-            "include_missing": query.include_missing,
-        },
-    )
 
     try:
         if query.group_by is None:
             total_count = query_total_alerts_count(tenant_id=tenant_id, query=query)
         else:
             total_count = query_distinct_alerts_count(tenant_id=tenant_id, query=query)
-        logger.info(
+        logger.debug(
             msg="Fetched alerts count from DB",
             extra={
                 "tenant_id": tenant_id,
-                "query": sanitize_for_log(query.json()),
-                "total_count": total_count,
+                "cel_expression": sanitize_for_log(query.cel),
+                "count": total_count,
             },
         )
         if query.group_by is None:
@@ -349,13 +292,6 @@ def query_alerts(
     # This approach is not good. We should continuesly pull alerts without relying on whether request is done or not.
 
     tenant_id = authenticated_entity.tenant_id
-    logger.info(
-        "Fetching alerts from DB",
-        extra={
-            "tenant_id": tenant_id,
-            "cel_expression": sanitize_for_log(query.cel),
-        },
-    )
 
     # The filter is validated by the converter as the query is built, so an
     # expression that skipped /cel/validate is still rejected here.
@@ -376,12 +312,12 @@ def query_alerts(
     enriched_alerts_dto = convert_db_alerts_to_dto_alerts(
         db_alerts, with_incidents=True
     )
-    logger.info(
+    logger.debug(
         "Fetched alerts from DB",
         extra={
             "tenant_id": tenant_id,
-            "query": sanitize_for_log(query.json()),
-            "total_count": len(db_alerts),
+            "cel_expression": sanitize_for_log(query.cel),
+            "count": len(db_alerts),
         },
     )
 
@@ -404,20 +340,8 @@ def get_all_alerts(
     limit: int = 1000,
 ) -> list[AlertDto]:
     tenant_id = authenticated_entity.tenant_id
-    logger.info(
-        "Fetching alerts from DB",
-        extra={
-            "tenant_id": tenant_id,
-        },
-    )
     db_alerts = get_last_alerts(tenant_id=tenant_id, limit=limit)
     enriched_alerts_dto = convert_db_alerts_to_dto_alerts(db_alerts)
-    logger.info(
-        "Fetched alerts from DB",
-        extra={
-            "tenant_id": tenant_id,
-        },
-    )
 
     return enriched_alerts_dto
 
@@ -437,13 +361,6 @@ def get_alert_history(
       timestamp (who did what, and system fired/resolved events).
     """
     tenant_id = authenticated_entity.tenant_id
-    logger.info(
-        "Fetching alert history",
-        extra={
-            "fingerprint": fingerprint,
-            "tenant_id": tenant_id,
-        },
-    )
     db_alerts = get_alerts_by_fingerprint(
         tenant_id=tenant_id,
         fingerprint=fingerprint,
@@ -465,14 +382,6 @@ def get_alert_history(
     # activity: the audit event stream (already ordered desc by timestamp).
     audit_rows = get_alert_audit_db(tenant_id, fingerprint, limit=1000)
     activity = AlertAuditDto.from_orm_list(audit_rows)
-
-    logger.info(
-        "Fetched alert history",
-        extra={
-            "tenant_id": tenant_id,
-            "fingerprint": fingerprint,
-        },
-    )
     return AlertHistoryResponse(occurrences=occurrences, activity=activity)
 
 
@@ -487,7 +396,7 @@ async def delete_alert(
     user_email = authenticated_entity.email
 
     logger.info(
-        f"Deleting alert {'' if delete_alert.soft_delete else 'from DB'}",
+        "Deleting alert",
         extra={
             "fingerprint": delete_alert.fingerprint,
             "restore": delete_alert.restore,
@@ -516,14 +425,6 @@ async def delete_alert(
     if not delete_alert.soft_delete:
         delete_alert_db(tenant_id, delete_alert.fingerprint)
 
-    logger.info(
-        "Deleted alert successfully",
-        extra={
-            "tenant_id": tenant_id,
-            "restore": delete_alert.restore,
-            "fingerprint": delete_alert.fingerprint,
-        },
-    )
     return {"status": "ok"}
 
 
@@ -546,14 +447,6 @@ async def assign_alert(
     user_email = authenticated_entity.email
     if body is None:
         body = AssignAlertRequestBody()
-
-    logger.info(
-        "Assigning alert",
-        extra={
-            "fingerprint": fingerprint,
-            "tenant_id": tenant_id,
-        },
-    )
 
     logger.info(
         "Assigning alert",
@@ -610,7 +503,7 @@ def get_alert(
     ),
 ) -> AlertDto:
     tenant_id = authenticated_entity.tenant_id
-    logger.info(
+    logger.debug(
         "Fetching alert",
         extra={
             "fingerprint": fingerprint,
@@ -638,7 +531,6 @@ async def enrich_alert_note(
     ),
     session: Session = Depends(get_session),
 ) -> dict[str, str]:
-    logger.info("Enriching alert note", extra={"fingerprint": enrich_data.fingerprint})
     enriched_data = EnrichAlertRequestBody(
         enrichments={"note": enrich_data.note},
         fingerprint=enrich_data.fingerprint,
@@ -675,7 +567,6 @@ async def batch_enrich_alerts(
     # On every log line below, so a caller's X-Request-ID finds all of them.
     log_context = {"tenant_id": tenant_id, "request_id": current_request_id()}
     via_assistant = keep_source == "assistant"
-    logger.info("Enriching alerts in batch", extra=log_context)
 
     _translate_dismiss_enrichments(enrich_data.enrichments)
 
@@ -692,11 +583,6 @@ async def batch_enrich_alerts(
     # If CEL is provided, use it to find matching alerts
     if enrich_data.cel:
         log_cel = sanitize_for_log(enrich_data.cel)
-        logger.info(
-            "Enriching alerts by CEL query",
-            extra={**log_context, "cel": log_cel},
-        )
-
         try:
             db_alerts = query_last_alerts(
                 tenant_id=tenant_id,
@@ -706,7 +592,7 @@ async def batch_enrich_alerts(
             if not db_alerts:
                 logger.info(
                     "No alerts found matching the CEL query",
-                    extra={**log_context, "cel": log_cel},
+                    extra={**log_context, "cel": log_cel, "alert_count": 0},
                 )
                 return {
                     "status": "ok",
@@ -741,10 +627,6 @@ async def batch_enrich_alerts(
     else:
         # Use the provided fingerprints
         fingerprints = enrich_data.fingerprints
-        logger.info(
-            "Enriching alerts batch",
-            extra={**log_context, "fingerprints": fingerprints},
-        )
 
     # Common enrichment processing
     try:
@@ -785,21 +667,20 @@ async def batch_enrich_alerts(
         enriched_alerts_dto = convert_db_alerts_to_dto_alerts(alerts, session=session)
         # push the enriched alert to the elasticsearch
         try:
-            logger.info("Pushing enriched alerts to elasticsearch", extra=log_context)
             elastic_client = ElasticClient(tenant_id)
             elastic_client.index_alerts(
                 alerts=enriched_alerts_dto,
             )
-            logger.info("Pushed enriched alerts to elasticsearch", extra=log_context)
         except Exception:
-            logger.exception("Failed to push alerts to elasticsearch", extra=log_context)
+            logger.exception(
+                "Failed to push alerts to elasticsearch",
+                extra={**log_context, "fingerprint_count": len(fingerprints)},
+            )
             pass
 
         # use SSE to push the enriched alert to the client
-        logger.info("Telling client to poll alerts", extra=log_context)
         try:
             notify_sse(tenant_id, "poll-alerts", {})
-            logger.info("Told client to poll alerts", extra=log_context)
         except Exception:
             logger.exception(
                 "Failed to tell client to poll alerts", extra=log_context
@@ -808,7 +689,11 @@ async def batch_enrich_alerts(
 
         logger.info(
             "Alerts batch enriched successfully",
-            extra={**log_context, "fingerprints": fingerprints},
+            extra={
+                **log_context,
+                "count": len(fingerprints),
+                "action_type": action_type.value,
+            },
         )
 
 
@@ -833,6 +718,7 @@ async def batch_enrich_alerts(
             extra={
                 **log_context,
                 "fingerprint_count": len(fingerprints),
+                "fingerprints_sample": fingerprints[:10],
                 "error": str(e),
             },
         )
@@ -858,15 +744,6 @@ async def enrich_alert(
 
     _translate_dismiss_enrichments(enrich_data.enrichments)
 
-    tenant_id = authenticated_entity.tenant_id
-    logger.info(
-        "Enriching alert",
-        extra={
-            "fingerprint": enrich_data.fingerprint,
-            "tenant_id": tenant_id,
-        },
-    )
-
     return await _enrich_alert(
         enrich_data,
         authenticated_entity=authenticated_entity,
@@ -882,14 +759,6 @@ async def _enrich_alert(
     dispose_on_new_alert: bool = False,
 ) -> dict[str, str]:
     tenant_id = authenticated_entity.tenant_id
-    logger.info(
-        "Enriching alert",
-        extra={
-            "fingerprint": enrich_data.fingerprint,
-            "tenant_id": tenant_id,
-        },
-    )
-
     try:
         enrichement_bl = EnrichmentsBl(tenant_id, db=session)
         (
@@ -927,33 +796,39 @@ async def _enrich_alert(
         )
         if not alert:
             logger.warning(
-                "Alert not found", extra={"fingerprint": enrich_data.fingerprint}
+                "Alert not found",
+                extra={"fingerprint": enrich_data.fingerprint, "tenant_id": tenant_id},
             )
             return {"status": "failed"}
 
         enriched_alerts_dto = convert_db_alerts_to_dto_alerts(alert, session=session)
         # push the enriched alert to the elasticsearch
         try:
-            logger.info("Pushing enriched alert to elasticsearch")
             elastic_client = ElasticClient(tenant_id)
             elastic_client.index_alert(
                 alert=enriched_alerts_dto[0],
             )
-            logger.info("Pushed enriched alert to elasticsearch")
         except Exception:
-            logger.exception("Failed to push alert to elasticsearch")
+            logger.exception(
+                "Failed to push alert to elasticsearch",
+                extra={"tenant_id": tenant_id, "fingerprint": enrich_data.fingerprint},
+            )
             pass
         # use SSE to push the enriched alert to the client
-        logger.info("Telling client to poll alerts")
         try:
             notify_sse(tenant_id, "poll-alerts", {})
-            logger.info("Told client to poll alerts")
         except Exception:
-            logger.exception("Failed to tell client to poll alerts")
+            logger.exception(
+                "Failed to tell client to poll alerts", extra={"tenant_id": tenant_id}
+            )
             pass
         logger.info(
             "Alert enriched successfully",
-            extra={"fingerprint": enrich_data.fingerprint, "tenant_id": tenant_id},
+            extra={
+                "fingerprint": enrich_data.fingerprint,
+                "tenant_id": tenant_id,
+                "action_type": action_type.value,
+            },
         )
 
 
@@ -968,7 +843,14 @@ async def _enrich_alert(
         # Re-raise HTTP exceptions (e.g. 422 for unknown enrichment keys)
         raise
     except Exception as e:
-        logger.exception("Failed to enrich alert", extra={"error": str(e)})
+        logger.exception(
+            "Failed to enrich alert",
+            extra={
+                "tenant_id": tenant_id,
+                "fingerprint": enrich_data.fingerprint,
+                "error": str(e),
+            },
+        )
         return {"status": "failed"}
 
 
@@ -985,13 +867,6 @@ async def unenrich_alert(
     _require_delete_scope(authenticated_entity, enrich_data.enrichments)
 
     tenant_id = authenticated_entity.tenant_id
-    logger.info(
-        "Un-Enriching alert",
-        extra={
-            "fingerprint": enrich_data.fingerprint,
-            "tenant_id": tenant_id,
-        },
-    )
 
     if "assignees" in enrich_data.enrichments:
         return {"status": "failed"}
@@ -1001,7 +876,8 @@ async def unenrich_alert(
     )
     if not alert:
         logger.warning(
-            "Alert not found", extra={"fingerprint": enrich_data.fingerprint}
+            "Alert not found",
+            extra={"fingerprint": enrich_data.fingerprint, "tenant_id": tenant_id},
         )
         return {"status": "failed"}
 
@@ -1056,26 +932,31 @@ async def unenrich_alert(
         enriched_alerts_dto = convert_db_alerts_to_dto_alerts(alert)
         # push the enriched alert to the elasticsearch
         try:
-            logger.info("Pushing enriched alert to elasticsearch")
             elastic_client = ElasticClient(tenant_id)
             elastic_client.index_alert(
                 alert=enriched_alerts_dto[0],
             )
-            logger.info("Pushed un-enriched alert to elasticsearch")
         except Exception:
-            logger.exception("Failed to push alert to elasticsearch")
+            logger.exception(
+                "Failed to push alert to elasticsearch",
+                extra={"tenant_id": tenant_id, "fingerprint": enrich_data.fingerprint},
+            )
             pass
         # use SSE to push the un-enriched alert to the client
-        logger.info("Telling client to poll alerts")
         try:
             notify_sse(tenant_id, "poll-alerts", {})
-            logger.info("Told client to poll alerts")
         except Exception:
-            logger.exception("Failed to tell client to poll alerts")
+            logger.exception(
+                "Failed to tell client to poll alerts", extra={"tenant_id": tenant_id}
+            )
             pass
         logger.info(
             "Alert un-enriched successfully",
-            extra={"fingerprint": enrich_data.fingerprint, "tenant_id": tenant_id},
+            extra={
+                "fingerprint": enrich_data.fingerprint,
+                "tenant_id": tenant_id,
+                "action_type": action_type.value,
+            },
         )
         return {"status": "ok"}
 
@@ -1083,7 +964,14 @@ async def unenrich_alert(
         # Re-raise HTTP exceptions (e.g. 422 for unknown enrichment keys)
         raise
     except Exception as e:
-        logger.exception("Failed to un-enrich alert", extra={"error": str(e)})
+        logger.exception(
+            "Failed to un-enrich alert",
+            extra={
+                "tenant_id": tenant_id,
+                "fingerprint": enrich_data.fingerprint,
+                "error": str(e),
+            },
+        )
         return {"status": "failed"}
 
 
@@ -1099,19 +987,18 @@ async def search_alerts(
 ) -> list[AlertDto]:
     tenant_id = authenticated_entity.tenant_id
     try:
-        logger.info(
-            "Searching alerts",
-            extra={"tenant_id": tenant_id},
-        )
         search_engine = SearchEngine(tenant_id)
         filtered_alerts = search_engine.search_alerts(search_request.query)
-        logger.info(
-            "Searched alerts",
-            extra={"tenant_id": tenant_id},
-        )
         return filtered_alerts
     except celpy.celparser.CELParseError as e:
-        logger.warning("Failed to parse the search query", extra={"error": str(e)})
+        logger.warning(
+            "Failed to parse the search query",
+            extra={
+                "tenant_id": tenant_id,
+                "query": search_request.query,
+                "error": str(e),
+            },
+        )
         return JSONResponse(
             status_code=400,
             content={
@@ -1124,7 +1011,14 @@ async def search_alerts(
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("Failed to search alerts", extra={"error": str(e)})
+        logger.exception(
+            "Failed to search alerts",
+            extra={
+                "tenant_id": tenant_id,
+                "query": search_request.query,
+                "error": str(e),
+            },
+        )
         raise HTTPException(status_code=500, detail="Failed to search alerts")
 
 
@@ -1139,10 +1033,6 @@ def get_multiple_fingerprint_alert_audit(
     ),
 ) -> list[AlertAuditDto]:
     tenant_id = authenticated_entity.tenant_id
-    logger.info(
-        "Fetching alert audit",
-        extra={"fingerprints": fingerprints, "tenant_id": tenant_id},
-    )
     alert_audit = get_alert_audit_db(tenant_id, fingerprints)
 
     if not alert_audit:
@@ -1172,13 +1062,6 @@ def get_alert_audit(
     ),
 ) -> list[AlertAuditDto]:
     tenant_id = authenticated_entity.tenant_id
-    logger.info(
-        "Fetching alert audit",
-        extra={
-            "fingerprint": fingerprint,
-            "tenant_id": tenant_id,
-        },
-    )
     alert_audit = get_alert_audit_db(tenant_id, fingerprint)
     if not alert_audit:
         raise HTTPException(status_code=404, detail="Alert not found")
@@ -1195,10 +1078,6 @@ def get_alert_quality(
     time_stamp: TimeStampFilter = Depends(get_time_stamp_filter),
     fields: Optional[List[str]] = Query([]),
 ):
-    logger.info(
-        "Fetching alert quality metrics per provider",
-        extra={"tenant_id": authenticated_entity.tenant_id, "fields": fields},
-    )
     start_date = time_stamp.lower_timestamp if time_stamp else None
     end_date = time_stamp.upper_timestamp if time_stamp else None
     db_alerts_quality = get_alerts_metrics_by_provider(
@@ -1222,12 +1101,6 @@ def get_error_alerts(
     limit: int = 1000,
 ) -> list[AlertErrorDto]:
     tenant_id = authenticated_entity.tenant_id
-    logger.info(
-        "Fetching error alerts from DB",
-        extra={
-            "tenant_id": tenant_id,
-        },
-    )
     error_alerts = get_error_alerts_db(tenant_id=tenant_id, limit=limit)
     error_alerts_dtos = [
         AlertErrorDto(
@@ -1239,12 +1112,6 @@ def get_error_alerts(
         )
         for alert in error_alerts
     ]
-    logger.info(
-        "Fetched error alerts from DB",
-        extra={
-            "tenant_id": tenant_id,
-        },
-    )
 
     return error_alerts_dtos
 
@@ -1265,14 +1132,6 @@ def dismiss_error_alerts(
     if request and request.alert_id:
         alert_id = request.alert_id
 
-        logger.info(
-            "Dismissing specific error alert",
-            extra={
-                "tenant_id": tenant_id,
-                "alert_id": alert_id,
-            },
-        )
-
         # Update the alert in the database to mark it as dismissed
         dismiss_error_alerts_db(
             tenant_id=tenant_id,
@@ -1285,6 +1144,7 @@ def dismiss_error_alerts(
             extra={
                 "tenant_id": tenant_id,
                 "alert_id": alert_id,
+                "action": "dismiss_error_alert",
             },
         )
 
@@ -1292,13 +1152,6 @@ def dismiss_error_alerts(
 
     # If no alert_id is provided, dismiss all alerts
     else:
-        logger.info(
-            "Dismissing all error alerts for tenant",
-            extra={
-                "tenant_id": tenant_id,
-            },
-        )
-
         # Update all alerts for the tenant to mark them as dismissed
         dismiss_error_alerts_db(
             tenant_id=tenant_id, dismissed_by=authenticated_entity.email
@@ -1308,6 +1161,7 @@ def dismiss_error_alerts(
             "Successfully dismissed all error alerts",
             extra={
                 "tenant_id": tenant_id,
+                "action": "dismiss_all_error_alerts",
             },
         )
 
