@@ -16,9 +16,11 @@ from src.services.assistant.models.api.draft import (
     DraftAlert,
     DraftOutcome,
     DraftState,
+    PAYLOAD_MODELS,
     DraftView,
     GatewayResult,
     OutcomeCode,
+    StoredOutcome,
     TargetStatus,
 )
 
@@ -40,6 +42,11 @@ _FAILED_MESSAGES: dict[GatewayResult, str] = {
     "unauthenticated": "Your session expired before the change was made.",
 }
 
+# Of an outcome a newer version stored, with a value this one does not know.
+UNREADABLE_OUTCOME = (
+    "This version of Keep Assistant cannot show the result of this change."
+)
+
 # Results of a refused write: nothing was changed, so there is nothing to look up.
 REFUSED: frozenset[GatewayResult] = frozenset(
     {"rejected", "read_only", "not_permitted", "unauthenticated"}
@@ -47,6 +54,21 @@ REFUSED: frozenset[GatewayResult] = frozenset(
 
 # (final state, outcome) of a draft; "applying" is not final.
 Decision = tuple[DraftState, DraftOutcome]
+
+
+def readable(stored: Mapping) -> StoredOutcome:
+    """A stored outcome as the card shows it. Unknown keys are dropped; an unknown
+    value keeps its place, and the text becomes one that claims nothing."""
+    outcome = StoredOutcome.parse_obj(stored)
+    known = (
+        outcome.code in get_args(OutcomeCode)
+        and (
+            outcome.gateway_result is None
+            or outcome.gateway_result in get_args(GatewayResult)
+        )
+        and all(item.result in get_args(AlertResult) for item in outcome.results)
+    )
+    return outcome if known else outcome.copy(update={"message": UNREADABLE_OUTCOME})
 
 
 def status_of(alert: FetchedAlert) -> str | None:
@@ -152,7 +174,7 @@ def verified(
 
 
 def unknown_for_good(
-    payload: ChangeAlertStatusPayload, stored: DraftOutcome | None
+    payload: ChangeAlertStatusPayload, stored: StoredOutcome | None
 ) -> Decision:
     """Nobody has looked for too long."""
     settled = settled_before_write(stored)
@@ -165,12 +187,29 @@ def unknown_for_good(
     )
 
 
-def settled_before_write(outcome: DraftOutcome | None) -> dict[str, AlertOutcome]:
+def unreadable_for_good() -> Decision:
+    """As `unknown_for_good`, for a draft whose kind, payload or stored outcome this
+    version cannot read: nothing about its alerts is claimed."""
+    return "failed", DraftOutcome(
+        code="outcome_unknown",
+        message=_MESSAGES["outcome_unknown"],
+        gateway_result="unknown",
+        applied_count=0,
+        failed_count=0,
+        unconfirmed_count=0,
+        skipped_count=0,
+        not_found_count=0,
+        results=[],
+        finished_at=datetime.now(timezone.utc),
+    )
+
+
+def settled_before_write(outcome: StoredOutcome | None) -> dict[str, AlertOutcome]:
     """As `before_write`, from the outcome of a draft that is still being applied."""
     if outcome is None:
         return {}
     return {
-        item.fingerprint: item
+        item.fingerprint: AlertOutcome(**item.dict())
         for item in outcome.results
         if item.result in ("skipped", "not_found")
     }
@@ -191,7 +230,9 @@ def discarded_text(draft: DraftView) -> str:
 
 
 def _subject(draft: DraftView) -> str:
-    target = draft.payload.get("target_status")
+    # Of a kind this version does not know, nothing in the payload is understood.
+    known = draft.kind in PAYLOAD_MODELS
+    target = draft.payload.get("target_status") if known else None
     to = f" to {target}" if target in get_args(TargetStatus) else ""
     return f"draft {draft.id} ({draft.kind}{to})"
 

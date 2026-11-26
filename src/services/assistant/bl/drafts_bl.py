@@ -11,6 +11,7 @@ from datetime import timedelta
 from typing import Any
 
 import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Session
 
 from src.services.assistant.bl import outcomes
@@ -61,8 +62,13 @@ def to_view(draft: Draft) -> DraftView:
         expires_at=draft.expires_at,
         resolved_at=draft.resolved_at,
         payload=draft.payload,
-        outcome=draft.outcome,
+        outcome=None if draft.outcome is None else outcomes.readable(draft.outcome),
     )
+
+
+def _strict(outcome: DraftOutcome) -> dict[str, Any]:
+    """What is stored, checked again: only values this version knows are written."""
+    return json.loads(DraftOutcome(**outcome.dict()).json())
 
 
 @dataclass(frozen=True)
@@ -150,7 +156,7 @@ def keep_applying(key: DraftKey, outcome: DraftOutcome) -> DraftView | None:
             session,
             *key.matches(),
             Draft.state == "applying",
-            outcome=json.loads(outcome.json()),
+            outcome=_strict(outcome),
             updated_at=Draft.updated_at,
         )
         return None if draft is None else to_view(draft)
@@ -164,11 +170,14 @@ def resolve(
     event: str,
     outcome: DraftOutcome | None = None,
     by_user: bool = True,
+    merge_outcome: bool = False,
 ) -> DraftView | None:
     """The final state, and the row that tells the model, all or nothing. None: the
     draft was not in `from_state` any more.
 
-    Only what a user does counts as activity in the conversation.
+    Only what a user does counts as activity in the conversation. `merge_outcome`
+    keeps the keys of the stored outcome that `outcome` does not have: a newer
+    version's, which this one cannot read.
     """
     with get_session() as session, session.begin():
         conversation = (
@@ -186,7 +195,7 @@ def resolve(
             Draft.state == from_state,
             state=state,
             resolved_at=sa.func.now(),
-            outcome=None if outcome is None else json.loads(outcome.json()),
+            outcome=_outcome_value(outcome, merge_outcome),
         )
         if draft is None:
             return None
@@ -207,6 +216,21 @@ def resolve(
             )
         )
         return to_view(draft)
+
+
+def _outcome_value(outcome: DraftOutcome | None, merge: bool) -> Any:
+    if outcome is None:
+        return None
+    value = sa.bindparam(None, _strict(outcome), type_=JSONB(none_as_null=True))
+    if not merge:
+        return value
+    return sa.case(
+        (
+            sa.func.jsonb_typeof(Draft.outcome) == "object",
+            Draft.outcome.op("||", return_type=JSONB)(value),
+        ),
+        else_=value,
+    )
 
 
 def claim_look(key: DraftKey, after_seconds: int) -> DraftView | None:

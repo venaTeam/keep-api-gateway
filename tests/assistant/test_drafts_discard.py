@@ -82,6 +82,31 @@ async def test_the_model_is_told(app, db, conversation):
 
 
 @pytest.mark.asyncio
+async def test_a_kind_this_version_does_not_know(app, db, keep, conversation):
+    """Put away all the same, and the model is told in words that claim nothing about
+    a payload this version cannot read."""
+    kind = "from_the_future"
+    draft = add_draft(
+        db,
+        conversation,
+        kind=kind,
+        payload={"target_status": "acknowledged", "name": "Night shift"},
+    )
+    count = metrics.drafts_total.labels(kind=kind, event="discarded")._value.get()
+    exchange = await post(app, draft).finish()
+    assert exchange.status == 200, exchange.text
+    assert (exchange.json()["kind"], exchange.json()["state"]) == (kind, "discarded")
+    assert read(db, Draft, draft)["state"] == "discarded"
+    [event] = messages(db, conversation)
+    assert event["content"] == f"draft {draft} ({kind}): discarded by the user."
+    assert (
+        metrics.drafts_total.labels(kind=kind, event="discarded")._value.get()
+        == count + 1
+    )
+    assert keep.writes == []
+
+
+@pytest.mark.asyncio
 async def test_again(app, db, conversation):
     draft = add_draft(db, conversation)
     first = await post(app, draft).finish()

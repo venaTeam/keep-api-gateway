@@ -245,16 +245,109 @@ def test_one_that_somebody_settles_meanwhile_keeps_its_result(
     assert closed() == before
 
 
-def test_one_that_cannot_be_closed_does_not_keep_the_others(db, conversation, caplog):
-    broken = applying(db, conversation, since=ago(hours=26), payload={"kind": CANARY})
+def test_one_that_cannot_be_closed_does_not_keep_the_others(
+    db, conversation, monkeypatch, caplog
+):
+    broken = applying(db, conversation, since=ago(hours=26))
     other = applying(db, conversation, since=ago(hours=25))
     errors = metrics.internal_errors_total.labels(site="sweep_close")
     before = errors._value.get()
+    resolve = drafts_bl.resolve
+
+    def failing_for_one(key, **values):
+        if key.id == broken:
+            raise RuntimeError(CANARY)
+        return resolve(key, **values)
+
+    monkeypatch.setattr(sweeps.drafts_bl, "resolve", failing_for_one)
     with caplog.at_level(logging.DEBUG):
         run()
     assert (state(db, broken), state(db, other)) == ("applying", "failed")
     assert errors._value.get() == before + 1
     assert not [r for r in caplog.records if CANARY in rendered(r)]
+
+
+def stored_by_a_newer_version(**values) -> dict:
+    return {
+        "code": "name_taken",
+        "message": "A preset with this name exists.",
+        "gateway_result": "rejected",
+        "applied_count": 0,
+        "failed_count": 0,
+        "unconfirmed_count": 0,
+        "skipped_count": 0,
+        "not_found_count": 0,
+        "results": [],
+        "finished_at": None,
+        "object": {"type": "preset", "id": "a-preset-id"},
+        "confirm_state": {"sent_at": "2026-11-26T09:59:59+00:00", "step": 1},
+        **values,
+    }
+
+
+UNREADABLE = {
+    "kind": {"kind": "from_the_future", "outcome": stored_by_a_newer_version()},
+    "payload": {"payload": {"kind": CANARY}},
+    "outcome": {
+        "outcome": stored_by_a_newer_version(
+            code="outcome_pending", gateway_result="conflict"
+        )
+    },
+}
+
+
+@pytest.mark.parametrize("unreadable", list(UNREADABLE.values()), ids=list(UNREADABLE))
+def test_what_this_version_cannot_read_is_closed_generically(
+    db, conversation, caplog, unreadable
+):
+    """An unknown kind, a payload or an outcome this version cannot read: closed all
+    the same, keeping what was stored."""
+    draft = applying(db, conversation, since=ago(hours=25), **unreadable)
+    kind = read(db, Draft, draft)["kind"]
+    errors = metrics.internal_errors_total.labels(site="sweep_close")
+    before = errors._value.get()
+    with caplog.at_level(logging.DEBUG):
+        run()
+    row = read(db, Draft, draft)
+    assert row["state"] == "failed" and row["resolved_at"] is not None
+    stored = row["outcome"]
+    assert (stored["code"], stored["message"], stored["gateway_result"]) == (
+        "outcome_unknown",
+        "The result of this change could not be determined.",
+        "unknown",
+    )
+    assert stored["results"] == [] and stored["finished_at"] is not None
+    for count in ("applied", "failed", "unconfirmed", "skipped", "not_found"):
+        assert stored[f"{count}_count"] == 0
+    if "outcome" in unreadable:
+        assert stored["object"] == {"type": "preset", "id": "a-preset-id"}
+        assert stored["confirm_state"]["step"] == 1
+    [event] = messages(db, conversation)
+    assert event["content"].startswith(f"draft {draft} ({kind}")
+    assert event["content"].endswith(
+        "): outcome_unknown. 0 applied, 0 failed, 0 unconfirmed, 0 skipped, 0 not found."
+    )
+    assert errors._value.get() == before
+    assert not [r for r in caplog.records if CANARY in rendered(r)]
+
+
+def test_bad_rows_never_keep_a_good_one(db, conversation):
+    """More unreadable rows than a run takes, all older than the one good row."""
+    bad = [
+        applying(
+            db,
+            conversation,
+            since=ago(hours=26, seconds=n),
+            **list(UNREADABLE.values())[n % len(UNREADABLE)],
+        )
+        for n in range(201)
+    ]
+    good = applying(db, conversation, since=ago(hours=25))
+    run()
+    run()
+    assert {state(db, d) for d in bad} == {"failed"}
+    assert state(db, good) == "failed"
+    assert read(db, Draft, good)["outcome"]["unconfirmed_count"] == 2
 
 
 def test_several_tenants_at_once(db, conversation):
