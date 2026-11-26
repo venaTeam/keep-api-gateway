@@ -28,6 +28,7 @@ from src.services.assistant.gateway.errors import (
 )
 from src.services.assistant.models.api.chat import MAX_FINGERPRINT_CHARS, has_control_characters, storable
 from src.services.assistant.models.api.draft import (
+    MAX_ALERTS_PER_DRAFT,
     CelSelector,
     ChangeAlertStatusPayload,
     DraftAlert,
@@ -45,9 +46,6 @@ from src.services.assistant.tools.base import (
 
 NAME = "change_alert_status"
 WRITE_SCOPE = "write:alert"
-
-# On the matched set. A product decision, so not an environment variable.
-MAX_ALERTS_PER_DRAFT = 20
 
 MAX_CEL_CHARS = 2000
 MAX_NOTE_CHARS = 2000

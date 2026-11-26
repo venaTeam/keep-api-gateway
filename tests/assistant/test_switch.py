@@ -20,7 +20,7 @@ from src.services.assistant.core import db as db_core
 from src.services.assistant.core import metrics
 from src.services.assistant.core.loops import Loops
 from tests.assistant.conftest import TEST_OPENAI_KEY
-from tests.assistant.fakes import TOKEN, FakeGateway, caller, whoami
+from tests.assistant.fakes import TOKEN, FakeGateway, caller, change_status, whoami
 from tests.assistant.logs import rendered
 
 HEADERS = {"Authorization": TOKEN}
@@ -353,8 +353,8 @@ def test_the_worker_waits_for_writes_next_to_its_own_shutdown(app, main, monkeyp
 
         @app.get("/scratch/abandon")
         async def abandon():
-            result = await gateway.batch_enrich_status(
-                caller(), ["a"], "acknowledged", None, False, timeout=0.01
+            result = await change_status(
+                gateway, caller(), ["a"], "acknowledged", timeout=0.01
             )
             return {"result": result}
 
@@ -379,9 +379,7 @@ def test_a_write_that_does_not_end_is_not_waited_for_for_long(
 
         @app.get("/scratch/abandon")
         async def abandon():
-            await gateway.batch_enrich_status(
-                caller(), ["a"], "acknowledged", None, False, timeout=0.01
-            )
+            await change_status(gateway, caller(), ["a"], "acknowledged", timeout=0.01)
 
         client.get("/scratch/abandon")
         started = time.monotonic()

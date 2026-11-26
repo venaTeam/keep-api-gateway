@@ -9,10 +9,12 @@ import json
 import logging
 import re
 import time
-from collections.abc import Collection, Coroutine
+import uuid
+from collections.abc import Callable, Collection, Coroutine, Mapping
 from dataclasses import dataclass, field
 from http.cookiejar import CookieJar, DefaultCookiePolicy
-from typing import Any
+from types import MappingProxyType
+from typing import Any, Literal
 from urllib.parse import quote
 
 import httpx
@@ -29,7 +31,10 @@ from src.services.assistant.gateway.errors import (
     QueryFailed,
 )
 from src.services.assistant.gateway.transport import CLIENT_EXTENSION, UNKNOWN_CLIENT
-from src.services.assistant.models.api.draft import GatewayResult, TargetStatus
+from src.services.assistant.models.api.draft import (
+    MAX_ALERTS_PER_DRAFT,
+    GatewayResult,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -51,8 +56,6 @@ MAX_CONCURRENT_ALERT_READS = 4
 # A blocked event loop fires a deadline late, and the answer is then only a few loop
 # iterations away.
 LATE_ANSWER_SECONDS = 0.1
-
-_WRITE_ENDPOINT = "batch_enrich"
 
 _LIMITS = httpx.Limits(
     max_connections=50,
@@ -142,7 +145,21 @@ def _is_read_only(detail: Any) -> bool:
     return isinstance(detail, str) and "Read only" in detail
 
 
-def classify_write(response: httpx.Response) -> GatewayResult:
+def _is_invalid_cel(detail: Any) -> bool:
+    return isinstance(detail, dict) and detail.get("code") == "INVALID_CEL"
+
+
+def _is_canonical_uuid(value: Any) -> bool:
+    """Lower case with hyphens and nothing else: no braces, no `urn:uuid:`."""
+    if not isinstance(value, str):
+        return False
+    try:
+        return str(uuid.UUID(value)) == value
+    except ValueError:
+        return False
+
+
+def classify_batch_enrich(response: httpx.Response) -> GatewayResult:
     """What a batch_enrich answer says about the write."""
     status = response.status_code
     if status == 200:
@@ -168,6 +185,116 @@ def classify_write(response: httpx.Response) -> GatewayResult:
     if status in (502, 503, 504):
         return "unknown"
     return "http_error"
+
+
+# --- the writes ----------------------------------------------------------------------
+
+EMPTY: Mapping[str, str] = MappingProxyType({})
+
+
+@dataclass(frozen=True)
+class WriteRoute:
+    """One write the assistant may send, and everything it may carry. `write()` checks
+    a request against its row before it takes a place: what does not fit is never
+    sent."""
+
+    method: Literal["POST", "PUT"]
+    # A template: one `{name}` per path parameter.
+    path: str
+    # Their values must be canonical UUIDs.
+    path_params: tuple[str, ...]
+    # Allowed keys, each with its allowed values.
+    query: Mapping[str, frozenset[str]]
+    # The body's exact top-level keys. None only for a route whose body is a list.
+    allowed_keys: frozenset[str] | None
+    # Raises on a body outside the route's shape; sees the body only after the keys.
+    check_body: Callable[[Any], None]
+    classify: Callable[[httpx.Response], GatewayResult]
+    # The id of what the write made or changed, from a 2xx body.
+    object_id: Callable[[Any], str | None]
+    # None: ASSISTANT_GATEWAY_WRITE_TIMEOUT_SECONDS.
+    timeout_seconds: float | None = None
+
+    def timeout(self) -> float:
+        if self.timeout_seconds is None:
+            return get_settings().gateway_write_timeout_seconds
+        return self.timeout_seconds
+
+
+@dataclass(frozen=True)
+class WriteAnswer:
+    result: GatewayResult
+    # The parsed answer of a 2xx only: an error body never travels any further.
+    body: Any = None
+    object_id: str | None = None
+    # A 400 whose detail says the CEL is invalid.
+    invalid_cel: bool = False
+
+
+_ENRICHMENT_KEYS = frozenset({"status", "dismiss_mode", "dismissed_until", "note"})
+
+
+def _check_batch_enrich(body: dict[str, Any]) -> None:
+    fingerprints = body["fingerprints"]
+    if not (
+        isinstance(fingerprints, list)
+        and 1 <= len(fingerprints) <= MAX_ALERTS_PER_DRAFT
+        and all(isinstance(fp, str) and fp for fp in fingerprints)
+    ):
+        raise ValueError("fingerprints")
+    enrichments = body["enrichments"]
+    if not (
+        isinstance(enrichments, dict)
+        and enrichments.keys() <= _ENRICHMENT_KEYS
+        and all(value is None or isinstance(value, str) for value in enrichments.values())
+    ):
+        raise ValueError("enrichments")
+
+
+def _no_object(body: Any) -> None:
+    return None
+
+
+_TRUE_OR_FALSE = frozenset({"true", "false"})
+
+WRITE_ROUTES: Mapping[str, WriteRoute] = MappingProxyType(
+    {
+        # The alerts table's own status change, by fingerprint only: never a `cel`.
+        "batch_enrich": WriteRoute(
+            method="POST",
+            path="/alerts/batch_enrich",
+            path_params=(),
+            query=MappingProxyType({"dispose_on_new_alert": _TRUE_OR_FALSE}),
+            allowed_keys=frozenset({"fingerprints", "enrichments"}),
+            check_body=_check_batch_enrich,
+            classify=classify_batch_enrich,
+            object_id=_no_object,
+        ),
+    }
+)
+
+
+def _path_of(
+    route: WriteRoute,
+    body: Any,
+    path_params: Mapping[str, str],
+    query: Mapping[str, str],
+) -> str:
+    """The path of a request that fits its route. Raises otherwise."""
+    if set(path_params) != set(route.path_params):
+        raise ValueError("path parameters")
+    if not all(_is_canonical_uuid(value) for value in path_params.values()):
+        raise ValueError("path parameter")
+    for key, value in query.items():
+        if value not in route.query.get(key, ()):
+            raise ValueError("query")
+    if route.allowed_keys is None:
+        if not isinstance(body, list):
+            raise ValueError("body")
+    elif not isinstance(body, dict) or body.keys() != route.allowed_keys:
+        raise ValueError("body keys")
+    route.check_body(body)
+    return route.path.format_map(dict(path_params))
 
 
 class GatewayClient:
@@ -385,61 +512,75 @@ class GatewayClient:
 
     # --- the write -----------------------------------------------------------
 
-    async def batch_enrich_status(
+    async def write(
         self,
         caller: Caller,
-        fingerprints: list[str],
-        status: TargetStatus,
-        note: str | None,
-        dispose_on_new_alert: bool,
+        endpoint: str,
         *,
+        body: dict[str, Any] | list[Any],
+        path_params: Mapping[str, str] = EMPTY,
+        query: Mapping[str, str] = EMPTY,
         timeout: float | None = None,
-    ) -> GatewayResult:
-        """Change the status of these alerts. Never retried: a retry would
-        duplicate the audit rows.
+    ) -> WriteAnswer:
+        """Send one write of `WRITE_ROUTES`. Never retried: a retry would duplicate
+        what it made, and the audit rows.
 
-        Raises GatewayUnavailable(sent=False) when nothing can have been written.
-        Every other failure is a result, `unknown` when the gateway may still be
-        writing.
+        Raises GatewayUnavailable(sent=False) when nothing can have been written: a
+        request outside its route is one. Every other failure is a result, `unknown`
+        when the gateway may still be writing. `timeout` can only shorten the
+        route's own.
         """
-        enrichments: dict[str, Any] = {"status": status}
-        if status != "suppressed":
-            enrichments["dismiss_mode"] = None
-            enrichments["dismissed_until"] = None
-        if note:
-            enrichments["note"] = note
+        route = WRITE_ROUTES.get(endpoint)
+        try:
+            if route is None:
+                raise ValueError("endpoint")
+            path = _path_of(route, body, path_params, query)
+        except Exception:
+            # What was asked is not logged: the request is the problem.
+            logger.error(
+                "gateway: write outside its route, not sent",
+                extra={
+                    "gateway_request_id": caller.request_id,
+                    "endpoint": endpoint if route is not None else None,
+                },
+            )
+            raise GatewayUnavailable("refused", sent=False) from None
+        seconds = route.timeout() if timeout is None else min(timeout, route.timeout())
         try:
             response = await self._send(
                 caller,
-                _WRITE_ENDPOINT,
-                "POST",
-                "/alerts/batch_enrich",
-                body={"fingerprints": fingerprints, "enrichments": enrichments},
-                params={
-                    "dispose_on_new_alert": "true" if dispose_on_new_alert else "false"
-                },
+                endpoint,
+                route.method,
+                path,
+                body=body,
+                params=dict(query) or None,
                 headers={"X-Keep-Source": KEEP_SOURCE},
-                timeout=(
-                    get_settings().gateway_write_timeout_seconds
-                    if timeout is None
-                    else timeout
-                ),
+                timeout=seconds,
+                route=route,
             )
         except GatewayUnavailable as exc:
             if not exc.sent:
                 raise
-            return "unknown"
-        result = classify_write(response)
+            return WriteAnswer("unknown")
+        result = route.classify(response)
+        status = response.status_code
         if result != "ok":
             logger.warning(
-                "gateway: batch_enrich not ok",
+                "gateway: write not ok",
                 extra={
                     "gateway_request_id": caller.request_id,
-                    "status": response.status_code,
+                    "endpoint": endpoint,
+                    "status": status,
                     "gateway_result": result,
                 },
             )
-        return result
+        parsed = _json(response) if 200 <= status < 300 else None
+        return WriteAnswer(
+            result=result,
+            body=parsed,
+            object_id=route.object_id(parsed) if result == "ok" else None,
+            invalid_cel=status == 400 and _is_invalid_cel(_detail(response)),
+        )
 
     # --- transport -----------------------------------------------------------
 
@@ -500,11 +641,7 @@ class GatewayClient:
         detail = _detail(response)
         if status == 403:
             raise GatewayForbidden(read_only=_is_read_only(detail))
-        if (
-            status == 400
-            and isinstance(detail, dict)
-            and detail.get("code") == "INVALID_CEL"
-        ):
+        if status == 400 and _is_invalid_cel(detail):
             diagnostics = detail.get("diagnostics")
             raise InvalidCel(
                 [item for item in diagnostics if isinstance(item, dict)]
@@ -523,18 +660,19 @@ class GatewayClient:
         path: str,
         *,
         timeout: float,
-        body: dict[str, Any] | None = None,
+        body: dict[str, Any] | list[Any] | None = None,
         params: dict[str, str] | None = None,
         headers: dict[str, str] | None = None,
         slot: asyncio.Semaphore | None = None,
+        route: WriteRoute | None = None,
     ) -> httpx.Response:
         """`slot` is released when the call itself ends, however long nobody has been
-        waiting for it."""
+        waiting for it. `route`: the row of a write, checked by `write`."""
         started = time.monotonic()
         status_class = "cancelled"
         try:
-            # The last place is for the write: without it a Confirm ends in nothing.
-            places = MAX_RUNNING_CALLS - (endpoint != _WRITE_ENDPOINT)
+            # The last place is for a write: without it a Confirm ends in nothing.
+            places = MAX_RUNNING_CALLS - (route is None)
             # No await between the check and the start, so the cap holds.
             if len(self._running) >= places:
                 if slot is not None:
@@ -545,8 +683,8 @@ class GatewayClient:
                 )
             task = self._start(
                 self._request(caller, method, path, timeout, body, params, headers),
-                endpoint,
                 slot,
+                is_write=route is not None,
             )
             try:
                 await asyncio.wait({task}, timeout=timeout)
@@ -589,7 +727,7 @@ class GatewayClient:
         method: str,
         path: str,
         timeout: float,
-        body: dict[str, Any] | None,
+        body: dict[str, Any] | list[Any] | None,
         params: dict[str, str] | None,
         headers: dict[str, str] | None,
     ) -> httpx.Response:
@@ -616,12 +754,13 @@ class GatewayClient:
     def _start(
         self,
         request: Coroutine[Any, Any, httpx.Response],
-        endpoint: str,
         slot: asyncio.Semaphore | None,
+        *,
+        is_write: bool,
     ) -> asyncio.Task[httpx.Response]:
         task = asyncio.create_task(request)
         self._running.add(task)
-        if endpoint == _WRITE_ENDPOINT:
+        if is_write:
             self._writes.add(task)
 
         def ended(task: asyncio.Task[httpx.Response]) -> None:

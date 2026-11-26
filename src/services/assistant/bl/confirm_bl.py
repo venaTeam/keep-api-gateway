@@ -9,10 +9,10 @@ import asyncio
 import logging
 import time
 import uuid
+from typing import Any
 
 from src.services.assistant.bl import drafts_bl, outcomes
 from src.services.assistant.bl.outcomes import Decision
-from src.services.assistant.config import get_settings
 from src.services.assistant.core import metrics
 from src.services.assistant.core.work import OngoingWork, log_failure, run_db
 from src.services.assistant.exceptions import AssistantError
@@ -28,6 +28,7 @@ from src.services.assistant.models.api.draft import (
     ChangeAlertStatusPayload,
     DraftView,
     GatewayResult,
+    TargetStatus,
 )
 from src.services.assistant.models.identity import Identity
 
@@ -44,6 +45,26 @@ NEEDED_FOR_WRITE_SECONDS = 17.0
 FINISH_SECONDS = 1.0
 # A shutting-down worker stops waiting for the write in time to say so.
 LEAVE_AT_SHUTDOWN_SECONDS = 1.5
+
+
+def status_change(
+    fingerprints: list[str],
+    status: TargetStatus,
+    note: str | None,
+    dispose_on_new_alert: bool,
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """The body and query of the `batch_enrich` write: what the UI sends for the same
+    change."""
+    enrichments: dict[str, Any] = {"status": status}
+    if status != "suppressed":
+        enrichments["dismiss_mode"] = None
+        enrichments["dismissed_until"] = None
+    if note:
+        enrichments["note"] = note
+    return (
+        {"fingerprints": fingerprints, "enrichments": enrichments},
+        {"dispose_on_new_alert": "true" if dispose_on_new_alert else "false"},
+    )
 
 
 async def confirm(
@@ -148,15 +169,15 @@ class _Attempt:
     async def _write(
         self, payload: ChangeAlertStatusPayload, fingerprints: list[str]
     ) -> GatewayResult:
-        write = asyncio.create_task(self._send(payload, fingerprints))
-        await self._work.wait(write, leave=LEAVE_AT_SHUTDOWN_SECONDS)
-        if not write.done():
-            write.cancel()  # ends the wait for it: the call itself goes on
+        send_task = asyncio.create_task(self._send(payload, fingerprints))
+        await self._work.wait(send_task, leave=LEAVE_AT_SHUTDOWN_SECONDS)
+        if not send_task.done():
+            send_task.cancel()  # ends the wait for it: the call itself goes on
             if self._sent:
                 return "unknown"
             raise AssistantError("not_ready")
         try:
-            return write.result()
+            return send_task.result()
         except GatewayUnavailable:
             # It certainly never reached the gateway's route.
             self._sent = False
@@ -165,6 +186,12 @@ class _Attempt:
     async def _send(
         self, payload: ChangeAlertStatusPayload, fingerprints: list[str]
     ) -> GatewayResult:
+        body, query = status_change(
+            fingerprints,
+            payload.target_status,
+            payload.note,
+            payload.dispose_on_new_alert,
+        )
         # No await between these checks and the call.
         if self._work.draining:
             raise AssistantError("not_ready")
@@ -175,14 +202,10 @@ class _Attempt:
             )
             raise AssistantError("gateway_unavailable")
         self._sent = True
-        return await self._gateway.batch_enrich_status(
-            self._caller,
-            fingerprints,
-            payload.target_status,
-            payload.note,
-            payload.dispose_on_new_alert,
-            timeout=get_settings().gateway_write_timeout_seconds,
+        answer = await self._gateway.write(
+            self._caller, "batch_enrich", body=body, query=query
         )
+        return answer.result
 
     async def _look_after(self, fingerprints: list[str]) -> FetchResult | None:
         """What the alerts look like now; None when that cannot be had in time."""

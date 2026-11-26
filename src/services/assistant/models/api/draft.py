@@ -8,6 +8,9 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
+# Alerts in one draft. A product decision, so not an environment variable.
+MAX_ALERTS_PER_DRAFT = 20
+
 DraftState = Literal[
     "pending",
     "applying",

@@ -12,7 +12,7 @@ import src.services.assistant
 from src.models.alert import AlertStatus
 from src.models.db.alert import AlertAudit, LastAlert
 from src.services.assistant.config import ENABLED_ENV_VAR
-from src.services.assistant.gateway.client import GatewayClient
+from src.services.assistant.gateway.client import WRITE_ROUTES, GatewayClient
 from src.services.assistant.gateway.transport import IN_PROCESS_URL, InProcessTransport
 from src.services.assistant.models.db import Draft
 from src.services.identity_manager import authverifierbase, rbac
@@ -322,12 +322,78 @@ def users(tree: ast.Module, name: str) -> set[str]:
     return {f.name for f in functions if mentions(f, name)} | ({""} if outside else set())
 
 
+WRITE_NAMES = ("write", "_send", "_request")
+LOOKUPS_BY_NAME = ("getattr", "hasattr", "setattr", "delattr")
+
+
+def code_names(node: ast.AST) -> set[str]:
+    """As an attribute, a plain name, a definition or a part of an import."""
+    values = [getattr(node, field, None) for field in ("attr", "id", "name", "asname")]
+    return {part for v in values if isinstance(v, str) for part in v.split(".")}
+
+
 def test_only_confirm_can_write():
-    writers = [p for p, tree in sources().items() if mentions(tree, "batch_enrich_status")]
-    # The client defines it.
-    assert sorted(writers) == sorted([CONFIRM, CLIENT])
-    assert users(sources()[CONFIRM], "batch_enrich_status") == {"_send"}
-    assert users(sources()[CLIENT], "batch_enrich_status") == {"batch_enrich_status"}
+    """`GatewayClient.write` is the one way to change anything, and every write goes
+    through a row of WRITE_ROUTES. Nobody but Confirm's `_send` asks for one."""
+    trees = sources()
+    for path, tree in trees.items():
+        if path in (CLIENT, CONFIRM):
+            continue
+        used = {
+            name
+            for node in ast.walk(tree)
+            for name in code_names(node) & set(WRITE_NAMES)
+        }
+        assert not used, f"{path.name} uses {used}"
+    # (b) Nor can it be reached by a name in a string.
+    for path, tree in trees.items():
+        assert not mentions(tree, "attrgetter"), path.name
+        assert not mentions(tree, "methodcaller"), path.name
+        for call in ast.walk(tree):
+            if not (
+                isinstance(call, ast.Call)
+                and getattr(call.func, "id", getattr(call.func, "attr", ""))
+                in LOOKUPS_BY_NAME
+            ):
+                continue
+            [name] = call.args[1:2] or [None]
+            assert isinstance(name, ast.Constant) and isinstance(name.value, str), (
+                f"{path.name}: a name that is not a literal"
+            )
+            assert "write" not in name.value.lower(), path.name
+
+    # Confirm asks for it once, from `_send`.
+    confirm = trees[CONFIRM]
+    assert users(confirm, "write") == {"_send"}
+    assert users(confirm, "_request") == set()
+    writes = [
+        node
+        for node in ast.walk(confirm)
+        if isinstance(node, ast.Call) and getattr(node.func, "attr", "") == "write"
+    ]
+    assert [ast.unparse(call.func) for call in writes] == ["self._gateway.write"]
+
+    # The client: only `write` reads the table and hands a route to `_send`, which
+    # is what gives a call the reserved place and a place among the writes.
+    client = trees[CLIENT]
+    assert [p for p, tree in trees.items() if mentions(tree, "WRITE_ROUTES")] == [CLIENT]
+    assert users(client, "WRITE_ROUTES") == {"", "write"}
+    functions = [
+        node
+        for node in ast.walk(client)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    with_route = {
+        function.name
+        for function in functions
+        for call in ast.walk(function)
+        if isinstance(call, ast.Call)
+        and getattr(call.func, "attr", "") == "_send"
+        and any(keyword.arg == "route" for keyword in call.keywords)
+    }
+    assert with_route == {"write"}
+    # The method of the MVP is gone, not kept next to it.
+    assert not [p for p, tree in trees.items() if mentions(tree, "batch_enrich_status")]
 
 
 def test_only_the_client_talks_to_the_gateway():
@@ -371,7 +437,7 @@ def test_the_assistants_sql_changes_only_its_own_tables():
             assert getattr(node, "name", "") not in TABLE_MAKERS, path.name
 
 
-def test_the_client_has_one_write():
+def test_the_client_calls_exactly_these_routes():
     calls = sorted(
         tuple(ast.unparse(arg) for arg in call.args[2:4])
         for call in ast.walk(sources()[CLIENT])
@@ -385,13 +451,40 @@ def test_the_client_has_one_write():
             ("'POST'", "'/alerts/query/count'"),
             ("'GET'", "'/alerts/facets/fields'"),
             ("'GET'", "f\"/alerts/{quote(fingerprint, safe='')}\""),
-            ("'POST'", "'/alerts/batch_enrich'"),
             # What these go through.
             ("method", "path"),  # _read to _send
+            ("route.method", "path"),  # write to _send
             ("path", "timeout"),  # _send to _request
             (),  # _request to httpx
         ]
     )
+    # Every write there is, and all it may carry.
+    assert {
+        name: (
+            route.method,
+            route.path,
+            route.path_params,
+            dict(route.query),
+            route.allowed_keys,
+            route.check_body.__name__,
+            route.classify.__name__,
+            route.object_id.__name__,
+            route.timeout_seconds,
+        )
+        for name, route in WRITE_ROUTES.items()
+    } == {
+        "batch_enrich": (
+            "POST",
+            "/alerts/batch_enrich",
+            (),
+            {"dispose_on_new_alert": frozenset({"true", "false"})},
+            frozenset({"fingerprints", "enrichments"}),
+            "_check_batch_enrich",
+            "classify_batch_enrich",
+            "_no_object",
+            None,
+        ),
+    }
 
 
 def test_nothing_is_imported_by_name():

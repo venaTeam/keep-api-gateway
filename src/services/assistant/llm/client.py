@@ -213,7 +213,7 @@ class OpenAiLlmClient:
         started = time.monotonic()
         try:
             async with await self._client.chat.completions.create(
-                **self._request(messages, tools, tool_choice, safety_identifier)
+                **self._create_arguments(messages, tools, tool_choice, safety_identifier)
             ) as chunks:
                 async with aclosing(_normalize(chunks, started)) as events:
                     async for event in events:
@@ -237,7 +237,7 @@ class OpenAiLlmClient:
             )
             raise LlmError(kind) from None
 
-    def _request(
+    def _create_arguments(
         self,
         messages: list[dict[str, Any]],
         tools: list[LlmTool],

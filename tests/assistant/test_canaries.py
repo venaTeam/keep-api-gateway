@@ -417,6 +417,28 @@ async def test_a_confirm_that_fails(app, db, records, capfd, route, failure):
     assert_not_logged(records, capfd)
 
 
+@pytest.mark.parametrize(
+    "answer",
+    [
+        httpx.Response(status, json={"detail": EXCEPTION, "status": EXCEPTION})
+        for status in (400, 403, 404, 409, 422, 500, 503)
+    ],
+    ids=lambda answer: str(answer.status_code),
+)
+@pytest.mark.asyncio
+async def test_the_body_of_a_refused_write_goes_nowhere(app, db, records, capfd, answer):
+    """Neither into the log, nor the stored outcome, nor what the conversation shows."""
+    equip(app, None, keep().on(*WRITE, answer))
+    draft = add_telling_draft(db)
+    conversation = read(db, Draft, draft)["conversation_id"]
+    exchange = await post_confirm(app, draft).finish()
+    assert EXCEPTION not in exchange.text
+    assert EXCEPTION not in json.dumps(read(db, Draft, draft)["outcome"])
+    shown = await view(app, conversation).finish()
+    assert shown.status == 200 and EXCEPTION not in shown.text
+    assert_not_logged(records, capfd)
+
+
 @pytest.mark.parametrize("function", ["claim", "resolve", "revert", "keep_applying"])
 @pytest.mark.parametrize("failure", ["refused", "never-sent", "timeout"])
 @pytest.mark.asyncio

@@ -144,6 +144,49 @@ async def test_the_write_is_the_one_of_the_ui(app, keep, draft):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("target", "note", "dispose", "content", "query"),
+    [
+        (
+            "acknowledged",
+            None,
+            False,
+            b'{"fingerprints":["fp-1"],"enrichments":{"status":"acknowledged",'
+            b'"dismiss_mode":null,"dismissed_until":null}}',
+            b"dispose_on_new_alert=false",
+        ),
+        (
+            "suppressed",
+            "maintenance é",
+            True,
+            b'{"fingerprints":["fp-1"],"enrichments":{"status":"suppressed",'
+            b'"note":"maintenance \xc3\xa9"}}',
+            b"dispose_on_new_alert=true",
+        ),
+    ],
+    ids=["acknowledge", "suppress-with-note"],
+)
+async def test_the_request_is_the_same_byte_for_byte(
+    app, db, work, keep, conversation, target, note, dispose, content, query
+):
+    """What the gateway receives, as it receives it."""
+    draft = add_draft(
+        db,
+        conversation,
+        payload=draft_payload(
+            "fp-1", target=target, note=note, dispose_on_new_alert=dispose
+        ),
+    )
+    await confirm(app, draft)
+    [write] = keep.writes
+    assert (write.method, write.url.path) == ("POST", "/alerts/batch_enrich")
+    assert write.content == content
+    assert write.url.query == query
+    assert write.headers["Content-Type"] == "application/json"
+    assert write.headers["Content-Length"] == str(len(content))
+
+
+@pytest.mark.asyncio
 async def test_a_suppression_with_a_note(app, db, work, keep, conversation):
     draft = add_draft(
         db,

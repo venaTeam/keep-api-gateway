@@ -28,6 +28,7 @@ from tests.assistant.fakes import (
     FakeGateway,
     alert,
     caller,
+    change_status,
     query_result,
     whoami,
 )
@@ -42,9 +43,7 @@ def in_process(app) -> GatewayClient:
 
 
 async def write(client: GatewayClient, timeout: float | None = None):
-    return await client.batch_enrich_status(
-        caller(), ["a"], "acknowledged", None, False, timeout=timeout
-    )
+    return await change_status(client, caller(), ["a"], "acknowledged", timeout=timeout)
 
 
 async def until(condition, seconds: float = 2.0) -> None:
@@ -433,8 +432,7 @@ async def test_the_gateways_own_verifier_and_scopes_decide(db_session, test_app)
     assert await client.query_alerts(noc, "severity == 'critical'", 21) == []
     viewer = Caller(role("viewer"), REQUEST_ID)
     assert (
-        await client.batch_enrich_status(viewer, ["a"], "acknowledged", None, False)
-        == "not_permitted"
+        await change_status(client, viewer, ["a"], "acknowledged") == "not_permitted"
     )
 
 

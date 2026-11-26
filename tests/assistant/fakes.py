@@ -4,7 +4,9 @@ from collections.abc import Callable
 
 import httpx
 
+from src.services.assistant.bl.confirm_bl import status_change
 from src.services.assistant.gateway.client import Caller, GatewayClient
+from src.services.assistant.models.api.draft import GatewayResult, TargetStatus
 from src.services.assistant.models.identity import Identity
 
 TOKEN = "Bearer keepActiveTenant=keep&header.payload.signature"
@@ -13,6 +15,24 @@ REQUEST_ID = "00000000-0000-4000-8000-000000000042"
 
 def caller(request_id: str = REQUEST_ID) -> Caller:
     return Caller(authorization=TOKEN, request_id=request_id)
+
+
+async def change_status(
+    client: GatewayClient,
+    who: Caller,
+    fingerprints: list[str],
+    status: TargetStatus,
+    note: str | None = None,
+    dispose_on_new_alert: bool = False,
+    *,
+    timeout: float | None = None,
+) -> GatewayResult:
+    """The write of a Confirm, as Confirm builds it."""
+    body, query = status_change(fingerprints, status, note, dispose_on_new_alert)
+    answer = await client.write(
+        who, "batch_enrich", body=body, query=query, timeout=timeout
+    )
+    return answer.result
 
 
 def identity(**fields) -> Identity:

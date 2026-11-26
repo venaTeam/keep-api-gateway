@@ -113,7 +113,7 @@ class Turn:
     ):
         self.ref = ref
         self._identity = identity
-        self._request = request
+        self._chat_request = request
         self._gateway = gateway
         self._llm = llm
         self._tools = ToolContext(identity=identity, gateway=gateway)
@@ -266,7 +266,7 @@ class Turn:
         settings = get_settings()
         context, earlier = await asyncio.gather(
             context_bl.gather(
-                self._identity, self._gateway, self._request.context, self.ref.turn_id
+                self._identity, self._gateway, self._chat_request.context, self.ref.turn_id
             ),
             run_db(history.load, self.ref),
         )
@@ -274,7 +274,7 @@ class Turn:
             prompt.system_message(TOOLS.values()),
             *earlier,
             prompt.context_message(context),
-            {"role": "user", "content": self._request.message},
+            {"role": "user", "content": self._chat_request.message},
         ]
         while True:
             out_of_rounds = self._rounds >= settings.max_tool_rounds

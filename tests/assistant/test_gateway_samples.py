@@ -22,7 +22,7 @@ from src.services.assistant.gateway.errors import (
     GatewayUnavailable,
     InvalidCel,
 )
-from tests.assistant.fakes import caller
+from tests.assistant.fakes import caller, change_status
 
 _FIXTURES = Path(__file__).parents[1] / "fixtures"
 SAMPLES = json.loads((_FIXTURES / "assistant_gateway_samples.json").read_bytes())
@@ -275,8 +275,8 @@ async def test_a_change_as_confirm_sends_it(name, result):
     sample = read_write(name)
     fingerprints = sample["request"]["body"]["fingerprints"]
     client = Replay(sample).client()
-    written = await client.batch_enrich_status(
-        caller(), fingerprints, "acknowledged", "on it", False
+    written = await change_status(
+        client, caller(), fingerprints, "acknowledged", "on it", False
     )
     assert written == result
 
@@ -284,9 +284,7 @@ async def test_a_change_as_confirm_sends_it(name, result):
 @pytest.mark.asyncio
 async def test_suppressing():
     client = Replay(read_write("batch_enrich_suppress_ok")).client()
-    written = await client.batch_enrich_status(
-        caller(), ["fp-bare"], "suppressed", None, False
-    )
+    written = await change_status(client, caller(), ["fp-bare"], "suppressed")
     assert written == "ok"
 
 
@@ -319,9 +317,7 @@ async def test_other_answers_to_a_change(sample, result):
         "body": body,
     }
     client = Replay({**sample, "request": sent}).client()
-    written = await client.batch_enrich_status(
-        caller(), ["fp"], "acknowledged", None, False
-    )
+    written = await change_status(client, caller(), ["fp"], "acknowledged")
     assert written == result
 
 

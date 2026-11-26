@@ -26,6 +26,7 @@ from tests.assistant.fakes import (
     FakeGateway,
     alert,
     caller,
+    change_status,
     query_result,
 )
 from tests.assistant.logs import rendered
@@ -43,7 +44,7 @@ def gateway():
 
 
 async def write(client, note="investigating", status="acknowledged", dispose=False):
-    return await client.batch_enrich_status(caller(), ["a", "b"], status, note, dispose)
+    return await change_status(client, caller(), ["a", "b"], status, note, dispose)
 
 
 # --- what is sent ------------------------------------------------------------
@@ -222,8 +223,8 @@ async def test_write_has_an_overall_deadline(gateway):
         await asyncio.Event().wait()
 
     gateway.on(*WRITE, hang)
-    result = await gateway.client().batch_enrich_status(
-        caller(), ["a"], "resolved", None, False, timeout=0.05
+    result = await change_status(
+        gateway.client(), caller(), ["a"], "resolved", None, False, timeout=0.05
     )
     assert result == "unknown"
 
@@ -247,8 +248,8 @@ async def test_real_pool_timeout_is_never_sent():
         first = asyncio.create_task(client.whoami(caller()))
         await asyncio.sleep(0.2)
         with pytest.raises(GatewayUnavailable) as raised:
-            await client.batch_enrich_status(
-                caller(), ["a"], "resolved", None, False, timeout=10
+            await change_status(
+                client, caller(), ["a"], "resolved", None, False, timeout=10
             )
         assert raised.value.sent is False
         release.set()
