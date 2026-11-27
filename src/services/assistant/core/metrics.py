@@ -38,7 +38,8 @@ llm_configured = Gauge(
 )
 
 # Tools and drafts. event: created | confirmed | discarded | opened_in_form (put
-# away to finish in keep-ui's form) | expired | finalized_after_timeout
+# away to finish in keep-ui's form) | expired | finalized_after_timeout | unsupported
+# (a Confirm refused: the kind is switched off, or unknown here, as kind "unknown")
 tool_calls_total = Counter(
     f"{_PREFIX}tool_calls_total", "Tool calls by outcome", ["tool", "outcome"]
 )
@@ -52,6 +53,13 @@ confirm_budget_refusals_total = Counter(
     f"{_PREFIX}confirm_budget_refusals_total",
     "Confirm writes not sent for lack of time",
     ["kind", "step"],
+)
+# 0 for a draft kind switched off (kinds/registry.py). The least willing worker wins.
+kind_enabled = Gauge(
+    f"{_PREFIX}kind_enabled",
+    "1 when a draft kind can be drafted and confirmed",
+    ["kind"],
+    multiprocess_mode="livemin",
 )
 drafts_stale_applying = Gauge(
     f"{_PREFIX}drafts_stale_applying",

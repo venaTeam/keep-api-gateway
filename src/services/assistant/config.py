@@ -128,6 +128,8 @@ class Settings:
 
     # Drafts and limits
     draft_ttl_seconds: int = _env("ASSISTANT_DRAFT_TTL_SECONDS", 1800, int)
+    # Draft kinds held back, by name: kinds/registry.py reads it, name by name.
+    disabled_kinds: str = _env("ASSISTANT_DISABLED_KINDS", "")
     rate_limit_per_minute: int = _env(
         "ASSISTANT_RATE_LIMIT_PER_MINUTE", 10, int, zero=True
     )

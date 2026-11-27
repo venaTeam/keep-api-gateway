@@ -52,7 +52,7 @@ from src.services.assistant.tools.base import (
     encode_result,
     tool_error,
 )
-from src.services.assistant.tools.registry import TOOLS
+from src.services.assistant.tools.registry import offered_tools
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +122,8 @@ class Turn:
         self._tools = ToolContext(
             identity=identity, gateway=self._gateway, zone=zone, zone_name=zone_name
         )
+        # Without those of a draft kind that is switched off, for the whole turn.
+        self._offered = offered_tools()
         self._round = _Round()
         self._rounds = 0
         self._drafts = 0
@@ -280,7 +282,7 @@ class Turn:
             run_db(history.load, self.ref),
         )
         messages = [
-            prompt.system_message(TOOLS.values()),
+            prompt.system_message(self._offered.values()),
             *earlier,
             prompt.context_message(context),
             {"role": "user", "content": self._chat_request.message},
@@ -316,7 +318,7 @@ class Turn:
         async with aclosing(
             self._llm.stream(
                 messages,
-                [tool.llm_tool() for tool in TOOLS.values()],
+                [tool.llm_tool() for tool in self._offered.values()],
                 tool_choice=tool_choice,
                 safety_identifier=make_safety_identifier(
                     self._identity.tenant_id, self._identity.email
@@ -387,7 +389,7 @@ class Turn:
 
     async def _call_tool(self, call: ToolCallComplete) -> str:
         """Run it, store its result and tell the user. The result, for the model."""
-        tool = TOOLS.get(call.name)
+        tool = self._offered.get(call.name)
         status = functools.partial(
             ToolStatusEvent,
             tool_call_id=call.id,
@@ -423,7 +425,7 @@ class Turn:
         return result
 
     async def _outcome(self, call: ToolCallComplete) -> ToolOutcome:
-        tool = TOOLS.get(call.name)
+        tool = self._offered.get(call.name)
         if tool is None:
             return tool_error("unknown_tool")
         # Several calls can come in one round.

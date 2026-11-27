@@ -37,6 +37,7 @@ def test_every_collector_is_in_the_registry_the_gateway_serves():
         "draft_outcomes_total",
         "confirm_budget_refusals_total",
         "drafts_stale_applying",
+        "kind_enabled",
         "gateway_requests_total",
         "gateway_request_seconds",
         "retention_rows_deleted_total",
@@ -85,6 +86,7 @@ def test_rare_series_exist_from_the_start():
         metrics.gateway_requests_total,
         metrics.tool_calls_total,
         metrics.confirm_budget_refusals_total,
+        metrics.drafts_total,
     ):
         collector.clear()
     lifecycle._start_series()
@@ -94,6 +96,11 @@ def test_rare_series_exist_from_the_start():
         'internal_errors_total{site="sweep_close"}',
         'internal_errors_total{site="confirm_after_write"}',
         *(f'confirm_budget_refusals_total{{kind="{kind}",step="0"}}' for kind in KINDS),
+        *(
+            f'drafts_total{{event="unsupported",kind="{kind}"}}'
+            for kind in (*KINDS, "unknown")
+        ),
+        *(f'kind_enabled{{kind="{kind}"}}' for kind in KINDS),
         *(
             f'draft_outcomes_total{{kind="{kind}",outcome="{outcome}"}}'
             for kind in KINDS

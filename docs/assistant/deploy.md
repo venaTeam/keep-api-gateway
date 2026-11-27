@@ -73,6 +73,7 @@ role's permission to change alert status and the soft-delete guard.
 | `ASSISTANT_RATE_LIMIT_PER_MINUTE` | 10 | messages per user |
 | `ASSISTANT_RATE_LIMIT_PER_DAY` | 200 | messages per user |
 | `ASSISTANT_DRAFT_TTL_SECONDS` | 1800 | how long a draft can be confirmed |
+| `ASSISTANT_DISABLED_KINDS` |  | draft kinds held back, by name, separated by commas: `change_alert_status`. Their tool is not offered and their Confirm answers 409 `draft_unsupported`; their drafts still settle, expire and can be discarded. A name that is no kind is logged and ignored. `keep_assistant_kind_enabled` is 0 for each. Changing it needs a restart |
 | `ASSISTANT_GATEWAY_WHOAMI_TIMEOUT_SECONDS` | 3 | calls to this app's own routes |
 | `ASSISTANT_GATEWAY_READ_TIMEOUT_SECONDS` | 5 | |
 | `ASSISTANT_GATEWAY_WRITE_TIMEOUT_SECONDS` | 12 | Confirm's status changes (`batch_enrich`); at most 12, because Confirm has 26 s for everything: a larger value is logged and 12 is used |

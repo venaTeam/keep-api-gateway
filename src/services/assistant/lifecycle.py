@@ -23,7 +23,7 @@ from src.services.assistant.core.work import (
 )
 from src.services.assistant.gateway.client import WRITE_ENDPOINTS, GatewayClient
 from src.services.assistant.gateway.transport import IN_PROCESS_URL, InProcessTransport
-from src.services.assistant.kinds.registry import KINDS
+from src.services.assistant.kinds.registry import KINDS, disabled_kinds
 from src.services.assistant.llm.client import LlmErrorKind, build_llm_client
 from src.services.assistant.models.api.chat import known_timezones
 from src.services.assistant.models.api.draft import OutcomeCode
@@ -47,6 +47,8 @@ def start(app: FastAPI) -> None:
         logger.error("assistant: no LLM client", extra=describe_exception(exc))
     metrics.llm_configured.set(0 if app.state.assistant_llm is None else 1)
     _check_time_zone_data()
+    # A kind that cannot run on this deployment is switched off here, before serving:
+    # kinds.registry.disable_kinds([name], reason).
     _start_series()
     app.state.assistant_undo_signals = lambda: None
     try:
@@ -73,7 +75,11 @@ def _start_series() -> None:
     some of these happen once in months."""
     for kind in get_args(LlmErrorKind):
         metrics.llm_errors_total.labels(kind=kind)
+    off = disabled_kinds()
+    metrics.drafts_total.labels(kind="unknown", event="unsupported")
     for kind in KINDS:
+        metrics.kind_enabled.labels(kind=kind).set(0 if kind in off else 1)
+        metrics.drafts_total.labels(kind=kind, event="unsupported")
         for outcome in get_args(OutcomeCode):
             metrics.draft_outcomes_total.labels(kind=kind, outcome=outcome)
         metrics.drafts_total.labels(kind=kind, event="finalized_after_timeout")

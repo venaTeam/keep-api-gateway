@@ -51,7 +51,7 @@ from src.services.assistant.kinds.base import (
     Step,
     WriteRequest,
 )
-from src.services.assistant.kinds.registry import kind_of
+from src.services.assistant.kinds.registry import is_disabled, kind_of
 from src.services.assistant.models.api.confirm import ConfirmRequest
 from src.services.assistant.models.api.draft import DraftOutcome, DraftView
 from src.services.assistant.models.identity import Identity
@@ -106,8 +106,12 @@ async def confirm(
     try:
         found = await run_db(drafts_bl.owned_draft, identity, draft_id)
         kind = kind_of(found.kind)
-        if kind is None:
-            # A newer version's: it may know how, this one does not.
+        if kind is None or is_disabled(found.kind):
+            # A newer version's, which it may know how to apply, or one switched off
+            # in this process: this one does not apply it.
+            metrics.drafts_total.labels(
+                kind="unknown" if kind is None else found.kind, event="unsupported"
+            ).inc()
             raise AssistantError("draft_unsupported")
         confirm_input = _confirm_input(kind, body)
         draft = await run_db(drafts_bl.claim, identity, draft_id)
