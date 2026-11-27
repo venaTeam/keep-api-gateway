@@ -26,6 +26,13 @@ READS = {
     ("POST", "/alerts/query/count"),
     ("GET", "/alerts/facets/fields"),
     ("GET", "/alerts/{fingerprint}"),
+    ("GET", "/preset"),
+    ("GET", "/tags"),
+    ("GET", "/rules"),
+    ("GET", "/dashboard"),
+    ("GET", "/alerts/facets"),
+    ("POST", "/cel/validate"),
+    ("POST", "/alerts/facets/options"),
 }
 PUBLIC = {
     "for_request",
@@ -33,6 +40,15 @@ PUBLIC = {
     "count_alerts",
     "alert_fields",
     "fetch_alerts_by_fingerprints",
+    "search_alerts",
+    "count_matching",
+    "presets",
+    "tags",
+    "rules",
+    "dashboards",
+    "facets",
+    "check_cel",
+    "facet_options",
 }
 
 
@@ -90,6 +106,15 @@ def test_every_method_of_the_facade_calls_one_read_of_the_client():
         "count_alerts": {"count_alerts"},
         "alert_fields": {"alert_fields"},
         "fetch_alerts_by_fingerprints": {"fetch_alerts_by_fingerprints"},
+        "search_alerts": {"search_alerts"},
+        "count_matching": {"count_matching"},
+        "presets": {"presets"},
+        "tags": {"tags"},
+        "rules": {"rules"},
+        "dashboards": {"dashboards"},
+        "facets": {"facets"},
+        "check_cel": {"check_cel"},
+        "facet_options": {"facet_options"},
     }
 
 
@@ -222,6 +247,15 @@ READ_ORDER = [
     "count_alerts",
     "alert_fields",
     "fetch_alerts_by_fingerprints",
+    "search_alerts",
+    "count_matching",
+    "presets",
+    "tags",
+    "rules",
+    "dashboards",
+    "facets",
+    "check_cel",
+    "facet_options",
 ]
 
 
@@ -232,6 +266,15 @@ def every_read(facade: ReadGateway) -> None:
     asyncio.run(facade.count_alerts('name == "x"'))
     asyncio.run(facade.alert_fields())
     asyncio.run(facade.fetch_alerts_by_fingerprints(["fp-1"]))
+    asyncio.run(facade.search_alerts('name == "x"', 5, "name", "asc"))
+    asyncio.run(facade.count_matching('name == "x"'))
+    asyncio.run(facade.presets())
+    asyncio.run(facade.tags())
+    asyncio.run(facade.rules())
+    asyncio.run(facade.dashboards())
+    asyncio.run(facade.facets())
+    asyncio.run(facade.check_cel('name == "x"', "alerts"))
+    asyncio.run(facade.facet_options("", str(uuid.uuid4())))
 
 
 def test_a_deadline_set_for_the_reader_is_the_default_of_its_reads():
@@ -268,10 +311,11 @@ def test_a_critical_reader_takes_critical_places_for_every_read():
     recorder = Recorder()
     caller = identity().caller(REQUEST_ID)
     every_read(ReadGateway(recorder, caller, critical=True))  # type: ignore[arg-type]
-    assert [o["critical"] for _, _, o in recorder.asked] == [True] * 4
+    reads = len(READ_ORDER)
+    assert [o["critical"] for _, _, o in recorder.asked] == [True] * reads
     recorder.asked.clear()
     every_read(ReadGateway(recorder, caller))  # type: ignore[arg-type]
-    assert [o["critical"] for _, _, o in recorder.asked] == [False] * 4
+    assert [o["critical"] for _, _, o in recorder.asked] == [False] * reads
 
 
 def test_a_reader_for_another_request_is_critical_only_when_asked():
@@ -283,7 +327,10 @@ def test_a_reader_for_another_request_is_critical_only_when_asked():
     )
     every_read(critical.for_request(uuid.uuid4()))
     every_read(critical.for_request(uuid.uuid4(), critical=True))
-    assert [o["critical"] for _, _, o in recorder.asked] == [False] * 4 + [True] * 4
+    reads = len(READ_ORDER)
+    assert [o["critical"] for _, _, o in recorder.asked] == [False] * reads + [
+        True
+    ] * reads
 
 
 def test_a_reader_for_another_request_does_not_keep_the_deadline():
@@ -320,7 +367,9 @@ def test_a_turns_instant_goes_with_its_reads_and_only_comes_sooner():
     # Each read hands the client the reader's caller, instant and all.
     recorder = Recorder()
     every_read(ReadGateway(recorder, draft._caller))  # type: ignore[arg-type]
-    assert [args[0] for _, args, _ in recorder.asked] == [draft._caller] * 4
+    assert [args[0] for _, args, _ in recorder.asked] == [draft._caller] * len(
+        READ_ORDER
+    )
 
 
 def test_the_reads_are_the_clients_own():

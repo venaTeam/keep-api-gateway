@@ -152,10 +152,12 @@ of many lookups waits for that too. What bounds it:
 | Filters the model wrote | 4 of the 6 at once; the next one waits 5 s for its turn |
 | Short reads of the tenant's lists, and checks | 2 of the 6 at once; the next one waits, at most as long as its caller does |
 | Reads of single alerts | 4 of the 6 at once; the others wait. A critical look reads 2 at once, in places of its own |
+| An answer of the app's own routes | 2 MiB; a larger one is not read (`status_class="too_large"`, tool error `too_large`). Above 256 KiB it is parsed in a thread |
 | Database threads | 5 per worker, one per connection |
 | Rounds of tool calls per turn | 8 (`ASSISTANT_MAX_TOOL_ROUNDS`) |
 | Tool calls per turn | 12, of any tool (`ASSISTANT_MAX_TOOL_CALLS_PER_TURN`) |
 | Filters the model wrote, per turn | 6; the next one gets the tool error `cel_lookup_limit` |
+| The same read twice in a turn (a list of the tenant's, a check) | sent once, and charged once |
 | Links per turn | 3 |
 | Drafts per turn | 3 |
 | Time of a turn | 90 s. No tools in the last 20 s; calls to the app's own routes end 15 s before the end |
@@ -199,7 +201,7 @@ thresholds are starting points.
 | `keep_assistant_turn_tool_rounds_bucket` | rounds of tool calls per turn; many at 8 mean the rounds are too few |
 | `keep_assistant_turn_lock_conflicts_total` | a message while the conversation's turn runs, or seems to |
 | `keep_assistant_rate_limited_total` | |
-| `keep_assistant_gateway_requests_total` | by `endpoint` and `status_class`, also `timeout`, `not_sent`, `dropped`, `cancelled` |
+| `keep_assistant_gateway_requests_total` | by `endpoint` and `status_class`, also `timeout`, `not_sent`, `dropped`, `cancelled`, `too_large` |
 | `keep_assistant_drafts_total` | by `event`: `created`, `confirmed`, `discarded`, `expired`, `finalized_after_timeout` |
 | `keep_assistant_draft_outcomes_total` | by `outcome`, the final ones |
 | `keep_assistant_confirm_budget_refusals_total` | by `kind` and `step`: a write Confirm did not send because too little of its 26 s was left to tell the result. At `step="0"` the draft went back to pending; at a later step what the earlier writes made stands |

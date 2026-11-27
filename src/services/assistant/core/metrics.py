@@ -83,6 +83,8 @@ STATUS_CLASSES = (
     "not_sent",
     "dropped",
     "cancelled",
+    # A 200 above the read cap: not parsed.
+    "too_large",
 )
 gateway_requests_total = Counter(
     f"{_PREFIX}gateway_requests_total",

@@ -19,6 +19,271 @@
       },
       "status": 403
     },
+    "cel_valid": {
+      "body": {
+        "diagnostics": [],
+        "valid": true
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "cel": "severity == \"critical\"",
+          "context": "alerts"
+        },
+        "method": "POST",
+        "path": "/cel/validate"
+      },
+      "status": 200
+    },
+    "dashboard_create": {
+      "body": {
+        "detail": "Read only instance, but non-read scopes requested"
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "dashboard_config": {
+            "layout": [
+              {
+                "h": 3,
+                "i": "w-1",
+                "w": 3,
+                "x": 0,
+                "y": 0
+              }
+            ],
+            "widgetData": [
+              {
+                "i": "w-1",
+                "name": "Critical",
+                "preset": {
+                  "created_by": "admin@example.com",
+                  "name": "critical"
+                }
+              }
+            ]
+          },
+          "dashboard_name": "Ops"
+        },
+        "method": "POST",
+        "path": "/dashboard"
+      },
+      "status": 403
+    },
+    "dashboard_update": {
+      "body": {
+        "detail": "Read only instance, but non-read scopes requested"
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "dashboard_config": {
+            "layout": [
+              {
+                "h": 3,
+                "i": "w-1",
+                "w": 3,
+                "x": 0,
+                "y": 0
+              }
+            ],
+            "widgetData": [
+              {
+                "i": "w-1",
+                "name": "Critical",
+                "preset": {
+                  "created_by": "admin@example.com",
+                  "name": "critical"
+                }
+              }
+            ]
+          },
+          "dashboard_name": "Ops"
+        },
+        "method": "PUT",
+        "path": "/dashboard/6b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e"
+      },
+      "status": 403
+    },
+    "facet_options": {
+      "body": {
+        "f8a91ac7-4916-4ad0-9b46-a5ddb85bfbb8": [
+          {
+            "display_name": "critical",
+            "matches_count": 0,
+            "value": "critical"
+          },
+          {
+            "display_name": "high",
+            "matches_count": 0,
+            "value": "high"
+          },
+          {
+            "display_name": "warning",
+            "matches_count": 0,
+            "value": "warning"
+          },
+          {
+            "display_name": "info",
+            "matches_count": 0,
+            "value": "info"
+          },
+          {
+            "display_name": "low",
+            "matches_count": 0,
+            "value": "low"
+          }
+        ]
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "cel": "",
+          "facet_queries": {
+            "f8a91ac7-4916-4ad0-9b46-a5ddb85bfbb8": ""
+          }
+        },
+        "method": "POST",
+        "path": "/alerts/facets/options"
+      },
+      "status": 200
+    },
+    "preset_create": {
+      "body": {
+        "detail": "Read only instance, but non-read scopes requested"
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "counter_shows_firing_only": false,
+          "is_noisy": false,
+          "is_private": false,
+          "name": "Critical orders",
+          "options": [
+            {
+              "label": "CEL",
+              "value": "severity == \"critical\""
+            },
+            {
+              "label": "SQL",
+              "value": {
+                "params": {
+                  "severity": "critical"
+                },
+                "sql": "severity = :severity"
+              }
+            }
+          ],
+          "tags": []
+        },
+        "method": "POST",
+        "path": "/preset"
+      },
+      "status": 403
+    },
+    "preset_update": {
+      "body": {
+        "detail": "Read only instance, but non-read scopes requested"
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "counter_shows_firing_only": false,
+          "is_noisy": false,
+          "is_private": false,
+          "name": "Critical orders",
+          "options": [
+            {
+              "label": "CEL",
+              "value": "severity == \"critical\""
+            },
+            {
+              "label": "SQL",
+              "value": {
+                "params": {
+                  "severity": "critical"
+                },
+                "sql": "severity = :severity"
+              }
+            }
+          ],
+          "tags": []
+        },
+        "method": "PUT",
+        "path": "/preset/6b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e"
+      },
+      "status": 403
+    },
+    "rule_create": {
+      "body": {
+        "detail": "Read only instance, but non-read scopes requested"
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "celQuery": "service == \"orders\"",
+          "createOn": "any",
+          "groupDescription": null,
+          "groupingCriteria": [
+            "service"
+          ],
+          "incidentNameTemplate": null,
+          "incidentPrefix": null,
+          "multiLevel": false,
+          "multiLevelPropertyName": null,
+          "requireApprove": false,
+          "resolveOn": "never",
+          "ruleName": "Orders",
+          "sqlQuery": {
+            "params": {
+              "service": "orders"
+            },
+            "sql": "service = :service"
+          },
+          "threshold": 1,
+          "timeUnit": "seconds",
+          "timeframeInSeconds": 600
+        },
+        "method": "POST",
+        "path": "/rules"
+      },
+      "status": 403
+    },
+    "rule_update": {
+      "body": {
+        "detail": "Read only instance, but non-read scopes requested"
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "celQuery": "service == \"orders\"",
+          "createOn": "any",
+          "groupDescription": null,
+          "groupingCriteria": [
+            "service"
+          ],
+          "incidentNameTemplate": null,
+          "incidentPrefix": null,
+          "multiLevel": false,
+          "multiLevelPropertyName": null,
+          "requireApprove": false,
+          "resolveOn": "never",
+          "ruleName": "Orders",
+          "sqlQuery": {
+            "params": {
+              "service": "orders"
+            },
+            "sql": "service = :service"
+          },
+          "threshold": 1,
+          "timeUnit": "seconds",
+          "timeframeInSeconds": 600
+        },
+        "method": "PUT",
+        "path": "/rules/6b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e"
+      },
+      "status": 403
+    },
     "whoami": {
       "body": {
         "email": "noc@example.com",
@@ -602,6 +867,65 @@
       },
       "status": 422
     },
+    "cel_invalid": {
+      "body": {
+        "diagnostics": [
+          {
+            "code": "SYNTAX_ERROR",
+            "message": "Error parsing CEL expression: severity ==\n         ^\n",
+            "range": {
+              "endColumn": 11,
+              "endLine": 1,
+              "startColumn": 10,
+              "startLine": 1
+            }
+          }
+        ],
+        "valid": false
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "cel": "severity ==",
+          "context": "alerts"
+        },
+        "method": "POST",
+        "path": "/cel/validate"
+      },
+      "status": 200
+    },
+    "cel_rules_context": {
+      "body": {
+        "diagnostics": [],
+        "valid": true
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "cel": "count < 5",
+          "context": "rules"
+        },
+        "method": "POST",
+        "path": "/cel/validate"
+      },
+      "status": 200
+    },
+    "cel_valid": {
+      "body": {
+        "diagnostics": [],
+        "valid": true
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "cel": "severity == \"critical\"",
+          "context": "alerts"
+        },
+        "method": "POST",
+        "path": "/cel/validate"
+      },
+      "status": 200
+    },
     "count": {
       "body": 1,
       "content_type": "application/json",
@@ -643,6 +967,157 @@
       },
       "status": 400
     },
+    "dashboard_create": {
+      "body": {
+        "created_at": "2026-01-02T03:04:05.678",
+        "dashboard_config": {
+          "layout": [
+            {
+              "h": 3,
+              "i": "w-1",
+              "w": 3,
+              "x": 0,
+              "y": 0
+            }
+          ],
+          "widgetData": [
+            {
+              "i": "w-1",
+              "name": "Critical",
+              "preset": {
+                "created_by": "admin@example.com",
+                "name": "critical"
+              }
+            }
+          ]
+        },
+        "dashboard_name": "Ops",
+        "id": "00000000-0000-4000-8000-000000000009",
+        "updated_at": "2026-01-02T03:04:05.678"
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "dashboard_config": {
+            "layout": [
+              {
+                "h": 3,
+                "i": "w-1",
+                "w": 3,
+                "x": 0,
+                "y": 0
+              }
+            ],
+            "widgetData": [
+              {
+                "i": "w-1",
+                "name": "Critical",
+                "preset": {
+                  "created_by": "admin@example.com",
+                  "name": "critical"
+                }
+              }
+            ]
+          },
+          "dashboard_name": "Ops"
+        },
+        "method": "POST",
+        "path": "/dashboard"
+      },
+      "status": 200
+    },
+    "dashboard_create_duplicate": {
+      "body": {
+        "error_msg": "<exception text>",
+        "message": "An internal server error occurred.",
+        "trace_id": "<trace id>"
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "dashboard_config": {
+            "layout": [
+              {
+                "h": 3,
+                "i": "w-1",
+                "w": 3,
+                "x": 0,
+                "y": 0
+              }
+            ],
+            "widgetData": [
+              {
+                "i": "w-1",
+                "name": "Critical",
+                "preset": {
+                  "created_by": "admin@example.com",
+                  "name": "critical"
+                }
+              }
+            ]
+          },
+          "dashboard_name": "Ops"
+        },
+        "method": "POST",
+        "path": "/dashboard"
+      },
+      "status": 500
+    },
+    "dashboard_update_missing": {
+      "body": {
+        "error_msg": "<exception text>",
+        "message": "An internal server error occurred.",
+        "trace_id": "<trace id>"
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "dashboard_config": null,
+          "dashboard_name": "Gone"
+        },
+        "method": "PUT",
+        "path": "/dashboard/6b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e"
+      },
+      "status": 500
+    },
+    "dashboards": {
+      "body": [
+        {
+          "created_at": "2026-01-02T03:04:05.678",
+          "dashboard_config": {
+            "layout": [
+              {
+                "h": 3,
+                "i": "w-1",
+                "w": 3,
+                "x": 0,
+                "y": 0
+              }
+            ],
+            "widgetData": [
+              {
+                "i": "w-1",
+                "name": "Critical",
+                "preset": {
+                  "created_by": "admin@example.com",
+                  "name": "critical"
+                }
+              }
+            ]
+          },
+          "dashboard_name": "Ops",
+          "id": "00000000-0000-4000-8000-000000000009",
+          "updated_at": "2026-01-02T03:04:05.678"
+        }
+      ],
+      "content_type": "application/json",
+      "request": {
+        "body": null,
+        "method": "GET",
+        "path": "/dashboard"
+      },
+      "status": 200
+    },
     "facet_fields": {
       "body": [
         "id",
@@ -682,6 +1157,286 @@
         "body": null,
         "method": "GET",
         "path": "/alerts/facets/fields"
+      },
+      "status": 200
+    },
+    "facet_options": {
+      "body": {
+        "f8a91ac7-4916-4ad0-9b46-a5ddb85bfbb8": [
+          {
+            "display_name": "critical",
+            "matches_count": 1,
+            "value": "critical"
+          },
+          {
+            "display_name": "high",
+            "matches_count": 0,
+            "value": "high"
+          },
+          {
+            "display_name": "warning",
+            "matches_count": 1,
+            "value": "warning"
+          },
+          {
+            "display_name": "info",
+            "matches_count": 0,
+            "value": "info"
+          },
+          {
+            "display_name": "low",
+            "matches_count": 0,
+            "value": "low"
+          },
+          {
+            "display_name": "None",
+            "matches_count": 2,
+            "value": null
+          }
+        ]
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "cel": "",
+          "facet_queries": {
+            "f8a91ac7-4916-4ad0-9b46-a5ddb85bfbb8": ""
+          }
+        },
+        "method": "POST",
+        "path": "/alerts/facets/options"
+      },
+      "status": 200
+    },
+    "facet_options_invalid_cel": {
+      "body": {
+        "detail": {
+          "code": "INVALID_CEL",
+          "diagnostics": [
+            {
+              "code": "SYNTAX_ERROR",
+              "message": "Error parsing CEL expression: name ==\n     ^\n",
+              "range": {
+                "endColumn": 7,
+                "endLine": 1,
+                "startColumn": 6,
+                "startLine": 1
+              }
+            }
+          ],
+          "message": "The CEL filter is invalid."
+        }
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "cel": "name ==",
+          "facet_queries": {
+            "f8a91ac7-4916-4ad0-9b46-a5ddb85bfbb8": ""
+          }
+        },
+        "method": "POST",
+        "path": "/alerts/facets/options"
+      },
+      "status": 400
+    },
+    "facet_options_not_a_uuid": {
+      "body": {
+        "error_msg": "<exception text>",
+        "message": "An internal server error occurred.",
+        "trace_id": "<trace id>"
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "cel": "",
+          "facet_queries": {
+            "severity": ""
+          }
+        },
+        "method": "POST",
+        "path": "/alerts/facets/options"
+      },
+      "status": 500
+    },
+    "facets": {
+      "body": [
+        {
+          "description": null,
+          "id": "f8a91ac7-4916-4ad0-9b46-a5ddb85bfbb8",
+          "is_lazy": true,
+          "is_static": true,
+          "name": "Severity",
+          "property_path": "severity",
+          "type": "string"
+        },
+        {
+          "description": null,
+          "id": "5dd1519c-6277-4109-ad95-c19d2f4f15e3",
+          "is_lazy": true,
+          "is_static": true,
+          "name": "Status",
+          "property_path": "status",
+          "type": "string"
+        }
+      ],
+      "content_type": "application/json",
+      "request": {
+        "body": null,
+        "method": "GET",
+        "path": "/alerts/facets"
+      },
+      "status": 200
+    },
+    "preset_create": {
+      "body": {
+        "counter_shows_firing_only": false,
+        "created_by": "admin@example.com",
+        "id": "00000000-0000-4000-8000-000000000006",
+        "is_noisy": false,
+        "is_private": false,
+        "name": "Critical orders",
+        "options": [
+          {
+            "label": "CEL",
+            "value": "severity == \"critical\""
+          },
+          {
+            "label": "SQL",
+            "value": {
+              "params": {
+                "severity": "critical"
+              },
+              "sql": "severity = :severity"
+            }
+          }
+        ],
+        "should_do_noise_now": false,
+        "static": false,
+        "tags": []
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "counter_shows_firing_only": false,
+          "is_noisy": false,
+          "is_private": false,
+          "name": "Critical orders",
+          "options": [
+            {
+              "label": "CEL",
+              "value": "severity == \"critical\""
+            },
+            {
+              "label": "SQL",
+              "value": {
+                "params": {
+                  "severity": "critical"
+                },
+                "sql": "severity = :severity"
+              }
+            }
+          ],
+          "tags": []
+        },
+        "method": "POST",
+        "path": "/preset"
+      },
+      "status": 200
+    },
+    "preset_create_duplicate": {
+      "body": {
+        "error_msg": "<exception text>",
+        "message": "An internal server error occurred.",
+        "trace_id": "<trace id>"
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "counter_shows_firing_only": false,
+          "is_noisy": false,
+          "is_private": false,
+          "name": "Critical orders",
+          "options": [
+            {
+              "label": "CEL",
+              "value": "severity == \"critical\""
+            },
+            {
+              "label": "SQL",
+              "value": {
+                "params": {
+                  "severity": "critical"
+                },
+                "sql": "severity = :severity"
+              }
+            }
+          ],
+          "tags": []
+        },
+        "method": "POST",
+        "path": "/preset"
+      },
+      "status": 500
+    },
+    "presets": {
+      "body": [
+        {
+          "counter_shows_firing_only": false,
+          "created_by": "admin@example.com",
+          "id": "00000000-0000-4000-8000-000000000006",
+          "is_noisy": false,
+          "is_private": false,
+          "name": "Critical orders",
+          "options": [
+            {
+              "label": "CEL",
+              "value": "severity == \"critical\""
+            },
+            {
+              "label": "SQL",
+              "value": {
+                "params": {
+                  "severity": "critical"
+                },
+                "sql": "severity = :severity"
+              }
+            }
+          ],
+          "should_do_noise_now": false,
+          "static": false,
+          "tags": []
+        },
+        {
+          "counter_shows_firing_only": false,
+          "created_by": null,
+          "id": "00000000-0000-4000-8000-000000000007",
+          "is_noisy": false,
+          "is_private": false,
+          "name": "feed",
+          "options": [
+            {
+              "label": "CEL",
+              "value": ""
+            },
+            {
+              "label": "SQL",
+              "value": {
+                "params": {},
+                "sql": ""
+              }
+            }
+          ],
+          "should_do_noise_now": false,
+          "static": true,
+          "tags": []
+        }
+      ],
+      "content_type": "application/json",
+      "request": {
+        "body": null,
+        "method": "GET",
+        "path": "/preset"
       },
       "status": 200
     },
@@ -1234,6 +1989,224 @@
       },
       "status": 400
     },
+    "query_sorted": {
+      "body": {
+        "count": 3,
+        "limit": 3,
+        "offset": 0,
+        "results": [
+          {
+            "alert_hash": null,
+            "alert_rule_url": null,
+            "application": null,
+            "assignee": "ops@example.com",
+            "automation_matched": false,
+            "component": null,
+            "custom_key": null,
+            "deleted": false,
+            "description": "connection refused",
+            "dismissUntil": null,
+            "dismiss_mode": null,
+            "dismissed_until": null,
+            "duplicateReason": null,
+            "environment": "production",
+            "event_id": "00000000-0000-4000-8000-000000000001",
+            "expiry_in_minutes": null,
+            "fingerprint": "fp-rich",
+            "firingCounter": 0,
+            "firingStartTime": null,
+            "firingStartTimeSinceLastResolved": null,
+            "id": "00000000-0000-4000-8000-000000000001",
+            "impact": null,
+            "incident": "00000000-0000-4000-8000-000000000002",
+            "incident_dto": [
+              {
+                "ai_generated_name": null,
+                "alert_sources": [],
+                "alerts_count": 1,
+                "assignee": null,
+                "creation_time": "2026-01-02T03:04:05.678",
+                "end_time": null,
+                "enrichments": {},
+                "fingerprint": null,
+                "generated_summary": "",
+                "id": "00000000-0000-4000-8000-000000000002",
+                "incident_application": "None",
+                "incident_type": "manual",
+                "is_candidate": false,
+                "is_predicted": false,
+                "last_seen_time": null,
+                "merged_at": null,
+                "merged_by": null,
+                "merged_into_incident_id": null,
+                "resolve_on": "never",
+                "rule_fingerprint": "",
+                "rule_id": null,
+                "rule_is_deleted": null,
+                "rule_name": null,
+                "same_incident_in_the_past_id": null,
+                "services": [],
+                "severity": "critical",
+                "start_time": null,
+                "status": "firing",
+                "user_generated_name": "Orders down",
+                "user_summary": ""
+              }
+            ],
+            "isFullDuplicate": false,
+            "isPartialDuplicate": false,
+            "key_field": null,
+            "lastReceived": "2026-01-02T03:04:05.678Z",
+            "name": "Database <down>",
+            "network": "nh",
+            "node_name": null,
+            "note": "on it",
+            "object": null,
+            "operator": null,
+            "providerId": "test",
+            "providerType": "prometheus",
+            "received_at": null,
+            "runbook_url": null,
+            "service": "orders",
+            "severity": "critical",
+            "site": null,
+            "source": [],
+            "startedAt": "2026-01-02T03:04:05.678",
+            "status": "acknowledged",
+            "tenant_id": "keep",
+            "ticket_provider_id": null,
+            "ticket_type": null,
+            "ticket_url": null,
+            "time_created": null,
+            "timestamp": "2026-01-02T03:04:05.678",
+            "timezone": "Asia/Jerusalem",
+            "unresolvedCounter": 0
+          },
+          {
+            "alert_hash": null,
+            "alert_rule_url": null,
+            "application": null,
+            "assignee": null,
+            "automation_matched": false,
+            "component": null,
+            "custom_key": null,
+            "deleted": false,
+            "description": null,
+            "dismissUntil": null,
+            "dismiss_mode": "permanent",
+            "dismissed_until": null,
+            "duplicateReason": null,
+            "environment": "production",
+            "event_id": "00000000-0000-4000-8000-000000000005",
+            "expiry_in_minutes": null,
+            "fingerprint": "fp-suppressed",
+            "firingCounter": 0,
+            "firingStartTime": null,
+            "firingStartTimeSinceLastResolved": null,
+            "id": "00000000-0000-4000-8000-000000000005",
+            "impact": null,
+            "incident": null,
+            "isFullDuplicate": false,
+            "isPartialDuplicate": false,
+            "key_field": null,
+            "lastReceived": "2026-01-02T03:04:05.678Z",
+            "name": "Suppressed",
+            "network": "nh",
+            "node_name": null,
+            "note": null,
+            "object": null,
+            "operator": null,
+            "providerId": "test",
+            "providerType": "test",
+            "received_at": null,
+            "runbook_url": null,
+            "service": null,
+            "severity": "warning",
+            "site": null,
+            "source": [],
+            "startedAt": "2026-01-02T03:04:05.678",
+            "status": "suppressed",
+            "tenant_id": "keep",
+            "ticket_provider_id": null,
+            "ticket_type": null,
+            "ticket_url": null,
+            "time_created": null,
+            "timestamp": "2026-01-02T03:04:05.678",
+            "timezone": "Asia/Jerusalem",
+            "unresolvedCounter": 0
+          },
+          {
+            "alert_hash": null,
+            "alert_rule_url": null,
+            "application": null,
+            "assignee": null,
+            "automation_matched": false,
+            "component": null,
+            "custom_key": null,
+            "deleted": false,
+            "description": null,
+            "dismissUntil": null,
+            "dismiss_mode": null,
+            "dismissed_until": null,
+            "duplicateReason": null,
+            "environment": "production",
+            "event_id": "00000000-0000-4000-8000-000000000004",
+            "expiry_in_minutes": null,
+            "fingerprint": "fp-bare",
+            "firingCounter": 0,
+            "firingStartTime": null,
+            "firingStartTimeSinceLastResolved": null,
+            "id": "00000000-0000-4000-8000-000000000004",
+            "impact": null,
+            "incident": null,
+            "isFullDuplicate": false,
+            "isPartialDuplicate": false,
+            "key_field": null,
+            "lastReceived": "2026-01-02T03:04:05.678Z",
+            "name": "Bare",
+            "network": "nh",
+            "node_name": null,
+            "note": null,
+            "object": null,
+            "operator": null,
+            "providerId": "test",
+            "providerType": "test",
+            "received_at": null,
+            "runbook_url": null,
+            "service": null,
+            "severity": "info",
+            "site": null,
+            "source": [],
+            "startedAt": "2026-01-02T03:04:05.678",
+            "status": "suppressed",
+            "tenant_id": "keep",
+            "ticket_provider_id": null,
+            "ticket_type": null,
+            "ticket_url": null,
+            "time_created": null,
+            "timestamp": "2026-01-02T03:04:05.678",
+            "timezone": "Asia/Jerusalem",
+            "unresolvedCounter": 0
+          }
+        ]
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "cel": "",
+          "limit": 3,
+          "sort_options": [
+            {
+              "sort_by": "severity_order",
+              "sort_dir": "desc"
+            }
+          ]
+        },
+        "method": "POST",
+        "path": "/alerts/query"
+      },
+      "status": 200
+    },
     "query_syntax_error": {
       "body": {
         "detail": {
@@ -1288,6 +2261,192 @@
         "path": "/alerts/query"
       },
       "status": 400
+    },
+    "rule_create": {
+      "body": {
+        "assignee": null,
+        "create_on": "any",
+        "created_by": "admin@example.com",
+        "creation_time": "2026-01-02T03:04:05.678",
+        "definition": {
+          "params": {
+            "service": "orders"
+          },
+          "sql": "service = :service"
+        },
+        "definition_cel": "service == \"orders\"",
+        "group_description": null,
+        "grouping_criteria": [
+          "service"
+        ],
+        "id": "00000000-0000-4000-8000-000000000008",
+        "incident_name_template": null,
+        "incident_prefix": null,
+        "is_deleted": false,
+        "item_description": null,
+        "multi_level": false,
+        "multi_level_property_name": null,
+        "name": "Orders",
+        "require_approve": false,
+        "resolve_on": "never",
+        "tenant_id": "keep",
+        "threshold": 1,
+        "timeframe": 600,
+        "timeunit": "seconds",
+        "update_time": null,
+        "updated_by": null
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "celQuery": "service == \"orders\"",
+          "createOn": "any",
+          "groupDescription": null,
+          "groupingCriteria": [
+            "service"
+          ],
+          "incidentNameTemplate": null,
+          "incidentPrefix": null,
+          "multiLevel": false,
+          "multiLevelPropertyName": null,
+          "requireApprove": false,
+          "resolveOn": "never",
+          "ruleName": "Orders",
+          "sqlQuery": {
+            "params": {
+              "service": "orders"
+            },
+            "sql": "service = :service"
+          },
+          "threshold": 1,
+          "timeUnit": "seconds",
+          "timeframeInSeconds": 600
+        },
+        "method": "POST",
+        "path": "/rules"
+      },
+      "status": 200
+    },
+    "rule_update_missing": {
+      "body": {
+        "detail": "Rule not found"
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": {
+          "celQuery": "service == \"orders\"",
+          "createOn": "any",
+          "groupDescription": null,
+          "groupingCriteria": [
+            "service"
+          ],
+          "incidentNameTemplate": null,
+          "incidentPrefix": null,
+          "multiLevel": false,
+          "multiLevelPropertyName": null,
+          "requireApprove": false,
+          "resolveOn": "never",
+          "ruleName": "Orders",
+          "sqlQuery": {
+            "params": {
+              "service": "orders"
+            },
+            "sql": "service = :service"
+          },
+          "threshold": 1,
+          "timeUnit": "seconds",
+          "timeframeInSeconds": 600
+        },
+        "method": "PUT",
+        "path": "/rules/6b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e"
+      },
+      "status": 404
+    },
+    "rules": {
+      "body": [
+        {
+          "assignee": null,
+          "create_on": "any",
+          "created_by": "admin@example.com",
+          "creation_time": "2026-01-02T03:04:05.678",
+          "definition": {
+            "params": {
+              "service": "orders"
+            },
+            "sql": "service = :service"
+          },
+          "definition_cel": "service == \"orders\"",
+          "definition_cel_ast": {
+            "first_operand": {
+              "data_type": null,
+              "member_name": null,
+              "node_type": "PropertyAccessNode",
+              "path": [
+                "service"
+              ]
+            },
+            "node_type": "ComparisonNode",
+            "operator": "==",
+            "second_operand": {
+              "node_type": "ConstantNode",
+              "value": "orders"
+            }
+          },
+          "distribution": [],
+          "group_description": null,
+          "grouping_criteria": [
+            "service"
+          ],
+          "id": "00000000-0000-4000-8000-000000000008",
+          "incident_name_template": null,
+          "incident_prefix": null,
+          "incidents": 0,
+          "is_deleted": false,
+          "item_description": null,
+          "multi_level": false,
+          "multi_level_property_name": null,
+          "name": "Orders",
+          "require_approve": false,
+          "resolve_on": "never",
+          "tenant_id": "keep",
+          "threshold": 1,
+          "timeframe": 600,
+          "timeunit": "seconds",
+          "update_time": null,
+          "updated_by": null
+        }
+      ],
+      "content_type": "application/json",
+      "request": {
+        "body": null,
+        "method": "GET",
+        "path": "/rules"
+      },
+      "status": 200
+    },
+    "rules_unreadable": {
+      "body": {
+        "error_msg": "<exception text>",
+        "message": "An internal server error occurred.",
+        "trace_id": "<trace id>"
+      },
+      "content_type": "application/json",
+      "request": {
+        "body": null,
+        "method": "GET",
+        "path": "/rules"
+      },
+      "status": 500
+    },
+    "tags": {
+      "body": [],
+      "content_type": "application/json",
+      "request": {
+        "body": null,
+        "method": "GET",
+        "path": "/tags"
+      },
+      "status": 200
     },
     "whoami_admin": {
       "body": {

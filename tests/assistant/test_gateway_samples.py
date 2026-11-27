@@ -2,6 +2,7 @@
 `tests/test_assistant_gateway_samples.py` from the routes it calls.
 """
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import httpx
@@ -15,13 +16,20 @@ from src.services.assistant.bl.projection import (
     project_alert,
 )
 from src.services.assistant.bl.scopes import has_scope
-from src.services.assistant.gateway.client import FetchedAlert, GatewayClient
+from src.services.assistant.gateway.client import (
+    FetchedAlert,
+    GatewayClient,
+    classify_object_write,
+    object_id_of,
+)
 from src.services.assistant.gateway.errors import (
     GatewayForbidden,
     GatewayUnauthorized,
     GatewayUnavailable,
     InvalidCel,
+    RulesUnreadable,
 )
+from src.services.assistant.gateway.reader import ReadGateway
 from tests.assistant.fakes import caller, change_status
 
 _FIXTURES = Path(__file__).parents[1] / "fixtures"
@@ -321,13 +329,165 @@ async def test_other_answers_to_a_change(sample, result):
     assert written == result
 
 
+# --- the tenant's lists and checks -----------------------------------------------------
+
+ADMIN = "admin@example.com"
+
+
+def reader_of(*samples: dict, email: str | None = ADMIN) -> ReadGateway:
+    """Reads as the user who made the presets, rules and dashboards."""
+    return ReadGateway(Replay(*samples).client(), replace(caller(), email=email))
+
+
+@pytest.mark.asyncio
+async def test_presets():
+    rows = await reader_of(read_write("presets")).presets()
+    mine = {row["name"]: row["mine"] for row in rows}
+    assert mine == {"Critical orders": True, "feed": False}
+    assert ADMIN not in json.dumps(rows)
+    [made] = [row for row in rows if row["name"] == "Critical orders"]
+    assert made["options"][0] == {"label": "CEL", "value": 'severity == "critical"'}
+    others = await reader_of(read_write("presets"), email="noc@example.com").presets()
+    assert not any(row["mine"] for row in others)
+
+
+@pytest.mark.asyncio
+async def test_tags():
+    assert await reader_of(read_write("tags")).tags() == []
+
+
+@pytest.mark.asyncio
+async def test_rules():
+    [rule] = await reader_of(read_write("rules")).rules()
+    assert rule.fields["name"] == "Orders" and rule.fields["mine"] is True
+    assert rule.fields["definition_cel"] == 'service == "orders"'
+    assert "@example.com" not in json.dumps(rule.fields)
+    assert not {"definition_cel_ast", "distribution", "group_description"} & set(
+        rule.fields
+    )
+    assert rule.carried.multi_level is False
+
+
+@pytest.mark.asyncio
+async def test_a_rule_the_gateway_cannot_parse_hides_them_all():
+    with pytest.raises(RulesUnreadable):
+        await reader_of(read_write("rules_unreadable")).rules()
+
+
+@pytest.mark.asyncio
+async def test_dashboards():
+    [dashboard] = await reader_of(read_write("dashboards")).dashboards()
+    assert dashboard["dashboard_name"] == "Ops"
+    [widget] = dashboard["dashboard_config"]["widgetData"]
+    assert widget["preset"] == {"name": "critical"}
+    assert "@example.com" not in json.dumps(dashboard)
+
+
+@pytest.mark.parametrize(
+    ("name", "valid", "diagnostics"),
+    [("cel_valid", True, 0), ("cel_invalid", False, 1), ("cel_rules_context", True, 0)],
+)
+@pytest.mark.asyncio
+async def test_a_check(name, valid, diagnostics):
+    body = read_write(name)["request"]["body"]
+    answer = await reader_of(read_write(name)).check_cel(body["cel"], body["context"])
+    assert answer["valid"] is valid
+    assert len(answer["diagnostics"]) == diagnostics
+
+
+@pytest.mark.asyncio
+async def test_facets_and_their_values():
+    facets = await reader_of(read_write("facets")).facets()
+    [severity] = [facet for facet in facets if facet["property_path"] == "severity"]
+    options = await reader_of(read_write("facet_options")).facet_options(
+        "", severity["id"]
+    )
+    counts = {option["value"]: option["matches_count"] for option in options}
+    assert counts["critical"] == 1 and counts["warning"] == 1
+
+
+@pytest.mark.asyncio
+async def test_facet_values_for_an_invalid_filter():
+    sample = read_write("facet_options_invalid_cel")
+    [facet_id] = sample["request"]["body"]["facet_queries"]
+    with pytest.raises(InvalidCel):
+        await reader_of(sample).facet_options("name ==", facet_id)
+
+
+@pytest.mark.asyncio
+async def test_a_facet_id_the_gateway_answers_with_a_500_is_never_sent():
+    assert read_write("facet_options_not_a_uuid")["status"] == 500
+    reader = reader_of()  # no sample: nothing may be sent
+    with pytest.raises(ValueError):
+        await reader.facet_options("", "severity")
+
+
+@pytest.mark.asyncio
+async def test_a_sorted_search():
+    found = await reader_of(read_write("query_sorted")).search_alerts(
+        "", 3, "severity", "desc"
+    )
+    assert [alert.data["severity"] for alert in found][:2] == ["critical", "warning"]
+
+
+@pytest.mark.parametrize(
+    ("sample", "result"),
+    [
+        (READ_WRITE["preset_create"], "ok"),
+        (READ_WRITE["preset_create_duplicate"], "http_error"),
+        (READ_WRITE["rule_create"], "ok"),
+        (READ_WRITE["rule_update_missing"], "not_found"),
+        (READ_WRITE["dashboard_create"], "ok"),
+        (READ_WRITE["dashboard_create_duplicate"], "http_error"),
+        (READ_WRITE["dashboard_update_missing"], "http_error"),
+        (READ_ONLY["preset_create"], "read_only"),
+        (READ_ONLY["preset_update"], "read_only"),
+        (READ_ONLY["rule_create"], "read_only"),
+        (READ_ONLY["rule_update"], "read_only"),
+        (READ_ONLY["dashboard_create"], "read_only"),
+        (READ_ONLY["dashboard_update"], "read_only"),
+    ],
+    ids=lambda value: None if isinstance(value, dict) else value,
+)
+def test_what_an_object_write_answer_says(sample, result):
+    response = as_response(sample)
+    assert classify_object_write(response) == result
+    made = object_id_of(sample["body"])
+    assert (made is not None) is (result == "ok")
+
+
+@pytest.mark.asyncio
+async def test_a_read_only_instance_still_answers_reads_sent_with_post():
+    options = await reader_of(READ_ONLY["facet_options"]).facet_options(
+        "", "f8a91ac7-4916-4ad0-9b46-a5ddb85bfbb8"
+    )
+    assert isinstance(options, list)
+    body = READ_ONLY["cel_valid"]["request"]["body"]
+    answer = await reader_of(READ_ONLY["cel_valid"]).check_cel(
+        body["cel"], body["context"]
+    )
+    assert answer["valid"] is True
+
+
 # --- the file ---------------------------------------------------------------------------
 
 
 def test_every_sample_is_used_here():
     source = Path(__file__).read_text(encoding="utf-8")
     assert [name for name in READ_WRITE if not _is_named(name, source)] == []
-    assert sorted(READ_ONLY) == ["batch_enrich", "whoami"]
+    assert sorted(READ_ONLY) == [
+        "batch_enrich",
+        "cel_valid",
+        "dashboard_create",
+        "dashboard_update",
+        "facet_options",
+        "preset_create",
+        "preset_update",
+        "rule_create",
+        "rule_update",
+        "whoami",
+    ]
+    assert [name for name in READ_ONLY if not _is_named(name, source)] == []
 
 
 def _is_named(name: str, source: str) -> bool:

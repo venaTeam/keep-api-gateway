@@ -23,4 +23,5 @@ class Identity:
             authorization=self.authorization,
             request_id=str(request_id),
             client=self.client,
+            email=self.email,
         )

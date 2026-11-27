@@ -22,6 +22,7 @@ import httpx
 from src.services.assistant.config import get_settings
 from src.services.assistant.core import metrics
 from src.services.assistant.gateway.errors import (
+    AnswerTooLarge,
     GatewayError,
     GatewayForbidden,
     GatewayIncompatible,
@@ -29,6 +30,7 @@ from src.services.assistant.gateway.errors import (
     GatewayUnavailable,
     InvalidCel,
     QueryFailed,
+    RulesUnreadable,
 )
 from src.services.assistant.gateway.transport import CLIENT_EXTENSION, UNKNOWN_CLIENT
 from src.services.assistant.models.api.draft import (
@@ -83,6 +85,24 @@ MAX_CRITICAL_ALERT_READS = 2
 # iterations away.
 LATE_ANSWER_SECONDS = 0.1
 
+# A read's answer above this is not parsed: a tenant's lists can grow without bound.
+MAX_READ_BYTES = 2 * 1024 * 1024
+# Above this, parsing an answer would hold up every chat of the worker: a thread.
+PARSE_IN_THREAD_BYTES = 256 * 1024
+
+# How search_alerts may sort, as the alerts table does: the gateway's own field names.
+SORT_FIELDS: Mapping[str, str] = MappingProxyType(
+    {
+        "lastReceived": "lastReceived",
+        "severity": "severity_order",
+        "status": "status",
+        "name": "name",
+    }
+)
+SORT_DIRECTIONS = ("asc", "desc")
+# What /cel/validate may check a filter for, of the contexts the gateway knows.
+CEL_CONTEXTS = ("alerts", "rules")
+
 _LIMITS = httpx.Limits(
     max_connections=50,
     max_keepalive_connections=20,
@@ -122,6 +142,9 @@ class Caller:
     # A time.monotonic() instant no read runs past, the wait for a place included:
     # a chat turn's, so that its last seconds are left for the answer. None: none.
     deadline_at: float | None = None
+    # The user's email as the gateway names them: the reader marks their own presets
+    # and rules with it, and never sends it on. Never in a request.
+    email: str | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
@@ -162,6 +185,13 @@ def _json(response: httpx.Response) -> Any:
         return json.loads(response.content)
     except ValueError:
         return None
+
+
+async def _parsed(response: httpx.Response) -> Any:
+    """`_json`, in a thread for a large answer."""
+    if len(response.content) > PARSE_IN_THREAD_BYTES:
+        return await asyncio.to_thread(_json, response)
+    return _json(response)
 
 
 def _detail(response: httpx.Response) -> Any:
@@ -472,28 +502,57 @@ class GatewayClient:
             critical=critical,
         )
 
+    async def search_alerts(
+        self,
+        caller: Caller,
+        cel: str,
+        limit: int,
+        sort_field: str,
+        sort_direction: str,
+        *,
+        deadline_seconds: float | None = None,
+        critical: bool = False,
+    ) -> list[FetchedAlert]:
+        """A page of matches in the order asked for: a field of SORT_FIELDS and one of
+        SORT_DIRECTIONS (ValueError otherwise, before a place is taken)."""
+        if sort_field not in SORT_FIELDS or sort_direction not in SORT_DIRECTIONS:
+            raise ValueError("sort")
+        return await self._query(
+            caller,
+            cel,
+            limit,
+            sort={"sort_by": SORT_FIELDS[sort_field], "sort_dir": sort_direction},
+            call_class="filter",
+            deadline_seconds=deadline_seconds,
+            critical=critical,
+        )
+
     async def _query(
         self,
         caller: Caller,
         cel: str,
         limit: int,
         *,
+        sort: dict[str, str] | None = None,
         call_class: str | None = None,
         deadline_seconds: float | None = None,
         critical: bool = False,
     ) -> list[FetchedAlert]:
+        body: dict[str, Any] = {"cel": cel, "limit": limit}
+        if sort is not None:
+            body["sort_options"] = [sort]
         response = await self._read(
             caller,
             "query",
             "POST",
             "/alerts/query",
-            body={"cel": cel, "limit": limit},
+            body=body,
             call_class=call_class,
             deadline_seconds=deadline_seconds,
             critical=critical,
         )
-        body = _json(response)
-        results = body.get("results") if isinstance(body, dict) else None
+        parsed = await _parsed(response)
+        results = parsed.get("results") if isinstance(parsed, dict) else None
         if not isinstance(results, list) or not all(
             isinstance(item, dict) and isinstance(item.get("fingerprint"), str)
             for item in results
@@ -511,23 +570,210 @@ class GatewayClient:
     ) -> int | None:
         """The exact number of matches, or None when it cannot be had."""
         try:
-            response = await self._read(
-                caller,
-                "count",
-                "POST",
-                "/alerts/query/count",
-                body={"cel": cel},
-                call_class="filter",
-                deadline_seconds=deadline_seconds,
-                critical=critical,
-            )
+            return await self._count(caller, cel, deadline_seconds, critical)
         except GatewayError:
             return None  # counted and logged by _read
+
+    async def count_matching(
+        self,
+        caller: Caller,
+        cel: str,
+        *,
+        deadline_seconds: float | None = None,
+        critical: bool = False,
+    ) -> int | None:
+        """The exact number of matches; None for an answer that is not one. A failed
+        read raises, as the other reads do: an invalid filter is the model's to fix."""
+        return await self._count(caller, cel, deadline_seconds, critical)
+
+    async def _count(
+        self,
+        caller: Caller,
+        cel: str,
+        deadline_seconds: float | None,
+        critical: bool,
+    ) -> int | None:
+        response = await self._read(
+            caller,
+            "count",
+            "POST",
+            "/alerts/query/count",
+            body={"cel": cel},
+            call_class="filter",
+            deadline_seconds=deadline_seconds,
+            critical=critical,
+        )
         body = _json(response)
         if isinstance(body, int) and not isinstance(body, bool):
             return body
         self._bad_response("count")
         return None
+
+    # The tenant's own lists. Each answer is the route's own, as a list of dicts;
+    # anything else is GatewayUnavailable. The reader strips what the model may not see.
+
+    async def presets(
+        self,
+        caller: Caller,
+        *,
+        deadline_seconds: float | None = None,
+        critical: bool = False,
+    ) -> list[dict[str, Any]]:
+        response = await self._read(
+            caller,
+            "presets",
+            "GET",
+            "/preset",
+            call_class="lookup",
+            deadline_seconds=deadline_seconds,
+            critical=critical,
+        )
+        return await self._rows(response, "presets")
+
+    async def tags(
+        self,
+        caller: Caller,
+        *,
+        deadline_seconds: float | None = None,
+        critical: bool = False,
+    ) -> list[dict[str, Any]]:
+        response = await self._read(
+            caller,
+            "tags",
+            "GET",
+            "/tags",
+            call_class="lookup",
+            deadline_seconds=deadline_seconds,
+            critical=critical,
+        )
+        return await self._rows(response, "tags")
+
+    async def rules(
+        self,
+        caller: Caller,
+        *,
+        deadline_seconds: float | None = None,
+        critical: bool = False,
+    ) -> list[dict[str, Any]]:
+        """The tenant's correlation rules. RulesUnreadable when the gateway cannot
+        read one of them. A filter class: the route counts each rule's incidents."""
+        response = await self._read(
+            caller,
+            "rules",
+            "GET",
+            "/rules",
+            call_class="filter",
+            deadline_seconds=deadline_seconds,
+            critical=critical,
+        )
+        return await self._rows(response, "rules")
+
+    async def dashboards(
+        self,
+        caller: Caller,
+        *,
+        deadline_seconds: float | None = None,
+        critical: bool = False,
+    ) -> list[dict[str, Any]]:
+        response = await self._read(
+            caller,
+            "dashboards",
+            "GET",
+            "/dashboard",
+            call_class="lookup",
+            deadline_seconds=deadline_seconds,
+            critical=critical,
+        )
+        return await self._rows(response, "dashboards")
+
+    async def facets(
+        self,
+        caller: Caller,
+        *,
+        deadline_seconds: float | None = None,
+        critical: bool = False,
+    ) -> list[dict[str, Any]]:
+        """The alerts table's facets: which fields have counted values, by facet id."""
+        response = await self._read(
+            caller,
+            "facets",
+            "GET",
+            "/alerts/facets",
+            call_class="lookup",
+            deadline_seconds=deadline_seconds,
+            critical=critical,
+        )
+        return await self._rows(response, "facets")
+
+    async def _rows(self, response: httpx.Response, endpoint: str) -> list[dict]:
+        body = await _parsed(response)
+        if not isinstance(body, list) or not all(isinstance(row, dict) for row in body):
+            raise self._bad_response(endpoint)
+        return body
+
+    async def check_cel(
+        self,
+        caller: Caller,
+        cel: str,
+        cel_context: str,
+        *,
+        deadline_seconds: float | None = None,
+        critical: bool = False,
+    ) -> dict[str, Any]:
+        """The gateway's own check of a filter, for one of CEL_CONTEXTS (ValueError
+        otherwise): `{valid, diagnostics}`. Diagnostics are untrusted text."""
+        if cel_context not in CEL_CONTEXTS:
+            raise ValueError("cel_context")
+        response = await self._read(
+            caller,
+            "cel_validate",
+            "POST",
+            "/cel/validate",
+            body={"cel": cel, "context": cel_context},
+            call_class="lookup",
+            deadline_seconds=deadline_seconds,
+            critical=critical,
+        )
+        body = _json(response)
+        if not (
+            isinstance(body, dict)
+            and isinstance(body.get("valid"), bool)
+            and isinstance(body.get("diagnostics", []), list)
+        ):
+            raise self._bad_response("cel_validate")
+        return body
+
+    async def facet_options(
+        self,
+        caller: Caller,
+        cel: str,
+        facet_id: str,
+        *,
+        deadline_seconds: float | None = None,
+        critical: bool = False,
+    ) -> list[dict[str, Any]]:
+        """The values of one facet among the alerts `cel` matches ("" for all), each
+        with its count. `facet_id` must be a canonical UUID (ValueError otherwise,
+        before a place is taken): the gateway answers anything else with a 500."""
+        if not _is_canonical_uuid(facet_id):
+            raise ValueError("facet_id")
+        response = await self._read(
+            caller,
+            "facet_options",
+            "POST",
+            "/alerts/facets/options",
+            body={"cel": cel, "facet_queries": {facet_id: ""}},
+            call_class="filter",
+            deadline_seconds=deadline_seconds,
+            critical=critical,
+        )
+        body = await _parsed(response)
+        options = body.get(facet_id, []) if isinstance(body, dict) else None
+        if not isinstance(options, list) or not all(
+            isinstance(option, dict) for option in options
+        ):
+            raise self._bad_response("facet_options")
+        return options
 
     async def alert_fields(
         self,
@@ -839,6 +1085,7 @@ class GatewayClient:
             slot=slot,
             timeout=seconds,
             critical=critical,
+            max_bytes=MAX_READ_BYTES,
         )
         status = response.status_code
         if status == 200 or (status == 404 and not_found_ok):
@@ -865,6 +1112,8 @@ class GatewayClient:
             )
         if status == 500 and endpoint in ("query", "count"):
             raise QueryFailed()
+        if status == 500 and endpoint == "rules":
+            raise RulesUnreadable()
         raise GatewayUnavailable(f"status_{status}")
 
     async def _send(
@@ -881,10 +1130,12 @@ class GatewayClient:
         slot: asyncio.Semaphore | None = None,
         route: WriteRoute | None = None,
         critical: bool = False,
+        max_bytes: int | None = None,
     ) -> httpx.Response:
         """`slot` is released when the call itself ends, however long nobody has been
         waiting for it. `route`: the row of a write, checked by `write`. `critical`:
-        a read that may take the place below the write's."""
+        a read that may take the place below the write's. `max_bytes`: a larger
+        answer is AnswerTooLarge, and nothing of it is read further."""
         started = time.monotonic()
         status_class = "cancelled"
         try:
@@ -923,6 +1174,12 @@ class GatewayClient:
             exc = asyncio.CancelledError() if task.cancelled() else task.exception()
             if exc is None:
                 response = task.result()
+                if max_bytes is not None and len(response.content) > max_bytes:
+                    status_class = "too_large"
+                    self._unsuccessful(
+                        caller, endpoint, status_class, "AnswerTooLarge", sent=True
+                    )
+                    raise AnswerTooLarge()
                 status_class = f"{response.status_code // 100}xx"
                 return response
             sent = not isinstance(exc, _NEVER_SENT)

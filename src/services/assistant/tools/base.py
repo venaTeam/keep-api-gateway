@@ -15,11 +15,13 @@ from pydantic import BaseModel
 
 from src.services.assistant.bl.projection import clean_text
 from src.services.assistant.gateway.errors import (
+    AnswerTooLarge,
     GatewayForbidden,
     GatewayUnauthorized,
     GatewayUnavailable,
     InvalidCel,
     QueryFailed,
+    RulesUnreadable,
 )
 from src.services.assistant.gateway.reader import ReadGateway
 from src.services.assistant.llm.client import LlmTool
@@ -33,6 +35,10 @@ MAX_LINKS_PER_TURN = 3
 MAX_TOOL_RESULT_CHARS = 8000
 MAX_DIAGNOSTICS_SHOWN = 5
 MAX_DIAGNOSTIC_CHARS = 300
+
+
+class FilterBudgetSpent(Exception):
+    """A read the turn's filter budget had no units left for: nothing was sent."""
 
 
 def _this_second() -> datetime:
@@ -56,6 +62,8 @@ class ToolContext:
     # need that data too. `zone_name` is its IANA name, then "UTC".
     zone: tzinfo = timezone.utc
     zone_name: str = "UTC"
+    # Reads already made in this turn, by (read, arguments): `read_once`.
+    _remembered: dict[tuple[Any, ...], Any] = field(default_factory=dict, repr=False)
 
     def take_filter_lookup(self, units: int = 1) -> bool:
         """Charge `units` of the turn's filter budget. True when that many were left;
@@ -66,6 +74,23 @@ class ToolContext:
             return False
         self.cel_lookups_left -= units
         return True
+
+    async def read_once(
+        self, read: Callable[..., Awaitable[Any]], *args: Any, filter_units: int = 0
+    ) -> Any:
+        """`read(*args)` of the turn's reader, made at most once per turn: the same
+        read again (the same method, path and body) gets the first answer, and costs
+        nothing. `filter_units` are charged only when it is sent; without them left it
+        raises FilterBudgetSpent and sends nothing. A failed read is not remembered.
+        The answer is shared: a tool must not change it."""
+        key = (read.__name__, *args)
+        if key in self._remembered:
+            return self._remembered[key]
+        if filter_units and not self.take_filter_lookup(filter_units):
+            raise FilterBudgetSpent()
+        answer = await read(*args)
+        self._remembered[key] = answer
+        return answer
 
 
 @dataclass(frozen=True)
@@ -150,6 +175,11 @@ def read_failure_outcome(exc: Exception) -> ToolOutcome:
         )
     if isinstance(exc, GatewayForbidden):
         return tool_error("forbidden")
+    if isinstance(exc, RulesUnreadable):
+        # Only fixing that rule on the Correlations page helps; the chat can go on.
+        return tool_error("rules_unreadable")
+    if isinstance(exc, AnswerTooLarge):
+        return tool_error("too_large")
     if isinstance(exc, GatewayUnavailable):
         return tool_error("gateway_unavailable", stream_error="gateway_unavailable")
     raise TypeError(f"not a read failure: {type(exc).__name__}") from exc

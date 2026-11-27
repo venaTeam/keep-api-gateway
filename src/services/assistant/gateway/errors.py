@@ -45,5 +45,20 @@ class QueryFailed(GatewayUnavailable):
         super().__init__("query_failed")
 
 
+class RulesUnreadable(GatewayUnavailable):
+    """500 on `GET /rules`: one of the tenant's rules has a filter the gateway cannot
+    parse, so none of them can be read."""
+
+    def __init__(self):
+        super().__init__("rules_unreadable")
+
+
+class AnswerTooLarge(GatewayUnavailable):
+    """An answer above the read cap: not parsed, not used."""
+
+    def __init__(self):
+        super().__init__("too_large")
+
+
 class GatewayIncompatible(GatewayError):
     """The gateway answered with a shape this version does not understand."""

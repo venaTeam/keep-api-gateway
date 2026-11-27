@@ -544,6 +544,14 @@ def test_the_client_calls_exactly_these_routes():
             ("'POST'", "'/alerts/query/count'"),
             ("'GET'", "'/alerts/facets/fields'"),
             ("'GET'", "f\"/alerts/{quote(fingerprint, safe='')}\""),
+            # The tenant's own lists, and checks.
+            ("'GET'", "'/preset'"),
+            ("'GET'", "'/tags'"),
+            ("'GET'", "'/rules'"),
+            ("'GET'", "'/dashboard'"),
+            ("'GET'", "'/alerts/facets'"),
+            ("'POST'", "'/cel/validate'"),
+            ("'POST'", "'/alerts/facets/options'"),
             # What these go through.
             ("method", "path"),  # _read to _send
             ("route.method", "path"),  # write to _send
