@@ -32,6 +32,13 @@ OutcomeCode = Literal[
     "failed",
     "interrupted",
     "outcome_unknown",
+    # Of drafts that save a preset, a correlation rule or a dashboard.
+    "name_taken",
+    "object_gone",
+    "stale_draft",
+    "invalid_filter",
+    "opened_in_form",
+    "rules_unreadable",
 ]
 GatewayResult = Literal[
     "ok",
@@ -43,8 +50,11 @@ GatewayResult = Literal[
     "not_permitted",
     "unauthenticated",
     "unknown",
+    "not_found",
 ]
 AlertResult = Literal["applied", "failed", "unconfirmed", "skipped", "not_found"]
+# What a draft can save, other than alerts.
+ObjectType = Literal["preset", "correlation_rule", "dashboard"]
 
 
 class FingerprintSelector(BaseModel):
@@ -108,6 +118,18 @@ class AlertOutcome(StoredAlertOutcome):
     result: AlertResult
 
 
+class DraftObject(BaseModel):
+    """What the write made or changed. Logged by type and id only: the name is a
+    user's text."""
+
+    type: ObjectType
+    id: str
+    # None when this version could not tell.
+    name: Optional[str]
+    # The page in keep-ui, for a link; None when there is none to show.
+    path: Optional[str]
+
+
 class StoredOutcome(BaseModel):
     """As read back. Strict on write, lenient on load: a rollback leaves outcomes of a
     newer version behind, with values and keys this one does not know."""
@@ -124,6 +146,8 @@ class StoredOutcome(BaseModel):
     results: List[StoredAlertOutcome]
     # None while the outcome is still pending.
     finished_at: Optional[datetime]
+    # None for a draft of alerts, and while nothing was made or changed.
+    object: Optional[DraftObject]
 
 
 class DraftOutcome(StoredOutcome):

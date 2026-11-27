@@ -12,6 +12,7 @@ from src.services.assistant.kinds.base import Decision
 from src.services.assistant.kinds.registry import kind_of
 from src.services.assistant.models.api.draft import (
     AlertResult,
+    DraftObject,
     DraftOutcome,
     DraftView,
     GatewayResult,
@@ -28,10 +29,15 @@ _OUTCOME_UNKNOWN = "The result of this change could not be determined."
 
 def readable(stored: Mapping) -> StoredOutcome:
     """A stored outcome as the card shows it. Unknown keys are dropped; an unknown
-    value keeps its place, and the text becomes one that claims nothing."""
+    value keeps its place, and the text becomes one that claims nothing. An object
+    this version cannot read is left out, with the same text."""
+    object_known = _object_readable(stored.get("object"))
+    if not object_known:
+        stored = {key: value for key, value in stored.items() if key != "object"}
     outcome = StoredOutcome.parse_obj(stored)
     known = (
-        outcome.code in get_args(OutcomeCode)
+        object_known
+        and outcome.code in get_args(OutcomeCode)
         and (
             outcome.gateway_result is None
             or outcome.gateway_result in get_args(GatewayResult)
@@ -39,6 +45,16 @@ def readable(stored: Mapping) -> StoredOutcome:
         and all(item.result in get_args(AlertResult) for item in outcome.results)
     )
     return outcome if known else outcome.copy(update={"message": UNREADABLE_OUTCOME})
+
+
+def _object_readable(stored: object) -> bool:
+    if stored is None:
+        return True
+    try:
+        DraftObject.parse_obj(stored)
+    except ValueError:  # pydantic's ValidationError is a ValueError
+        return False
+    return True
 
 
 def unreadable_for_good() -> Decision:

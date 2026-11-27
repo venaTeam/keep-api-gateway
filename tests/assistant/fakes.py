@@ -84,12 +84,18 @@ class FakeGateway:
 
     Responses are keyed by (method, path as sent on the wire). A value is an
     httpx.Response, an exception to raise, or a callable taking the request.
+
+    A route without a response answers 404 "Alert not found". With `strict` it is
+    recorded in `unregistered` and raises instead: the client sees a dropped call, so
+    a write to the wrong path cannot pass for a `not_found`.
     """
 
-    def __init__(self, handler: Callable | None = None):
+    def __init__(self, handler: Callable | None = None, *, strict: bool = False):
         self.requests: list[httpx.Request] = []
         self.responses: dict[tuple[str, str], object] = {}
+        self.unregistered: list[str] = []
         self._handler = handler
+        self._strict = strict
 
     def on(self, method: str, path: str, response) -> "FakeGateway":
         self.responses[(method, path)] = response
@@ -105,6 +111,9 @@ class FakeGateway:
         path = request.url.raw_path.decode().split("?")[0]
         answer = self.responses.get((request.method, path))
         if answer is None:
+            if self._strict:
+                self.unregistered.append(f"{request.method} {path}")
+                raise AssertionError(f"no response for {request.method} {path}")
             return httpx.Response(404, json={"detail": "Alert not found"})
         if isinstance(answer, Exception):
             raise answer

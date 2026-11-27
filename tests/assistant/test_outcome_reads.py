@@ -13,6 +13,15 @@ from tests.assistant.conftest import TENANT
 from tests.assistant.rows import EMAIL, add_conversation, add_draft, add_message, read
 from tests.assistant.running import Exchange, Keep, equip
 
+# A code no version of this one writes.
+NEWER_CODE = "code_of_a_newer_version"
+SHOWN_OBJECT = {
+    "type": "preset",
+    "id": "a-preset-id",
+    "name": "Night shift",
+    "path": None,
+}
+
 
 @pytest.fixture(scope="module")
 def app(assistant_router, make_app):
@@ -82,14 +91,15 @@ async def test_an_outcome_code_this_version_does_not_know(app, db, conversation,
         conversation,
         kind=kind,
         state="failed",
-        outcome=stored(code="name_taken", gateway_result="rejected"),
+        outcome=stored(code=NEWER_CODE, gateway_result="rejected"),
     )
     outcome = (await shown(app, conversation))["outcome"]
-    assert outcome["code"] == "name_taken"
+    assert outcome["code"] == NEWER_CODE
     assert outcome["message"] == outcomes.UNREADABLE_OUTCOME
     assert outcome["gateway_result"] == "rejected"
+    assert outcome["object"] == SHOWN_OBJECT
     # Keys this version does not know are neither a failure nor shown.
-    assert "object" not in outcome and "confirm_state" not in outcome
+    assert "confirm_state" not in outcome
     assert read(db, Draft, draft)["outcome"]["object"]["type"] == "preset"
 
 
@@ -115,7 +125,30 @@ async def test_an_outcome_it_knows_keeps_its_text(app, db, conversation):
     with_draft(db, conversation, state="applied", outcome=stored())
     outcome = (await shown(app, conversation))["outcome"]
     assert (outcome["code"], outcome["message"]) == ("applied", "The stored text.")
-    assert "object" not in outcome and "confirm_state" not in outcome
+    assert outcome["object"] == SHOWN_OBJECT
+    assert "confirm_state" not in outcome
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "stored_object",
+    [{"type": "silence", "id": "a-silence-id"}, {"type": "preset"}, "a-preset-id"],
+    ids=["unknown-type", "no-id", "not-an-object"],
+)
+async def test_an_object_this_version_cannot_read(
+    app, db, conversation, stored_object
+):
+    """Left out, and the text claims nothing; the row keeps it."""
+    draft = with_draft(
+        db, conversation, state="applied", outcome=stored(object=stored_object)
+    )
+    outcome = (await shown(app, conversation))["outcome"]
+    assert outcome["object"] is None
+    assert (outcome["code"], outcome["message"]) == (
+        "applied",
+        outcomes.UNREADABLE_OUTCOME,
+    )
+    assert read(db, Draft, draft)["outcome"]["object"] == stored_object
 
 
 # --- writing stays strict ---------------------------------------------------------------
@@ -130,11 +163,12 @@ def lenient(**values) -> DraftOutcome:
 @pytest.mark.parametrize(
     "unknown",
     [
-        {"code": "name_taken"},
+        {"code": NEWER_CODE},
         {"gateway_result": "conflict"},
         {"results": [result("created")]},
+        {"object": {"type": "silence", "id": "a-silence-id"}},
     ],
-    ids=["code", "gateway_result", "result"],
+    ids=["code", "gateway_result", "result", "object_type"],
 )
 def test_the_models_refuse_what_this_version_does_not_know(unknown):
     with pytest.raises(pydantic.ValidationError):
@@ -149,7 +183,7 @@ def test_writing_an_unknown_code_raises(db, conversation, write):
     draft = with_draft(db, conversation, state="applying")
     before = read(db, Draft, draft)
     key = drafts_bl.DraftKey(draft, TENANT, EMAIL, conversation)
-    bad = lenient(code="name_taken")
+    bad = lenient(code=NEWER_CODE)
     with pytest.raises(pydantic.ValidationError):
         if write == "keep_applying":
             drafts_bl.keep_applying(key, bad)

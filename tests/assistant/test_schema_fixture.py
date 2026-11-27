@@ -10,6 +10,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import get_args
 from uuid import uuid4
 
 import pytest
@@ -17,6 +18,7 @@ import sqlalchemy as sa
 from sqlmodel import Session, SQLModel, select
 
 from src.services.assistant.core.db import REQUIRED_SCHEMA
+from src.services.assistant.models.api.draft import DraftState
 from src.services.assistant.models.db import Conversation, Draft, Message
 from src.services.assistant.models.db.base import AssistantModel
 from tests.assistant.conftest import OTHER_TENANT, TENANT
@@ -68,6 +70,17 @@ def test_the_gateways_own_metadata_has_no_assistant_table():
     assert AssistantModel.metadata is not SQLModel.metadata
     assert "tenant" in SQLModel.metadata.tables
     assert not set(ASSISTANT_TABLES) & set(SQLModel.metadata.tables)
+
+
+def test_the_draft_states_are_the_ones_the_database_allows():
+    """A state the API knows and the check constraint does not would fail at the
+    write: the vocabulary and the migration change together."""
+    [check] = [
+        c
+        for c in GOLDEN["assistant_draft"]["check_constraints"]
+        if c["name"] == "ck_assistant_draft_state"
+    ]
+    assert sorted(check["literals"]) == sorted(get_args(DraftState))
 
 
 @pytest.mark.parametrize("table", ASSISTANT_TABLES)

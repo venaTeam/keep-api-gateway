@@ -122,6 +122,7 @@ async def test_it_changes_what_the_card_lists(app, db, keep, conversation, draft
         "unconfirmed_count": 0,
         "skipped_count": 0,
         "not_found_count": 0,
+        "object": None,
     }
     row = read(db, Draft, draft)
     assert (row["state"], row["outcome"]["code"]) == ("applied", "applied")

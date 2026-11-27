@@ -22,6 +22,7 @@ from src.services.assistant.models.api.draft import (
     CelSelector,
     ChangeAlertStatusPayload,
     DraftAlert,
+    DraftObject,
     DraftOutcome,
     DraftView,
     FingerprintSelector,
@@ -132,6 +133,20 @@ CEL_PAYLOAD = ChangeAlertStatusPayload(
     dispose_on_new_alert=True,
     matched_count=1,
     alerts=ALERTS[:1],
+    skipped=[],
+    not_found=[],
+    unresolvable=[],
+)
+RESOLVE_PAYLOAD = CEL_PAYLOAD.copy(
+    update={"target_status": "resolved", "dispose_on_new_alert": False}
+)
+REOPEN_PAYLOAD = ChangeAlertStatusPayload(
+    selector=FingerprintSelector(fingerprints=[ALERTS[0].fingerprint]),
+    target_status="firing",
+    note="still happening",
+    dispose_on_new_alert=False,
+    matched_count=1,
+    alerts=[ALERTS[0].copy(update={"from_status": "resolved"})],
     skipped=[],
     not_found=[],
     unresolvable=[],
@@ -330,6 +345,74 @@ def drafts() -> dict[str, DraftView]:
         ),
         "discarded": draft(26, "discarded"),
         "expired": draft(27, "expired"),
+        "pending_resolve": draft(28, "pending", payload=RESOLVE_PAYLOAD),
+        "pending_reopen": draft(29, "pending", payload=REOPEN_PAYLOAD),
+    }
+
+
+PRESET = DraftObject(
+    type="preset", id=uid(40), name="Night shift", path="/alerts/night-shift"
+)
+RULE = DraftObject(
+    type="correlation_rule", id=uid(41), name="Database storms", path="/rules"
+)
+# Everything a client may get without, left out.
+DASHBOARD = DraftObject(type="dashboard", id=uid(42), name=None, path=None)
+
+
+def object_outcome(code, message, gateway_result, saved=None):
+    return DraftOutcome(
+        code=code,
+        message=message,
+        gateway_result=gateway_result,
+        applied_count=0,
+        failed_count=0,
+        unconfirmed_count=0,
+        skipped_count=0,
+        not_found_count=0,
+        results=[],
+        finished_at=RESOLVED,
+        object=saved,
+    )
+
+
+def outcomes() -> dict[str, DraftOutcome]:
+    """Outcomes with an object of each type, and the codes and gateway results no draft
+    above shows. Apart from any kind: an outcome has the same shape for all of them."""
+    return {
+        "preset_saved": object_outcome("applied", "The preset was saved.", "ok", PRESET),
+        "correlation_rule_saved": object_outcome(
+            "applied", "The correlation rule was saved.", "ok", RULE
+        ),
+        "dashboard_saved": object_outcome(
+            "applied", "The dashboard was saved.", "ok", DASHBOARD
+        ),
+        "name_taken": object_outcome(
+            "name_taken", "A preset with this name exists already.", None
+        ),
+        "object_gone": object_outcome(
+            "object_gone",
+            "The correlation rule does not exist any more.",
+            "not_found",
+            RULE.copy(update={"path": None}),
+        ),
+        "stale_draft": object_outcome(
+            "stale_draft",
+            "The dashboard changed after this draft was made.",
+            None,
+            DASHBOARD.copy(update={"name": "On call", "path": f"/dashboard/{uid(42)}"}),
+        ),
+        "invalid_filter": object_outcome(
+            "invalid_filter", "Keep refused the filter of this preset.", "rejected"
+        ),
+        "opened_in_form": object_outcome(
+            "opened_in_form", "Opened in the form, to finish there.", None
+        ),
+        "rules_unreadable": object_outcome(
+            "rules_unreadable",
+            "An existing rule's filter can't be read; fix it on the Correlations page.",
+            None,
+        ),
     }
 
 
@@ -343,18 +426,21 @@ def _text(message: int, delta: str):
     return s.TextDeltaEvent(message_id=uid(message), delta=delta)
 
 
-def _tool(call: str, phase: str, outcome_code=None):
+def _tool(
+    call: str,
+    phase: str,
+    outcome_code=None,
+    *,
+    tool: str = "change_alert_status",
+    label: str = "Preparing a status change",
+):
     return s.ToolStatusEvent(
-        tool_call_id=call,
-        tool="change_alert_status",
-        phase=phase,
-        label="Preparing a status change",
-        outcome=outcome_code,
+        tool_call_id=call, tool=tool, phase=phase, label=label, outcome=outcome_code
     )
 
 
-def _tool_round(call: str, outcome_code: str):
-    return [_tool(call, "started"), _tool(call, "finished", outcome_code)]
+def _tool_round(call: str, outcome_code: str, **tool):
+    return [_tool(call, "started", **tool), _tool(call, "finished", outcome_code, **tool)]
 
 
 def _done(finish_reason: str, message: int | None = None):
@@ -409,6 +495,22 @@ def streams() -> dict[str, list]:
             _conversation_event(),
             _text(4, "I was about to"),
             _done("cancelled", 4),
+        ],
+        # Tools that look things up, link to a page or save an object.
+        "tool_outcomes": [
+            _conversation_event(),
+            *_tool_round("call_1", "found", tool="get_alerts", label="Reading alerts"),
+            *_tool_round(
+                "call_2", "not_found", tool="get_alerts", label="Reading alerts"
+            ),
+            *_tool_round(
+                "call_3", "link_ready", tool="open_page", label="Preparing a link"
+            ),
+            *_tool_round(
+                "call_4", "name_taken", tool="save_preset", label="Preparing a preset"
+            ),
+            _text(4, "A preset with this name exists already."),
+            _done("stop", 4),
         ],
     }
     for code in get_args(s.StreamErrorCode):
@@ -524,12 +626,14 @@ def build() -> dict:
             "outcome_codes": list(get_args(draft_models.OutcomeCode)),
             "gateway_results": list(get_args(draft_models.GatewayResult)),
             "alert_results": list(get_args(draft_models.AlertResult)),
+            "object_types": list(get_args(draft_models.ObjectType)),
             "message_statuses": list(get_args(conversation_models.MessageStatus)),
         },
         "heartbeat": s.HEARTBEAT_FRAME,
         "response_headers": {"Content-Type": s.STREAM_MEDIA_TYPE, **s.STREAM_HEADERS},
         "streams": encoded,
         "drafts": {name: json.loads(d.json()) for name, d in drafts().items()},
+        "outcomes": {name: json.loads(o.json()) for name, o in outcomes().items()},
         "conversations": {
             name: json.loads(c.json()) for name, c in conversations().items()
         },

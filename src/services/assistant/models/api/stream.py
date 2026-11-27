@@ -31,6 +31,10 @@ ToolOutcomeCode = Literal[
     "invalid_arguments",
     "unauthenticated",
     "error",
+    "found",
+    "not_found",
+    "link_ready",
+    "name_taken",
 ]
 StreamErrorCode = Literal[
     "llm_unavailable",

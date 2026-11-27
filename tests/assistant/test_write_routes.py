@@ -15,6 +15,8 @@ from src.services.assistant.gateway.client import (
     WRITE_ROUTES,
     WriteAnswer,
     WriteRoute,
+    classify_object_write,
+    object_id_of,
 )
 from src.services.assistant.gateway.errors import GatewayUnavailable
 from tests.assistant.fakes import REQUEST_ID, TOKEN, FakeGateway, caller
@@ -456,3 +458,122 @@ async def test_an_error_body_stays_where_it_is(gateway, caplog, endpoint, status
     assert answer.result != "ok"
     assert CANARY not in repr(answer)
     assert not [r for r in caplog.records if CANARY in rendered(r)]
+
+
+# --- writes of presets, rules and dashboards -------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("answer", "expected"),
+    [
+        (httpx.Response(200, json={"id": THING, "name": CANARY}), "ok"),
+        (httpx.Response(200, json={"name": CANARY}), "http_error"),
+        (httpx.Response(200, json={"id": THING.upper()}), "http_error"),
+        (httpx.Response(200, json={"id": 7}), "http_error"),
+        (httpx.Response(200, json=[{"id": THING}]), "http_error"),
+        (httpx.Response(200, text=CANARY), "http_error"),
+        (httpx.Response(201, json={"id": THING}), "http_error"),
+        (
+            httpx.Response(
+                400, json={"detail": {"code": "INVALID_CEL", "message": CANARY}}
+            ),
+            "rejected",
+        ),
+        (httpx.Response(400, json={"detail": CANARY}), "rejected"),
+        (httpx.Response(401, json={"detail": CANARY}), "unauthenticated"),
+        (httpx.Response(403, json={"detail": "Read only mode"}), "read_only"),
+        (httpx.Response(403, json={"detail": CANARY}), "not_permitted"),
+        (httpx.Response(404, json={"detail": CANARY}), "not_found"),
+        (httpx.Response(409, json={"detail": CANARY}), "http_error"),
+        # Every 422 of these routes comes before anything is written.
+        (httpx.Response(422, json={"detail": [{"msg": CANARY}]}), "rejected"),
+        (httpx.Response(422, json={"detail": CANARY}), "rejected"),
+        (httpx.Response(422, text=CANARY), "rejected"),
+        (httpx.Response(500, text=CANARY), "http_error"),
+        (httpx.Response(502), "unknown"),
+        (httpx.Response(503), "unknown"),
+        (httpx.Response(504), "unknown"),
+    ],
+    ids=[
+        "200-with-an-id",
+        "200-without-an-id",
+        "200-with-an-id-that-is-not-canonical",
+        "200-with-an-id-that-is-not-a-string",
+        "200-with-a-list",
+        "200-not-json",
+        "201",
+        "400-invalid-cel",
+        "400",
+        "401",
+        "403-read-only",
+        "403",
+        "404",
+        "409",
+        "422-validation",
+        "422-other",
+        "422-not-json",
+        "500",
+        "502",
+        "503",
+        "504",
+    ],
+)
+def test_what_an_object_write_answer_says(answer, expected):
+    assert classify_object_write(answer) == expected
+
+
+def test_the_id_of_what_was_written():
+    assert object_id_of({"id": THING}) == THING
+    for body in ({}, {"id": THING.upper()}, {"id": None}, [THING], None, THING):
+        assert object_id_of(body) is None
+
+
+@pytest.mark.asyncio
+async def test_an_object_write_carries_its_id_and_an_invalid_filter(
+    gateway, monkeypatch
+):
+    row = dataclasses.replace(
+        OBJECT_ROW, classify=classify_object_write, object_id=object_id_of
+    )
+    monkeypatch.setattr(client_module, "WRITE_ROUTES", MappingProxyType({"thing": row}))
+    write = {"body": {"name": "x"}, "path_params": {"thing_id": THING}}
+    gateway.on_json("PUT", f"/things/{THING}", {"id": THING})
+    assert await gateway.client().write(caller(), "thing", **write) == WriteAnswer(
+        "ok", {"id": THING}, THING
+    )
+    gateway.on_json(
+        "PUT",
+        f"/things/{THING}",
+        {"detail": {"code": "INVALID_CEL", "message": CANARY}},
+        status=400,
+    )
+    assert await gateway.client().write(caller(), "thing", **write) == WriteAnswer(
+        "rejected", None, None, invalid_cel=True
+    )
+
+
+# --- the strict fake ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_strict_fake_answers_no_route_it_was_not_given(rows):
+    """A write to the wrong path must not meet a 404 that looks like `not_found`."""
+    gateway = FakeGateway(strict=True)
+    answer = await gateway.client().write(
+        caller(), "thing", body={"name": "x"}, path_params={"thing_id": THING}
+    )
+    assert answer.result == "unknown"
+    assert gateway.unregistered == [f"PUT /things/{THING}"]
+    with pytest.raises(GatewayUnavailable):
+        await gateway.client().query_alerts(caller(), "true", 5)
+    assert gateway.unregistered[-1] == "POST /alerts/query"
+
+
+@pytest.mark.asyncio
+async def test_a_lenient_fake_answers_404_where_it_was_not_given(rows):
+    gateway = FakeGateway()
+    answer = await gateway.client().write(
+        caller(), "thing", body={"name": "x"}, path_params={"thing_id": THING}
+    )
+    assert answer.result == "http_error"
+    assert gateway.unregistered == []

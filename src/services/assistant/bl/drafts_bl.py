@@ -67,8 +67,12 @@ def to_view(draft: Draft) -> DraftView:
 
 
 def _strict(outcome: DraftOutcome) -> dict[str, Any]:
-    """What is stored, checked again: only values this version knows are written."""
-    return json.loads(DraftOutcome(**outcome.dict()).json())
+    """What is stored, checked again: only values this version knows are written.
+    Without an object there is no `object` key, so a merge keeps a stored one."""
+    value = json.loads(DraftOutcome(**outcome.dict()).json())
+    if value["object"] is None:
+        del value["object"]
+    return value
 
 
 @dataclass(frozen=True)

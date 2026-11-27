@@ -52,8 +52,17 @@ drafts_stale_applying = Gauge(
     multiprocess_mode="livemax",
 )
 
-# Gateway. status_class: 2xx | 3xx | 4xx | 5xx | timeout | not_sent |
-# dropped | cancelled
+# Gateway. A status_class is the answer's class, or how the call ended without one.
+STATUS_CLASSES = (
+    "2xx",
+    "3xx",
+    "4xx",
+    "5xx",
+    "timeout",
+    "not_sent",
+    "dropped",
+    "cancelled",
+)
 gateway_requests_total = Counter(
     f"{_PREFIX}gateway_requests_total",
     "Gateway requests",

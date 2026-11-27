@@ -213,6 +213,36 @@ def classify_batch_enrich(response: httpx.Response) -> GatewayResult:
     return "http_error"
 
 
+def classify_object_write(response: httpx.Response) -> GatewayResult:
+    """What the answer to a write of a preset, a correlation rule or a dashboard says
+    about it. A 400 is `rejected`; WriteAnswer.invalid_cel tells an invalid filter
+    apart."""
+    status = response.status_code
+    if status == 200:
+        return "ok" if object_id_of(_json(response)) is not None else "http_error"
+    if status == 400:
+        return "rejected"
+    if status == 401:
+        return "unauthenticated"
+    if status == 403:
+        return "read_only" if _is_read_only(_detail(response)) else "not_permitted"
+    if status == 404:
+        return "not_found"
+    if status == 422:
+        # These routes answer 422 before they write anything.
+        return "rejected"
+    if status in (502, 503, 504):
+        return "unknown"
+    return "http_error"
+
+
+def object_id_of(body: Any) -> str | None:
+    """The id of what an object write made or changed. A canonical UUID only: it goes
+    into later paths and into links."""
+    value = body.get("id") if isinstance(body, dict) else None
+    return value if _is_canonical_uuid(value) else None
+
+
 # --- the writes ----------------------------------------------------------------------
 
 EMPTY: Mapping[str, str] = MappingProxyType({})
@@ -298,6 +328,9 @@ WRITE_ROUTES: Mapping[str, WriteRoute] = MappingProxyType(
         ),
     }
 )
+# The rows' names only, for the metrics a worker starts with: the routes themselves
+# stay with `write`.
+WRITE_ENDPOINTS: tuple[str, ...] = tuple(WRITE_ROUTES)
 
 
 def _path_of(

@@ -21,11 +21,13 @@ from src.services.assistant.core.work import (
     install_signal_handlers,
     log_failure,
 )
-from src.services.assistant.gateway.client import GatewayClient
+from src.services.assistant.gateway.client import WRITE_ENDPOINTS, GatewayClient
 from src.services.assistant.gateway.transport import IN_PROCESS_URL, InProcessTransport
 from src.services.assistant.kinds.registry import KINDS
 from src.services.assistant.llm.client import LlmErrorKind, build_llm_client
 from src.services.assistant.models.api.draft import OutcomeCode
+from src.services.assistant.models.api.stream import ToolOutcomeCode
+from src.services.assistant.tools.registry import TOOLS
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +68,15 @@ def _start_series() -> None:
         for outcome in get_args(OutcomeCode):
             metrics.draft_outcomes_total.labels(kind=kind, outcome=outcome)
         metrics.drafts_total.labels(kind=kind, event="finalized_after_timeout")
+    metrics.internal_errors_total.labels(site="sweep_close")
+    for endpoint in WRITE_ENDPOINTS:
+        for status_class in metrics.STATUS_CLASSES:
+            metrics.gateway_requests_total.labels(
+                endpoint=endpoint, status_class=status_class
+            )
+    for tool in TOOLS:
+        for outcome in get_args(ToolOutcomeCode):
+            metrics.tool_calls_total.labels(tool=tool, outcome=outcome)
 
 
 def _start_loops(work: OngoingWork) -> None:

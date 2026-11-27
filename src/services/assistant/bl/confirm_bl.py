@@ -202,6 +202,8 @@ class _Attempt:
 
     def _report(self, draft: DraftView, decision: Decision) -> None:
         _, outcome = decision
+        # By type and id: a name is a user's text.
+        saved = outcome.object
         metrics.drafts_total.labels(kind=draft.kind, event="confirmed").inc()
         metrics.draft_outcomes_total.labels(
             kind=draft.kind, outcome=outcome.code
@@ -218,6 +220,8 @@ class _Attempt:
                 "applied": outcome.applied_count,
                 "failed": outcome.failed_count,
                 "unconfirmed": outcome.unconfirmed_count,
+                "object_type": saved.type if saved is not None else None,
+                "object_id": saved.id if saved is not None else None,
                 "seconds": round(time.monotonic() - self._started, 2),
             },
         )

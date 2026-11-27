@@ -468,6 +468,10 @@ def test_outcome_codes_are_the_contract():
         "invalid_arguments",
         "unauthenticated",
         "error",
+        "found",
+        "not_found",
+        "link_ready",
+        "name_taken",
     }
 
 

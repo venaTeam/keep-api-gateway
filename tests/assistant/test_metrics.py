@@ -1,12 +1,21 @@
+import ast
 import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import get_args
 
 from prometheus_client import REGISTRY, CollectorRegistry, generate_latest
 from prometheus_client.multiprocess import MultiProcessCollector
 
-from src.services.assistant.core import metrics  # noqa: F401
+from src.services.assistant import lifecycle
+from src.services.assistant.core import metrics
+from src.services.assistant.gateway import client as client_module
+from src.services.assistant.gateway.client import WRITE_ENDPOINTS, WRITE_ROUTES
+from src.services.assistant.kinds.registry import KINDS
+from src.services.assistant.models.api.draft import OutcomeCode
+from src.services.assistant.models.api.stream import ToolOutcomeCode
+from src.services.assistant.tools.registry import TOOLS
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -61,3 +70,60 @@ def test_metrics_aggregate_over_worker_processes(tmp_path):
     text = generate_latest(registry).decode()
     assert "keep_assistant_rate_limited_total 2.0" in text
     assert "keep_assistant_retention_last_success_unixtime 200.0" in text
+
+
+def test_rare_series_exist_from_the_start():
+    """Prometheus sees no increase in a series that begins with its first event, and
+    some of these happen once in months."""
+    # A cleared series that begins again keeps its value in multi-process mode, so only
+    # its presence says something.
+    for collector in (
+        metrics.draft_outcomes_total,
+        metrics.internal_errors_total,
+        metrics.gateway_requests_total,
+        metrics.tool_calls_total,
+    ):
+        collector.clear()
+    lifecycle._start_series()
+    text = generate_latest(REGISTRY).decode()
+    assert WRITE_ENDPOINTS == tuple(WRITE_ROUTES)
+    expected = [
+        'internal_errors_total{site="sweep_close"}',
+        *(
+            f'draft_outcomes_total{{kind="{kind}",outcome="{outcome}"}}'
+            for kind in KINDS
+            for outcome in get_args(OutcomeCode)
+        ),
+        *(
+            f'gateway_requests_total{{endpoint="{endpoint}",status_class="{status}"}}'
+            for endpoint in WRITE_ROUTES
+            for status in metrics.STATUS_CLASSES
+        ),
+        *(
+            f'tool_calls_total{{outcome="{outcome}",tool="{tool}"}}'
+            for tool in TOOLS
+            for outcome in get_args(ToolOutcomeCode)
+        ),
+    ]
+    for series in expected:
+        assert f"keep_assistant_{series} " in text, series
+
+
+def test_every_status_class_the_client_counts_is_known():
+    tree = ast.parse(Path(client_module.__file__).read_text("utf-8"))
+    literals = {
+        node.value.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and [getattr(t, "id", None) for t in node.targets] == ["status_class"]
+        and isinstance(node.value, ast.Constant)
+    } | {
+        node.value.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.keyword)
+        and node.arg == "status_class"
+        and isinstance(node.value, ast.Constant)
+    }
+    assert literals
+    computed = {f"{n}xx" for n in (2, 3, 4, 5)}
+    assert literals | computed == set(metrics.STATUS_CLASSES)

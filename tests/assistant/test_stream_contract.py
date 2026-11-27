@@ -1,6 +1,9 @@
 """The API contract shared with keep-ui, pinned by the golden fixture."""
+import importlib
 import json
-from typing import get_args
+import pkgutil
+import subprocess
+from typing import Literal, get_args, get_origin
 
 import pytest
 from fastapi.testclient import TestClient
@@ -8,6 +11,7 @@ from pydantic import BaseModel, ValidationError
 
 from src.services.assistant.config import get_settings
 from src.services.assistant.exceptions import ERRORS
+from src.services.assistant.models import api as api_models
 from src.services.assistant.models.api import stream as s
 from src.services.assistant.models.api.chat import ChatRequest
 from src.services.assistant.models.api.conversation import (
@@ -15,11 +19,12 @@ from src.services.assistant.models.api.conversation import (
     TimelineDraft,
     TimelineMessage,
 )
-from src.services.assistant.kinds.registry import PAYLOAD_MODELS
+from src.services.assistant.kinds.registry import KINDS, PAYLOAD_MODELS
 from src.services.assistant.models.api.draft import (
     AlertOutcome,
     ChangeAlertStatusPayload,
     DraftAlert,
+    DraftObject,
     DraftOutcome,
     DraftView,
     SkippedAlert,
@@ -29,6 +34,8 @@ from tests.assistant.fakes import TOKEN
 
 GOLDEN = json.loads(golden_stream.FIXTURE.read_bytes())
 EVENTS_BY_NAME = {event.event: event for event in s.STREAM_EVENTS}
+# keep-ui pins the same blob (sse-parser.test.ts) once it has copied this fixture.
+FIXTURE_BLOB = "3cf194e981a2c0723cfb57af58877cb70e26906e"
 
 
 def parse_sse(raw: str):
@@ -94,25 +101,122 @@ def test_golden_streams_cover_the_vocabulary():
     assert any(s.HEARTBEAT_FRAME in st["raw"] for st in GOLDEN["streams"].values())
 
 
-def test_golden_drafts_cover_every_literal():
-    vocabulary = GOLDEN["vocabulary"]
-    drafts = GOLDEN["drafts"].values()
-    outcomes = [d["outcome"] for d in drafts if d["outcome"]]
-    assert {d["state"] for d in drafts} == set(vocabulary["draft_states"])
-    assert {o["code"] for o in outcomes} == set(vocabulary["outcome_codes"])
-    assert {o["gateway_result"] for o in outcomes} - {None} == set(
-        vocabulary["gateway_results"]
-    )
-    assert {r["result"] for o in outcomes for r in o["results"]} == set(
-        vocabulary["alert_results"]
-    )
+def literal_aliases() -> dict:
+    """Every named Literal of the API's models: the vocabulary keep-ui handles."""
+    found = {}
+    for info in pkgutil.iter_modules(api_models.__path__):
+        module = importlib.import_module(f"{api_models.__name__}.{info.name}")
+        for name, value in vars(module).items():
+            if get_origin(value) is Literal:
+                found[name] = value
+    return found
+
+
+def golden_drafts() -> list[dict]:
+    return list(GOLDEN["drafts"].values())
+
+
+def alert_drafts() -> list[dict]:
+    """Of the kinds that change a set of alerts."""
+    return [
+        d
+        for d in golden_drafts()
+        if "selector" in PAYLOAD_MODELS[d["kind"]].__fields__
+    ]
+
+
+def golden_outcomes() -> list[dict]:
+    """Of the drafts, and those shown apart from any kind."""
+    of_drafts = [d["outcome"] for d in golden_drafts() if d["outcome"]]
+    return of_drafts + list(GOLDEN["outcomes"].values())
+
+
+def seen_in_streams(event: str, field: str) -> set:
+    events = [e for st in GOLDEN["streams"].values() for e in st["events"]]
+    return {e["data"].get(field) for e in events if e["event"] == event} - {None}
+
+
+def message_statuses() -> set:
+    items = [i for c in GOLDEN["conversations"].values() for i in c["items"]]
+    return {i["status"] for i in items if i["type"] == "message"}
+
+
+# Per Literal: its vocabulary list, and the values the fixture shows.
+SEEN = {
+    "DraftState": ("draft_states", lambda: {d["state"] for d in golden_drafts()}),
+    "TargetStatus": (
+        "target_statuses",
+        lambda: {d["payload"]["target_status"] for d in alert_drafts()},
+    ),
+    "OutcomeCode": ("outcome_codes", lambda: {o["code"] for o in golden_outcomes()}),
+    "GatewayResult": (
+        "gateway_results",
+        lambda: {o["gateway_result"] for o in golden_outcomes()} - {None},
+    ),
+    "AlertResult": (
+        "alert_results",
+        lambda: {r["result"] for o in golden_outcomes() for r in o["results"]},
+    ),
+    "ObjectType": (
+        "object_types",
+        lambda: {o["object"]["type"] for o in golden_outcomes() if o["object"]},
+    ),
+    "ToolPhase": ("tool_phases", lambda: seen_in_streams("tool_status", "phase")),
+    "ToolOutcomeCode": (
+        "tool_outcomes",
+        lambda: seen_in_streams("tool_status", "outcome"),
+    ),
+    "StreamErrorCode": ("stream_error_codes", lambda: seen_in_streams("error", "code")),
+    "FinishReason": ("finish_reasons", lambda: seen_in_streams("done", "finish_reason")),
+    "MessageStatus": ("message_statuses", message_statuses),
+}
+
+
+def test_every_literal_is_checked():
+    """A new Literal, or a new value of one, cannot reach keep-ui unseen."""
+    assert set(literal_aliases()) == set(SEEN)
+    assert set(GOLDEN["vocabulary"]) == {"events"} | {key for key, _ in SEEN.values()}
+
+
+@pytest.mark.parametrize("name", sorted(SEEN))
+def test_golden_drafts_cover_every_literal(name):
+    key, seen = SEEN[name]
+    values = get_args(literal_aliases()[name])
+    assert GOLDEN["vocabulary"][key] == list(values)
+    assert seen() == set(values)
+
+
+def test_golden_drafts_cover_every_kind():
+    drafts = golden_drafts()
+    assert {d["kind"] for d in drafts} == set(KINDS)
     assert {d["permitted"] for d in drafts} == {True, False}
-    assert {d["payload"]["selector"]["type"] for d in drafts} == {"fingerprints", "cel"}
-    alerts = [a for d in drafts for a in d["payload"]["alerts"]]
-    assert {a["has_incident"] for a in alerts} == {True, False, None}
-    assert {a["has_note"] for a in alerts} == {True, False}
     for draft in drafts:
         PAYLOAD_MODELS[draft["kind"]].parse_obj(draft["payload"])
+    assert {d["payload"]["selector"]["type"] for d in alert_drafts()} == {
+        "fingerprints",
+        "cel",
+    }
+    alerts = [a for d in alert_drafts() for a in d["payload"]["alerts"]]
+    assert {a["has_incident"] for a in alerts} == {True, False, None}
+    assert {a["has_note"] for a in alerts} == {True, False}
+
+
+@pytest.mark.parametrize("name", sorted(GOLDEN["outcomes"]))
+def test_golden_outcomes_validate(name):
+    outcome = GOLDEN["outcomes"][name]
+    assert json.loads(DraftOutcome.parse_obj(outcome).json()) == outcome
+
+
+def test_the_fixture_blob_is_pinned():
+    """Every commit that changes the fixture changes this literal: keep-ui copies the
+    file by its blob."""
+    result = subprocess.run(
+        ["git", "hash-object", "--no-filters", str(golden_stream.FIXTURE)],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.stdout.strip() == FIXTURE_BLOB
 
 
 def _optional_fields(model: type[BaseModel]) -> set[str]:
@@ -121,15 +225,16 @@ def _optional_fields(model: type[BaseModel]) -> set[str]:
 
 @pytest.mark.parametrize(
     "model",
-    [DraftView, DraftOutcome, AlertOutcome, ChangeAlertStatusPayload, DraftAlert,
-     SkippedAlert, ConversationView],
+    [DraftView, DraftOutcome, DraftObject, AlertOutcome, ChangeAlertStatusPayload,
+     DraftAlert, SkippedAlert, ConversationView],
 )  # fmt: skip
 def test_every_nullable_field_appears_null_and_set(model):
-    drafts = list(GOLDEN["drafts"].values())
-    outcomes = [d["outcome"] for d in drafts if d["outcome"]]
+    drafts = golden_drafts()
+    outcomes = golden_outcomes()
     instances = {
         DraftView: drafts,
         DraftOutcome: outcomes,
+        DraftObject: [o["object"] for o in outcomes if o["object"]],
         AlertOutcome: [r for o in outcomes for r in o["results"]],
         ChangeAlertStatusPayload: [d["payload"] for d in drafts],
         DraftAlert: [a for d in drafts for a in d["payload"]["alerts"]],
