@@ -117,7 +117,11 @@ class Turn:
         # Reads only: a turn never writes.
         self._gateway = gateway.for_request(ref.turn_id)
         self._llm = llm
-        self._tools = ToolContext(identity=identity, gateway=self._gateway)
+        zone, zone_name = context_bl.user_zone(request.context.timezone)
+        # Its `now` is the turn's instant: the context message shows the same.
+        self._tools = ToolContext(
+            identity=identity, gateway=self._gateway, zone=zone, zone_name=zone_name
+        )
         self._round = _Round()
         self._rounds = 0
         self._drafts = 0
@@ -267,7 +271,11 @@ class Turn:
         settings = get_settings()
         context, earlier = await asyncio.gather(
             context_bl.gather(
-                self._identity, self._gateway, self._chat_request.context, self.ref.turn_id
+                self._identity,
+                self._gateway,
+                self._chat_request.context,
+                self.ref.turn_id,
+                now=self._tools.now,
             ),
             run_db(history.load, self.ref),
         )

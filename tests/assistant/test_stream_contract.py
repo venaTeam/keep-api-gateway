@@ -15,7 +15,7 @@ from src.services.assistant.exceptions import ERRORS, VALIDATION_MESSAGES
 from src.services.assistant.kinds.registry import KINDS, PAYLOAD_MODELS, kind_of
 from src.services.assistant.models import api as api_models
 from src.services.assistant.models.api import stream as s
-from src.services.assistant.models.api.chat import ChatRequest
+from src.services.assistant.models.api.chat import MAX_TIMEZONE_CHARS, ChatRequest
 from src.services.assistant.models.api.confirm import (
     ConfirmRequest,
     DerivedInput,
@@ -45,7 +45,7 @@ from tests.assistant.fakes import TOKEN
 GOLDEN = json.loads(golden_stream.FIXTURE.read_bytes())
 EVENTS_BY_NAME = {event.event: event for event in s.STREAM_EVENTS}
 # keep-ui pins the same blob (sse-parser.test.ts) once it has copied this fixture.
-FIXTURE_BLOB = "bfaf94e1ed517d0f4d0911c7d5f93c82b800918c"
+FIXTURE_BLOB = "c3715845f9e9d637ce14dd2fa660f9af65c863a4"
 
 
 def parse_sse(raw: str):
@@ -321,6 +321,16 @@ def test_golden_confirm_limits_are_the_models():
         "cel_roundtrip_chars": 4000,
         "derived_bytes": 60 * 1024,
     }
+
+
+def test_golden_chat_context_is_what_the_gateway_keeps():
+    vectors = GOLDEN["chat_context"]
+    assert vectors["timezone_chars"] == MAX_TIMEZONE_CHARS == 64
+    kept = {vector["kept"] for vector in vectors["timezone"]}
+    assert None in kept and len(kept) > 2
+    for vector in vectors["timezone"]:
+        body = {"message": "hi", "context": {"timezone": vector["sent"]}}
+        assert ChatRequest.parse_obj(body).context.timezone == vector["kept"], vector
 
 
 # --- what a newer version may send -------------------------------------------

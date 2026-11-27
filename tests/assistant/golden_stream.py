@@ -13,6 +13,7 @@ from src.services.assistant.models.api import confirm as confirm_models
 from src.services.assistant.models.api import conversation as conversation_models
 from src.services.assistant.models.api import draft as draft_models
 from src.services.assistant.models.api import stream as s
+from src.services.assistant.models.api.chat import MAX_TIMEZONE_CHARS
 from src.services.assistant.models.api.confirm import DerivedInput, SqlQueryInput
 from src.services.assistant.models.api.conversation import (
     ConversationView,
@@ -792,6 +793,33 @@ def confirm_limits() -> dict:
     }
 
 
+# What keep-ui may send as `context.timezone` (Intl's resolvedOptions().timeZone), and
+# what the gateway keeps of it. Nothing here answers 400: a zone it cannot use is None,
+# and the model is told the user's zone is not known.
+TIMEZONES = [
+    ("Europe/Berlin", "Europe/Berlin"),
+    ("America/Argentina/Buenos_Aires", "America/Argentina/Buenos_Aires"),
+    ("Asia/Kolkata", "Asia/Kolkata"),
+    ("UTC", "UTC"),
+    ("Mars/Olympus_Mons", None),
+    ("europe/berlin", None),
+    ("Europe/Berlin\n", None),
+    (" Europe/Berlin", None),
+    ("Europe/" + "B" * (MAX_TIMEZONE_CHARS - 6), None),
+    ("", None),
+    (None, None),
+    (60, None),
+]
+
+
+def chat_context() -> dict:
+    """Context keys keep-ui computes, and what the gateway keeps of each value."""
+    return {
+        "timezone_chars": MAX_TIMEZONE_CHARS,
+        "timezone": [{"sent": sent, "kept": kept} for sent, kept in TIMEZONES],
+    }
+
+
 def build() -> dict:
     encoded = {name: _encode_stream(items) for name, items in streams().items()}
     encoded["truncated"] = _truncated(encoded["draft_created"])
@@ -822,6 +850,7 @@ def build() -> dict:
         "errors": errors(),
         "requests": requests(),
         "confirm_limits": confirm_limits(),
+        "chat_context": chat_context(),
         "future": future(),
     }
 

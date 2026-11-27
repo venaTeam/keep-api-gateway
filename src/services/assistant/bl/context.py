@@ -8,8 +8,9 @@ import re
 import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timezone, tzinfo
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from src.services.assistant.bl.projection import project_alert
 from src.services.assistant.config import get_settings
@@ -36,9 +37,16 @@ _MAX_CACHED_TENANTS = 1000
 _fields_cache: dict[str, tuple[float, list[str]]] = {}
 
 
+UTC_NAME = "UTC"
+
+
 @dataclass(frozen=True)
 class TurnContext:
     now: str
+    # The user's zone, by its IANA name: UTC, and not known, when their browser named
+    # none this server can use.
+    timezone: str = UTC_NAME
+    timezone_known: bool = False
     page: str | None = None
     selected_count: int = 0
     alerts: list[dict[str, Any]] = field(default_factory=list)
@@ -52,21 +60,41 @@ async def gather(
     gateway: ReadGateway,
     request: ChatContext,
     request_id: uuid.UUID,
+    *,
+    now: datetime | None = None,
 ) -> TurnContext:
+    """`now`: the turn's instant, which its tools get too (ToolContext.now); without
+    it, the current second."""
     reader = gateway.for_request(request_id)
     notes: list[str] = []
     alerts, fields = await asyncio.gather(
         _selected_alerts(reader, request.selected_fingerprints, notes),
         _fields(reader, identity.tenant_id, notes),
     )
+    if now is None:
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+    zone, zone_name = user_zone(request.timezone)
     return TurnContext(
-        now=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        now=now.isoformat(timespec="seconds"),
+        timezone=zone_name,
+        timezone_known=isinstance(zone, ZoneInfo),
         page=page_pattern(request.page),
         selected_count=max(request.selected_count, len(request.selected_fingerprints)),
         alerts=alerts,
         fields=fields,
         notes=notes,
     )
+
+
+def user_zone(name: str | None) -> tuple[tzinfo, str]:
+    """The zone of a ChatContext.timezone, and its name: datetime's own UTC when there
+    is none, or when its data cannot be read after all."""
+    if name:
+        try:
+            return ZoneInfo(name), name
+        except (KeyError, ValueError, OSError):  # ZoneInfoNotFoundError is a KeyError
+            pass
+    return timezone.utc, UTC_NAME
 
 
 def page_pattern(page: str) -> str | None:

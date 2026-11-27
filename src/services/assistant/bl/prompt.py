@@ -62,10 +62,16 @@ def untrusted(text: str) -> str:
     return f"<untrusted_data>\n{text.translate(DELIMITERS)}\n</untrusted_data>"
 
 
+NO_TIMEZONE_NOTE = (
+    "The user's time zone is not known: times are in UTC. Say so when you give one."
+)
+
+
 def context_message(context: TurnContext) -> dict[str, Any]:
     """What the user is looking at. For this turn only, never stored."""
     data: dict[str, Any] = {
         "now": context.now,
+        "timezone": context.timezone,
         "page": context.page,
         "selected_count": context.selected_count,
         "selected_alerts": context.alerts,
@@ -74,6 +80,8 @@ def context_message(context: TurnContext) -> dict[str, Any]:
         data["available_fields"] = context.fields
     if context.notes:
         data["notes"] = context.notes
+    if not context.timezone_known:
+        data["timezone_note"] = NO_TIMEZONE_NOTE
     return {
         "role": "user",
         "content": untrusted(

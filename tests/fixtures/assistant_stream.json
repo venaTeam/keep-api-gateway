@@ -4013,6 +4013,59 @@
     "cel_roundtrip_chars": 4000,
     "derived_bytes": 61440
   },
+  "chat_context": {
+    "timezone_chars": 64,
+    "timezone": [
+      {
+        "sent": "Europe/Berlin",
+        "kept": "Europe/Berlin"
+      },
+      {
+        "sent": "America/Argentina/Buenos_Aires",
+        "kept": "America/Argentina/Buenos_Aires"
+      },
+      {
+        "sent": "Asia/Kolkata",
+        "kept": "Asia/Kolkata"
+      },
+      {
+        "sent": "UTC",
+        "kept": "UTC"
+      },
+      {
+        "sent": "Mars/Olympus_Mons",
+        "kept": null
+      },
+      {
+        "sent": "europe/berlin",
+        "kept": null
+      },
+      {
+        "sent": "Europe/Berlin\n",
+        "kept": null
+      },
+      {
+        "sent": " Europe/Berlin",
+        "kept": null
+      },
+      {
+        "sent": "Europe/BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+        "kept": null
+      },
+      {
+        "sent": "",
+        "kept": null
+      },
+      {
+        "sent": null,
+        "kept": null
+      },
+      {
+        "sent": 60,
+        "kept": null
+      }
+    ]
+  },
   "future": {
     "values": {
       "event": "event_of_a_newer_version",

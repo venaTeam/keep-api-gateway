@@ -25,6 +25,7 @@ from src.services.assistant.gateway.client import WRITE_ENDPOINTS, GatewayClient
 from src.services.assistant.gateway.transport import IN_PROCESS_URL, InProcessTransport
 from src.services.assistant.kinds.registry import KINDS
 from src.services.assistant.llm.client import LlmErrorKind, build_llm_client
+from src.services.assistant.models.api.chat import known_timezones
 from src.services.assistant.models.api.draft import OutcomeCode
 from src.services.assistant.models.api.stream import ToolOutcomeCode
 from src.services.assistant.tools.registry import TOOLS
@@ -45,6 +46,7 @@ def start(app: FastAPI) -> None:
         metrics.internal_errors_total.labels(site="startup").inc()
         logger.error("assistant: no LLM client", extra=describe_exception(exc))
     metrics.llm_configured.set(0 if app.state.assistant_llm is None else 1)
+    _check_time_zone_data()
     _start_series()
     app.state.assistant_undo_signals = lambda: None
     try:
@@ -57,6 +59,13 @@ def start(app: FastAPI) -> None:
         _start_loops(app.state.assistant_work)
     except Exception as exc:
         log_failure("startup", "assistant: no loops", exc)
+
+
+def _check_time_zone_data() -> None:
+    if not known_timezones():
+        logger.warning(
+            "assistant: no time zone data; every user's time zone is taken as UTC"
+        )
 
 
 def _start_series() -> None:

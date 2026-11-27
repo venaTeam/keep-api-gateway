@@ -1,6 +1,8 @@
 """Request body of POST /assistant/chat."""
+import functools
 import re
-from typing import List, Optional
+import zoneinfo
+from typing import Any, List, Optional
 
 from pydantic import BaseModel, Field, conint, conlist, constr, validator
 
@@ -9,6 +11,7 @@ from src.services.assistant.config import get_settings
 MAX_PAGE_CHARS = 200
 MAX_SELECTED_FINGERPRINTS = 200
 MAX_FINGERPRINT_CHARS = 512
+MAX_TIMEZONE_CHARS = 64
 
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
@@ -26,6 +29,16 @@ def has_control_characters(value: str) -> bool:
     return bool(_CONTROL.search(value))
 
 
+@functools.cache
+def known_timezones() -> frozenset[str]:
+    """The IANA names this server has time zone data for: none without any (an image
+    without tzdata), and then every user's zone is UTC."""
+    try:
+        return frozenset(zoneinfo.available_timezones())
+    except (OSError, ValueError):
+        return frozenset()
+
+
 class ChatContext(BaseModel):
     """What the user is looking at. Ids only: the server re-reads the alerts and
     never trusts what a client says about them."""
@@ -37,8 +50,21 @@ class ChatContext(BaseModel):
     ) = Field(default_factory=list)
     # The true size of the selection; the list carries the first 200.
     selected_count: conint(ge=0, strict=True) = 0
+    # The browser's IANA time zone. One this server has no data for is None (UTC, and
+    # the model is told): a zone never fails a request.
+    timezone: Optional[str] = None
 
     _page_storable = validator("page", allow_reuse=True)(storable)
+
+    @validator("timezone", pre=True)
+    def _known_or_none(cls, value: Any) -> Optional[str]:
+        if (
+            isinstance(value, str)
+            and len(value) <= MAX_TIMEZONE_CHARS
+            and value in known_timezones()
+        ):
+            return value
+        return None
 
     @validator("selected_fingerprints")
     def _clean_and_distinct(cls, value: List[str]) -> List[str]:

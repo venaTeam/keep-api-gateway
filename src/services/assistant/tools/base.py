@@ -6,7 +6,8 @@ makes drafts also has a kind of the same name in `kinds/registry.py`.
 import json
 import uuid
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime, timezone, tzinfo
 from typing import Any
 
 from pydantic import BaseModel
@@ -30,6 +31,10 @@ MAX_DIAGNOSTICS_SHOWN = 5
 MAX_DIAGNOSTIC_CHARS = 300
 
 
+def _this_second() -> datetime:
+    return datetime.now(timezone.utc).replace(microsecond=0)
+
+
 @dataclass
 class ToolContext:
     """One turn's view of the world, shared by all its tool calls."""
@@ -40,6 +45,13 @@ class ToolContext:
     # Model-written filters have no early exit on the gateway's side. Charged through
     # `take_filter_lookup` only.
     cel_lookups_left: int = MAX_CEL_LOOKUPS_PER_TURN
+    # The turn's instant, the one its context message shows: UTC, whole seconds.
+    now: datetime = field(default_factory=_this_second)
+    # The user's time zone, for times they give in their own words. datetime's own UTC
+    # when their browser named none this server has data for: ZoneInfo("UTC") would
+    # need that data too. `zone_name` is its IANA name, then "UTC".
+    zone: tzinfo = timezone.utc
+    zone_name: str = "UTC"
 
     def take_filter_lookup(self, units: int = 1) -> bool:
         """Charge `units` of the turn's filter budget. True when that many were left;
