@@ -8,12 +8,18 @@ have changed something.
 The draft's kind plans the writes and reads through a ReadGateway; this module alone
 holds the client and sends them. A write is sent only with the time left to send every
 write after it and tell the result (`seconds_needed`).
+
+Before each write a checkpoint stores Confirm's `confirm_state` (kinds/base.py) and,
+after the first, what the writes before it made: then the drain and time checks, then
+the send, with no await between them. A checkpoint that finds the draft settled
+already sends nothing more.
 """
 import asyncio
 import logging
 import time
 import uuid
 from collections.abc import Callable, Sequence
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from pydantic import BaseModel
@@ -46,7 +52,7 @@ from src.services.assistant.kinds.base import (
 )
 from src.services.assistant.kinds.registry import kind_of
 from src.services.assistant.models.api.confirm import ConfirmRequest
-from src.services.assistant.models.api.draft import DraftView
+from src.services.assistant.models.api.draft import DraftOutcome, DraftView
 from src.services.assistant.models.identity import Identity
 
 logger = logging.getLogger(__name__)
@@ -195,6 +201,9 @@ class _Attempt:
             if not self._sent:
                 await self._revert()
             raise
+        if decision is None:
+            # Settled by somebody else before anything was sent.
+            return await run_db(drafts_bl.load, self._key)
         state, outcome = decision
         if state == "applying":
             draft = await run_db(drafts_bl.keep_applying, self._key, outcome)
@@ -213,7 +222,8 @@ class _Attempt:
         self._report(draft, decision)
         return draft
 
-    async def _decide(self) -> Decision:
+    async def _decide(self) -> Optional[Decision]:
+        """What to store. None: the draft was settled meanwhile, and nothing was sent."""
         kind = self._kind
         plan = kind.plan(
             ConfirmContext(
@@ -232,6 +242,8 @@ class _Attempt:
         while isinstance(step, WriteRequest):
             k = len(sent)
             self._check(plan, k, step)
+            if k == 0 and not await self._checkpoint(sent):
+                return None
             answer = await self._write(step, k)
             if answer is None:
                 # A later write: what the earlier ones did stands.
@@ -242,8 +254,27 @@ class _Attempt:
                 # The gateway may still be writing: a look now would show a half-way
                 # state.
                 return "applying", plan.pending(sent)
+            if len(sent) < len(plan.rows):
+                # Another write may follow: what this one made is stored first, so
+                # that whoever finishes the draft can find it.
+                so_far = plan.stopped(sent)
+                if not await self._checkpoint(sent, so_far[1]):
+                    # Settled meanwhile: no next write. What is stored stays.
+                    return so_far
             step = await plan.after(sent)
         return step
+
+    async def _checkpoint(
+        self, sent: Sequence[Sent], outcome: DraftOutcome | None = None
+    ) -> bool:
+        """Before write `len(sent)` may be sent. False: it is not being applied any
+        more."""
+        confirm_state = {
+            "step": len(sent),
+            "sent_at": datetime.now(timezone.utc).isoformat(),
+            "object_ids": [s.answer.object_id for s in sent],
+        }
+        return await run_db(drafts_bl.checkpoint, self._key, confirm_state, outcome)
 
     @staticmethod
     def _check(plan: ConfirmPlan, k: int, step: WriteRequest) -> None:

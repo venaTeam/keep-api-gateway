@@ -7,12 +7,12 @@ import logging
 import threading
 from collections import Counter
 from datetime import timedelta
-from typing import Any
+from typing import Any, Optional
 
 import sqlalchemy as sa
 
 from src.services.assistant.bl import drafts_bl, outcomes
-from src.services.assistant.bl.drafts_bl import DraftKey
+from src.services.assistant.bl.drafts_bl import ConfirmState, DraftKey
 from src.services.assistant.core import metrics
 from src.services.assistant.core.db import get_session
 from src.services.assistant.core.work import log_failure
@@ -99,6 +99,7 @@ def _close_abandoned(stop: threading.Event) -> None:
                 Draft.created_by,
                 Draft.conversation_id,
                 Draft.kind,
+                Draft.outcome[drafts_bl.CONFIRM_STATE].label("confirm_state"),
             )
             .where(
                 Draft.state == "applying",
@@ -119,7 +120,7 @@ def _close_abandoned(stop: threading.Event) -> None:
 def _close(row: Any) -> None:
     key = DraftKey(row.id, row.tenant_id, row.created_by, row.conversation_id)
     draft = drafts_bl.load(key)
-    state, outcome = _decide(draft)
+    state, outcome = _decide(draft, drafts_bl.state_or_none(row.confirm_state))
     closed = drafts_bl.resolve(
         key,
         from_state="applying",
@@ -140,7 +141,7 @@ def _close(row: Any) -> None:
     )
 
 
-def _decide(draft: DraftView) -> Decision:
+def _decide(draft: DraftView, confirm_state: Optional[ConfirmState]) -> Decision:
     """By the kind; generically when this version cannot read the kind, the payload or
     the stored outcome, its object too (left behind by a newer version), so such rows
     never stay and nothing is claimed of what the newer version did."""
@@ -151,6 +152,6 @@ def _decide(draft: DraftView) -> Decision:
         return outcomes.unreadable_for_good()
     try:
         payload = kind.payload_model.parse_obj(draft.payload)
-        return kind.close_unknown(payload, draft.outcome, None)
+        return kind.close_unknown(payload, draft.outcome, confirm_state)
     except ValueError:  # pydantic's ValidationError is a ValueError
         return outcomes.unreadable_for_good()

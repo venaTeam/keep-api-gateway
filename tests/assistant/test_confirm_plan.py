@@ -414,7 +414,9 @@ async def test_a_second_write_nobody_knows_the_end_of(
         "applied",
         OBJECTS[1].id,
     )
-    assert len(kind.reconciled) == 1
+    [(_, confirm_state)] = kind.reconciled
+    # Write 2 (from 0: 1) may have been sent, after write 1, which made no object.
+    assert (confirm_state["step"], confirm_state["object_ids"]) == (1, [None])
 
 
 @pytest.mark.asyncio

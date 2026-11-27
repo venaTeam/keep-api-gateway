@@ -29,6 +29,15 @@ Decision = tuple[DraftState, DraftOutcome]
 # The look after a write, unless the request asks for less: confirm_bl.READ_SECONDS.
 READ_AFTER_SECONDS = 4.0
 
+# `confirm_state`: Confirm's own record in the draft's stored outcome, given to
+# `reconcile` and `close_unknown` (None when there is none). Confirm stores it at the
+# checkpoint before each write, and it stays until the draft is settled:
+#   "step": the write (from 0) that may have been sent last;
+#   "sent_at": ISO 8601 in UTC: that write was not sent before this moment;
+#   "object_ids": per write answered before it, the id of what it made, or None.
+# Server-made values only, never a model's or a user's text; never shown to anyone.
+MAX_CONFIRM_STATE_BYTES = 4096
+
 
 @dataclass(frozen=True)
 class WriteRequest:
@@ -88,7 +97,10 @@ class ConfirmPlan:
     after: Callable[[Sequence[Sent]], Awaitable[Step]]
     # The last answer is not known: what to store while the draft stays applying.
     pending: Callable[[Sequence[Sent]], DraftOutcome]
-    # A later write could not be sent (time, shutdown): what is known so far.
+    # A later write could not be sent (time, shutdown): what is known so far, the
+    # objects made among it. Its outcome is also what the checkpoint before a later
+    # write stores while the draft stays applying, so it is called after any answered
+    # write that another row follows.
     stopped: Callable[[Sequence[Sent]], Decision]
 
 

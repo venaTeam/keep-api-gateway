@@ -2,13 +2,18 @@
 
 A draft changes its state in one conditional UPDATE, whoever does it: of two that race,
 one finds no row. Locks are always taken in the order conversation, draft, message.
+
+The stored outcome may hold Confirm's raw `confirm_state` (kinds/base.py), which no
+view shows. Each write here says what becomes of it: claim (none), checkpoint (set),
+keep_applying and resolve (keep), revert (clear), the sweep's close (keep, by its
+merge), discard (none: a pending draft has none).
 """
 import json
 import uuid
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any
+from typing import Any, Optional
 
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB
@@ -19,6 +24,7 @@ from src.services.assistant.config import get_settings
 from src.services.assistant.core import metrics
 from src.services.assistant.core.db import get_session
 from src.services.assistant.exceptions import AssistantError, validation_error
+from src.services.assistant.kinds.base import MAX_CONFIRM_STATE_BYTES
 from src.services.assistant.kinds.registry import kind_of
 from src.services.assistant.models.api.confirm import DiscardReason, DiscardRequest
 from src.services.assistant.models.api.draft import DraftOutcome, DraftState, DraftView
@@ -53,6 +59,10 @@ def insert_draft(
     ).one()
 
 
+CONFIRM_STATE = "confirm_state"
+ConfirmState = dict[str, Any]
+
+
 def to_view(draft: Draft) -> DraftView:
     return DraftView(
         id=draft.id,
@@ -64,8 +74,31 @@ def to_view(draft: Draft) -> DraftView:
         expires_at=draft.expires_at,
         resolved_at=draft.resolved_at,
         payload=draft.payload,
-        outcome=None if draft.outcome is None else outcomes.readable(draft.outcome),
+        outcome=_shown(draft.outcome),
     )
+
+
+def _shown(stored: Any) -> Any:
+    """The outcome a view shows: never `confirm_state`, and none while that is all
+    there is (the checkpoint before the first write)."""
+    if stored is None:
+        return None
+    if isinstance(stored, dict):
+        stored = {key: value for key, value in stored.items() if key != CONFIRM_STATE}
+        if not stored:
+            return None
+    return outcomes.readable(stored)
+
+
+def confirm_state_of(draft: Draft) -> Optional[ConfirmState]:
+    """The raw `confirm_state` of a stored outcome; None without one."""
+    return state_or_none(
+        draft.outcome.get(CONFIRM_STATE) if isinstance(draft.outcome, dict) else None
+    )
+
+
+def state_or_none(value: Any) -> Optional[ConfirmState]:
+    return value if isinstance(value, dict) else None
 
 
 def _strict(outcome: DraftOutcome) -> dict[str, Any]:
@@ -147,13 +180,71 @@ def conflict(draft: DraftView) -> AssistantError:
 
 
 def revert(key: DraftKey) -> None:
-    """applying -> pending: nothing was sent."""
+    """applying -> pending: nothing was sent. Confirm's `confirm_state` goes, and with
+    it the outcome when that was all of it."""
     with get_session() as session, session.begin():
-        _change(session, *key.matches(), Draft.state == "applying", state="pending")
+        _change(
+            session,
+            *key.matches(),
+            Draft.state == "applying",
+            state="pending",
+            outcome=sa.case(
+                (
+                    sa.func.jsonb_typeof(Draft.outcome) == "object",
+                    sa.func.nullif(
+                        Draft.outcome.op("-", return_type=JSONB)(
+                            sa.cast(sa.literal(CONFIRM_STATE), sa.Text)
+                        ),
+                        sa.cast(sa.literal("{}"), JSONB),
+                    ),
+                ),
+                else_=Draft.outcome,
+            ),
+        )
+
+
+def checkpoint(
+    key: DraftKey,
+    confirm_state: Mapping[str, Any],
+    outcome: DraftOutcome | None = None,
+) -> bool:
+    """Before a write: Confirm's `confirm_state` and, with `outcome`, what is known so
+    far in place of what was stored. False: the draft is not being applied any more,
+    and nothing may be sent.
+
+    `updated_at` stays, as with `keep_applying`. Raises ValueError for a state of more
+    than MAX_CONFIRM_STATE_BYTES (as compact JSON in UTF-8): nothing is stored then.
+    """
+    size = len(
+        json.dumps(confirm_state, separators=(",", ":"), ensure_ascii=False).encode()
+    )
+    if size > MAX_CONFIRM_STATE_BYTES:
+        raise ValueError("confirm_state too large")
+    state = {CONFIRM_STATE: dict(confirm_state)}
+    if outcome is None:
+        value = sa.case(
+            (
+                sa.func.jsonb_typeof(Draft.outcome) == "object",
+                Draft.outcome.op("||", return_type=JSONB)(_jsonb(state)),
+            ),
+            else_=_jsonb(state),
+        )
+    else:
+        value = _jsonb({**_strict(outcome), **state})
+    with get_session() as session, session.begin():
+        draft = _change(
+            session,
+            *key.matches(),
+            Draft.state == "applying",
+            outcome=value,
+            updated_at=Draft.updated_at,
+        )
+        return draft is not None
 
 
 def keep_applying(key: DraftKey, outcome: DraftOutcome) -> DraftView | None:
-    """Store what is known so far. None: it is not being applied any more.
+    """Store what is known so far; Confirm's `confirm_state` stays. None: it is not
+    being applied any more.
 
     `updated_at` stays: it says when somebody may look at the alerts again.
     """
@@ -162,10 +253,30 @@ def keep_applying(key: DraftKey, outcome: DraftOutcome) -> DraftView | None:
             session,
             *key.matches(),
             Draft.state == "applying",
-            outcome=_strict(outcome),
+            outcome=_keeping_state(_jsonb(_strict(outcome))),
             updated_at=Draft.updated_at,
         )
         return None if draft is None else to_view(draft)
+
+
+def _jsonb(value: Any) -> Any:
+    return sa.bindparam(None, value, type_=JSONB(none_as_null=True))
+
+
+def _keeping_state(value: Any) -> Any:
+    """`value`, with the stored outcome's `confirm_state` when it has one."""
+    stored = Draft.outcome[CONFIRM_STATE]
+    return sa.case(
+        (
+            sa.func.jsonb_typeof(stored) == "object",
+            value.op("||", return_type=JSONB)(
+                sa.func.jsonb_build_object(
+                    sa.cast(sa.literal(CONFIRM_STATE), sa.Text), stored
+                )
+            ),
+        ),
+        else_=value,
+    )
 
 
 def resolve(
@@ -181,9 +292,10 @@ def resolve(
     """The final state, and the row that tells the model, all or nothing. None: the
     draft was not in `from_state` any more.
 
-    Only what a user does counts as activity in the conversation. `merge_outcome`
-    keeps the keys of the stored outcome that `outcome` does not have: a newer
-    version's, which this one cannot read.
+    Only what a user does counts as activity in the conversation. Confirm's
+    `confirm_state` stays with an `outcome`. `merge_outcome` keeps every key of the
+    stored outcome that `outcome` does not have: a newer version's too, which this one
+    cannot read.
     """
     with get_session() as session, session.begin():
         conversation = (
@@ -227,9 +339,9 @@ def resolve(
 def _outcome_value(outcome: DraftOutcome | None, merge: bool) -> Any:
     if outcome is None:
         return None
-    value = sa.bindparam(None, _strict(outcome), type_=JSONB(none_as_null=True))
+    value = _jsonb(_strict(outcome))
     if not merge:
-        return value
+        return _keeping_state(value)
     return sa.case(
         (
             sa.func.jsonb_typeof(Draft.outcome) == "object",
@@ -239,9 +351,12 @@ def _outcome_value(outcome: DraftOutcome | None, merge: bool) -> Any:
     )
 
 
-def claim_look(key: DraftKey, after_seconds: int) -> DraftView | None:
-    """The draft, for one caller per `after_seconds` since it was claimed. None: it is
-    too early, or it is not being applied any more."""
+def claim_look(
+    key: DraftKey, after_seconds: int
+) -> tuple[DraftView, Optional[ConfirmState]] | None:
+    """The draft and its Confirm's `confirm_state`, for one caller per `after_seconds`
+    since it was claimed. None: it is too early, or it is not being applied any
+    more."""
     with get_session() as session, session.begin():
         draft = _change(
             session,
@@ -249,7 +364,7 @@ def claim_look(key: DraftKey, after_seconds: int) -> DraftView | None:
             Draft.state == "applying",
             Draft.updated_at < sa.func.now() - timedelta(seconds=after_seconds),
         )
-        return None if draft is None else to_view(draft)
+        return None if draft is None else (to_view(draft), confirm_state_of(draft))
 
 
 def owned_draft(identity: Identity, draft_id: uuid.UUID) -> DraftView:

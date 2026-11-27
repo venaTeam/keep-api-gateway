@@ -818,7 +818,10 @@ async def test_all_or_nothing_of_the_result_is_stored(
     exchange = await post_confirm(app, draft).finish()
     assert (exchange.status, exchange.code) == (500, "internal")
     row = read(db, Draft, draft)
-    assert (row["state"], row["outcome"]) == ("applying", None)
+    assert row["state"] == "applying"
+    # Only Confirm's own record of the write it sent.
+    assert row["outcome"].keys() == {"confirm_state"}
+    assert row["outcome"]["confirm_state"]["step"] == 0
     assert read(db, Conversation, conversation) == before
     assert messages(db, conversation) == []
 
@@ -834,7 +837,8 @@ async def test_a_draft_that_was_settled_meanwhile(app, db, keep, conversation, d
 
     keep.on("POST", "/alerts/batch_enrich", settled)
     assert (await confirm(app, draft))["state"] == "failed"
-    assert read(db, Draft, draft)["outcome"] is None
+    # Nothing but Confirm's own record of the write, which no view shows.
+    assert read(db, Draft, draft)["outcome"].keys() == {"confirm_state"}
     assert messages(db, conversation) == []
 
 
