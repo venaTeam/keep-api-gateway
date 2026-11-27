@@ -1015,9 +1015,37 @@ async def test_a_draft_that_cannot_be_put_back(
 
 
 @pytest.mark.asyncio
-async def test_a_kind_this_version_does_not_know(app, db, keep, work, conversation):
-    draft = add_draft(db, conversation, kind="from_the_future")
+@pytest.mark.parametrize("state", ["pending", "applying", "applied"])
+async def test_a_kind_this_version_does_not_know(
+    app, db, keep, work, conversation, state
+):
+    """Refused before the claim, without the draft this version cannot show, and
+    without anything sent or changed."""
+    draft = add_draft(db, conversation, kind="from_the_future", state=state)
+    before = read(db, Draft, draft)
     exchange = await post_confirm(app, draft).finish()
-    assert (exchange.status, exchange.code) == (500, "internal")
+    assert (exchange.status, exchange.code) == (409, "draft_unsupported")
+    assert exchange.json() == {
+        "errors": [
+            {
+                "field": None,
+                "code": "draft_unsupported",
+                "message": "This draft cannot be applied by this version of Keep.",
+            }
+        ],
+        "detail": "This draft cannot be applied by this version of Keep.",
+    }
+    assert read(db, Draft, draft) == before
+    assert keep.looks == keep.writes == []
+
+
+@pytest.mark.asyncio
+async def test_a_kind_this_version_does_not_know_of_someone_else(
+    app, db, keep, work, conversation
+):
+    """That the draft exists is not told either."""
+    draft = add_draft(db, conversation, kind="from_the_future")
+    keep.on_json("GET", "/whoami", whoami(email="else@example.com"))
+    exchange = await post_confirm(app, draft).finish()
+    assert (exchange.status, exchange.code) == (404, "draft_not_found")
     assert state_of(db, draft) == "pending"
-    assert keep.writes == []

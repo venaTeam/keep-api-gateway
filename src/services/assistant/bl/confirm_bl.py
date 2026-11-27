@@ -29,11 +29,12 @@ from src.services.assistant.kinds.base import (
     ConfirmContext,
     ConfirmPlan,
     Decision,
+    DraftKind,
     Sent,
     Step,
     WriteRequest,
 )
-from src.services.assistant.kinds.registry import KINDS
+from src.services.assistant.kinds.registry import kind_of
 from src.services.assistant.models.api.draft import DraftView
 from src.services.assistant.models.identity import Identity
 
@@ -60,10 +61,19 @@ async def confirm(
     started: float,
 ) -> DraftView:
     """Whoever calls this spawns it: it must not be cut off with the request. `started`
-    is the time.monotonic() of the request. Raises AssistantError only."""
+    is the time.monotonic() of the request. Raises AssistantError only.
+
+    Whatever is refused before the claim leaves the draft as it is.
+    """
     try:
+        found = await run_db(drafts_bl.owned_draft, identity, draft_id)
+        kind = kind_of(found.kind)
+        if kind is None:
+            # A newer version's: it may know how, this one does not.
+            raise AssistantError("draft_unsupported")
         draft = await run_db(drafts_bl.claim, identity, draft_id)
-        return await _Attempt(identity, draft, gateway, work, started).run()
+        attempt = _Attempt(identity, draft, gateway, work, started, kind=kind)
+        return await attempt.run()
     except AssistantError:
         raise
     except Exception as exc:
@@ -79,9 +89,12 @@ class _Attempt:
         gateway: GatewayClient,
         work: OngoingWork,
         started: float,
+        *,
+        kind: DraftKind,
     ):
         self._key = drafts_bl.key_of(identity, draft)
         self._draft = draft
+        self._kind = kind
         # The audit trail of the gateway carries the draft's id.
         self._caller = identity.caller(draft.id)
         self._gateway = gateway
@@ -115,7 +128,7 @@ class _Attempt:
         return draft
 
     async def _decide(self) -> Decision:
-        kind = KINDS[self._draft.kind]
+        kind = self._kind
         plan = kind.plan(
             ConfirmContext(
                 # Its looks take the place no chat call can.

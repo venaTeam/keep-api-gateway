@@ -49,6 +49,8 @@ CONTRACT_ERRORS = (
     "draft_not_pending",
     "draft_expired",
     "draft_applying",
+    # Without the draft: this version cannot show it as its own.
+    "draft_unsupported",
     "payload_too_large",
     "rate_limited",
     "too_many_active_turns",

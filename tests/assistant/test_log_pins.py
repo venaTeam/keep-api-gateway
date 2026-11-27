@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from src.services.assistant.bl import confirm_bl
+from src.services.assistant.kinds import alert_status
 from src.services.assistant.models.api.draft import DraftObject
 from tests.assistant import golden_stream
 from tests.assistant.fakes import identity
@@ -78,7 +79,9 @@ def test_a_confirm_logs_what_it_wrote_by_id_never_by_name(caplog, with_object):
         outcome.object = DraftObject(
             type="preset", id=golden_stream.uid(40), name=CANARY, path=f"/{CANARY}"
         )
-    attempt = confirm_bl._Attempt(identity(), draft, None, None, time.monotonic())
+    attempt = confirm_bl._Attempt(
+        identity(), draft, None, None, time.monotonic(), kind=alert_status.KIND
+    )
     with caplog.at_level(logging.DEBUG):
         attempt._report(draft, ("applied", outcome))
     [line] = [r for r in caplog.records if r.message == "assistant: draft confirmed"]

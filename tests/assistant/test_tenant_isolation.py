@@ -81,7 +81,9 @@ def test_a_conversation_of_someone_else_cannot_be_read(db, stranger):
 
 
 @pytest.mark.parametrize("state", ["pending", "applying", "applied", "expired"])
-@pytest.mark.parametrize("act", [drafts_bl.claim, drafts_bl.discard])
+@pytest.mark.parametrize(
+    "act", [drafts_bl.owned_draft, drafts_bl.claim, drafts_bl.discard]
+)
 def test_a_draft_of_someone_else_is_not_found(db, stranger, act, state):
     """Whatever its state: that it exists must not be told either."""
     draft = add_draft(db, add_conversation(db), state=state)

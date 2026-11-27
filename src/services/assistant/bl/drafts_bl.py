@@ -250,15 +250,21 @@ def claim_look(key: DraftKey, after_seconds: int) -> DraftView | None:
         return None if draft is None else to_view(draft)
 
 
-def discard(identity: Identity, draft_id: uuid.UUID) -> DraftView:
-    """pending -> discarded; again is fine. Raises as `claim` does."""
+def owned_draft(identity: Identity, draft_id: uuid.UUID) -> DraftView:
+    """The caller's draft, as it is. Raises draft_not_found: another user's draft does
+    not exist for this one."""
     with get_session() as session:
         draft = session.scalar(
             sa.select(Draft).where(Draft.id == draft_id, *owned(identity))
         )
         if draft is None:
             raise AssistantError("draft_not_found")
-        view = to_view(draft)
+        return to_view(draft)
+
+
+def discard(identity: Identity, draft_id: uuid.UUID) -> DraftView:
+    """pending -> discarded; again is fine. Raises as `claim` does."""
+    view = owned_draft(identity, draft_id)
     if view.state == "pending":
         key = key_of(identity, view)
         discarded = resolve(

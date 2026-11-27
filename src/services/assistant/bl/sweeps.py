@@ -127,7 +127,8 @@ def _close(row: Any) -> None:
         outcome=outcome,
         event=outcomes.event_text(draft, outcome),
         by_user=False,
-        # A newer version's keys stay, for whoever looks into it later.
+        # Every stored key the outcome does not have stays: a newer version's, and
+        # the kind's own `confirm_state`, for whoever looks into it later.
         merge_outcome=True,
     )
     if closed is None:
@@ -141,9 +142,12 @@ def _close(row: Any) -> None:
 
 def _decide(draft: DraftView) -> Decision:
     """By the kind; generically when this version cannot read the kind, the payload or
-    the stored outcome (left behind by a newer version), so such rows never stay."""
+    the stored outcome, its object too (left behind by a newer version), so such rows
+    never stay and nothing is claimed of what the newer version did."""
     kind = kind_of(draft.kind)
     if kind is None:
+        return outcomes.unreadable_for_good()
+    if draft.outcome is not None and not outcomes.fully_readable(draft.outcome):
         return outcomes.unreadable_for_good()
     try:
         payload = kind.payload_model.parse_obj(draft.payload)

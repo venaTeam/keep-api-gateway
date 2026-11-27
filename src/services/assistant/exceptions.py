@@ -29,6 +29,9 @@ ERRORS: dict[str, ErrorSpec] = {
     "draft_not_pending": ErrorSpec(409, "This draft was already handled."),
     "draft_expired": ErrorSpec(409, "This draft has expired."),
     "draft_applying": ErrorSpec(409, "This draft is already being applied."),
+    "draft_unsupported": ErrorSpec(
+        409, "This draft cannot be applied by this version of Keep."
+    ),
     "payload_too_large": ErrorSpec(413, "The request is too large."),
     "rate_limited": ErrorSpec(429, "Too many messages. Try again shortly."),
     "too_many_active_turns": ErrorSpec(

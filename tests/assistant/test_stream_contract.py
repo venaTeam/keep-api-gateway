@@ -40,7 +40,7 @@ from tests.assistant.fakes import TOKEN
 GOLDEN = json.loads(golden_stream.FIXTURE.read_bytes())
 EVENTS_BY_NAME = {event.event: event for event in s.STREAM_EVENTS}
 # keep-ui pins the same blob (sse-parser.test.ts) once it has copied this fixture.
-FIXTURE_BLOB = "c7bf141038ca974362989a11d71903474adc32a5"
+FIXTURE_BLOB = "edda1b8ff905312c5e522fc7c57e9f58b274220f"
 
 
 def parse_sse(raw: str):
@@ -272,8 +272,15 @@ def test_golden_errors_match_the_error_table():
             continue
         assert error["body"]["errors"][0]["code"] == code
         assert error["status"] == ERRORS[code].status
-        if code.startswith("draft_") and code != "draft_not_found":
+        if code in golden_stream.ERRORS_WITH_DRAFT:
             DraftView.parse_obj(error["body"]["draft"])
+        else:
+            assert "draft" not in error["body"], code
+    assert set(golden_stream.ERRORS_WITH_DRAFT) == {
+        "draft_not_pending",
+        "draft_expired",
+        "draft_applying",
+    }
     service_only = {"not_found", "method_not_allowed", "http_error", "not_ready"}
     assert set(ERRORS) - service_only == set(GOLDEN["errors"]) - {"validation"}
 

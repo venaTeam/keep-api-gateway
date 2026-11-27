@@ -3807,6 +3807,20 @@
         }
       }
     },
+    "draft_unsupported": {
+      "status": 409,
+      "headers": {},
+      "body": {
+        "errors": [
+          {
+            "field": null,
+            "code": "draft_unsupported",
+            "message": "This draft cannot be applied by this version of Keep."
+          }
+        ],
+        "detail": "This draft cannot be applied by this version of Keep."
+      }
+    },
     "payload_too_large": {
       "status": 413,
       "headers": {},

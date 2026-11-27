@@ -1,4 +1,5 @@
 """Drafts nobody comes back to."""
+import json
 import logging
 import threading
 
@@ -294,6 +295,20 @@ UNREADABLE = {
             code="outcome_pending", gateway_result="conflict"
         )
     },
+    # Known otherwise: of an object this version cannot read, it could claim that
+    # nothing was made.
+    "object_type": {
+        "outcome": stored_by_a_newer_version(
+            code="outcome_pending",
+            gateway_result="unknown",
+            object={"type": "silence", "id": "a-silence-id"},
+        )
+    },
+    "object": {
+        "outcome": stored_by_a_newer_version(
+            code="outcome_pending", gateway_result="unknown", object={"type": "preset"}
+        )
+    },
 }
 
 
@@ -321,7 +336,7 @@ def test_what_this_version_cannot_read_is_closed_generically(
     for count in ("applied", "failed", "unconfirmed", "skipped", "not_found"):
         assert stored[f"{count}_count"] == 0
     if "outcome" in unreadable:
-        assert stored["object"] == {"type": "preset", "id": "a-preset-id"}
+        assert stored["object"] == unreadable["outcome"]["object"]
         assert stored["confirm_state"]["step"] == 1
     [event] = messages(db, conversation)
     assert event["content"].startswith(f"draft {draft} ({kind}")
@@ -349,6 +364,32 @@ def test_bad_rows_never_keep_a_good_one(db, conversation):
     assert {state(db, d) for d in bad} == {"failed"}
     assert state(db, good) == "failed"
     assert read(db, Draft, good)["outcome"]["unconfirmed_count"] == 2
+    # What was stored stays.
+    for draft in bad:
+        stored = read(db, Draft, draft)["outcome"]
+        assert stored["code"] == "outcome_unknown"
+        if "object" in stored:
+            assert stored["confirm_state"]["step"] == 1
+
+
+def test_the_kinds_own_keys_stay(db, conversation):
+    """A close by the kind merges too: `confirm_state`, and keys of a newer version."""
+    payload = ChangeAlertStatusPayload.parse_obj(draft_payload("fp-1", "fp-2"))
+    _, outcome = alert_set.pending(payload, {}, "unknown")
+    kept = {
+        "confirm_state": {"sent_at": "2026-11-26T09:59:59+00:00", "step": 0},
+        "key_of_a_newer_version": [1, 2],
+    }
+    draft = applying(
+        db,
+        conversation,
+        since=ago(hours=25),
+        outcome={**json.loads(outcome.json()), **kept},
+    )
+    run()
+    stored = read(db, Draft, draft)["outcome"]
+    assert (stored["code"], stored["unconfirmed_count"]) == ("outcome_unknown", 2)
+    assert {key: stored[key] for key in kept} == kept
 
 
 def test_several_tenants_at_once(db, conversation):
