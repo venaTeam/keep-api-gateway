@@ -12,6 +12,7 @@ from src.services.assistant.bl.conversations_bl import (
     end_turn,
     start_turn,
 )
+from src.services.assistant.tools.base import MAX_TOOL_RESULT_CHARS, encode_result
 from tests.assistant.conftest import OTHER_TENANT
 from tests.assistant.fakes import identity
 from tests.assistant.rows import add_message
@@ -287,6 +288,143 @@ def test_tool_arguments_count_as_characters(clean_db, set_env):
     )
     end_turn(first)
     assert history.load(start_turn(ME, first.conversation_id, "two")) == []
+
+
+def a_large_read(number: int) -> str:
+    """A tool's reply as long as it gets: just under MAX_TOOL_RESULT_CHARS."""
+    alerts = [{"fingerprint": f"fp-{number}-{i}", "name": "n" * 800} for i in range(9)]
+    result = encode_result({"status": "found", "count": 500, "alerts": alerts})
+    assert 7000 < len(result) <= MAX_TOOL_RESULT_CHARS
+    return result
+
+
+def test_a_turn_of_large_reads_keeps_the_previous_question(clean_db):
+    """8 rounds of the longest replies are more than the history holds: replayed in
+    full, they would push the question they answered out of it."""
+    first = start_turn(ME, None, "which alerts fire?")
+    for number in range(8):
+        say(
+            first,
+            message("assistant", "", tool_calls=[call(f"c{number}", "search")]),
+            message("tool", a_large_read(number), tool_call_id=f"c{number}"),
+        )
+    say(first, message("assistant", "These fire."))
+    end_turn(first)
+    loaded = history.load(start_turn(ME, first.conversation_id, "and now?"))
+    assert loaded[0] == {"role": "user", "content": "which alerts fire?"}
+    assert loaded[-1] == {"role": "assistant", "content": "These fire."}
+    replies = [m for m in loaded if m["role"] == "tool"]
+    assert [r["tool_call_id"] for r in replies] == [f"c{n}" for n in range(8)]
+    for reply in replies:
+        content = reply["content"]
+        assert content.startswith("<untrusted_data>\n")
+        assert content.endswith("\n</untrusted_data>")
+        replayed = content[len("<untrusted_data>\n") : -len("\n</untrusted_data>")]
+        assert len(replayed) <= history.MAX_REPLAYED_RESULT_CHARS
+        digest = json.loads(replayed)
+        assert digest["truncated"] is True
+        assert (digest["status"], digest["count"]) == ("found", 500)
+
+
+def test_a_short_earlier_reply_is_replayed_as_it_was(clean_db):
+    first = start_turn(ME, None, "one")
+    error = '{"status":"error","code":"not_found"}'
+    say(
+        first,
+        message("assistant", "", tool_calls=[call()]),
+        message("tool", error, tool_call_id="c1"),
+    )
+    end_turn(first)
+    loaded = history.load(start_turn(ME, first.conversation_id, "two"))
+    assert loaded[-1] == sent_reply("c1", error)
+
+
+# --- digests -------------------------------------------------------------------
+
+LIMIT = history.MAX_REPLAYED_RESULT_CHARS
+
+
+def as_json(value) -> str:
+    return json.dumps(value, separators=(",", ":"))
+
+
+@pytest.mark.parametrize("length", [0, 2, LIMIT - 1, LIMIT])
+def test_a_reply_within_the_limit_is_unchanged(length):
+    reply = "x" * length
+    assert history.digest(reply) == reply
+
+
+def test_a_long_list_keeps_its_first_items():
+    alerts = [{"fingerprint": f"fp-{i}", "status": "firing"} for i in range(100)]
+    reply = as_json({"status": "found", "count": 100, "alerts": alerts})
+    digest = json.loads(history.digest(reply))
+    assert digest == {
+        "status": "found",
+        "count": 100,
+        "alerts": alerts[:5],
+        "truncated": True,
+    }
+
+
+def test_long_texts_are_clipped():
+    reply = as_json({"status": "found", "alerts": [{"name": "n" * 5000}]})
+    digest = json.loads(history.digest(reply))
+    name = digest["alerts"][0]["name"]
+    assert len(name) == 80 and name.endswith("…") and name.startswith("n" * 79)
+    assert digest["truncated"] is True
+
+
+def test_when_the_items_do_not_fit_only_the_plain_fields_stay():
+    many = {f"field_{i}": {"value": "v" * 70} for i in range(40)}
+    reply = as_json({"status": "found", "count": 3, **many})
+    assert json.loads(history.digest(reply)) == {
+        "status": "found",
+        "count": 3,
+        "truncated": True,
+    }
+
+
+def test_when_the_plain_fields_do_not_fit_only_the_status_stays():
+    many = {f"field_{i}": "v" * 70 for i in range(40)}
+    reply = as_json({"status": "error", "code": "query_failed", **many})
+    assert json.loads(history.digest(reply)) == {
+        "status": "error",
+        "code": "query_failed",
+        "truncated": True,
+    }
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "x" * 2000,
+        as_json(["x" * 2000]),
+        as_json("x" * 2000),
+        '{"status": "found", "alerts": [' + "1," * 1000,
+        "[" * 5000 + "]" * 5000,
+        as_json({"k" * 2000: 1}),
+    ],
+    ids=["text", "a list", "a string", "cut short", "deep", "a long key"],
+)
+def test_anything_else_keeps_only_the_mark(reply):
+    assert history.digest(reply) == '{"truncated":true}'
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        {"status": "found", "count": 500, "alerts": [{"name": "é" * 100}] * 9},
+        {"status": "found", "fields": ["f" * 300] * 25},
+        {"status": "found", "alert": {"labels": {f"l{i}": "x" * 90 for i in range(80)}}},
+        {"status": "error", "code": "x" * 7000},
+    ],
+    ids=["non-ascii", "fields", "one alert", "a long code"],
+)
+def test_every_digest_is_json_within_the_limit(result):
+    reply = encode_result(result)
+    digest = history.digest(reply)
+    assert len(digest) <= LIMIT
+    assert json.loads(digest)["truncated"] is True
 
 
 def test_other_conversations_and_owners_are_never_read(turn, clean_db):

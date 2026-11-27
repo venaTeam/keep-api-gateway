@@ -3,10 +3,14 @@
 A turn can end anywhere (disconnect, timeout, a worker that is killed), so the rows may
 hold tool calls without an answer and answers without a call. Both are refused by the
 LLM and would make the conversation unusable for good: they are left out here.
+
+The tool replies of earlier turns come back as digests: in full, a turn of large reads
+would push the question they answered out of the history. The turn that made them sees
+them in full (chat_turn appends them itself).
 """
 import json
-from collections.abc import Sequence
-from typing import Any
+from collections.abc import Iterator, Sequence
+from typing import Any, NamedTuple
 
 import sqlalchemy as sa
 
@@ -23,6 +27,22 @@ _COLUMNS = (
     Message.tool_calls,
     Message.tool_call_id,
 )
+
+MAX_REPLAYED_RESULT_CHARS = 1000
+"""An earlier turn's tool reply is replayed in at most this many characters."""
+_DIGEST_ITEMS = (5, 2, 1, 0)
+_DIGEST_TEXT_CHARS = 80
+_DIGEST_SUMMARY_KEYS = ("status", "code", "count")
+_TRUNCATED = '{"truncated":true}'
+
+
+class _Row(NamedTuple):
+    """A message row as `_COLUMNS` reads it."""
+
+    role: str
+    content: str | None
+    tool_calls: Any
+    tool_call_id: str | None
 
 
 def load(turn: TurnRef) -> list[dict[str, Any]]:
@@ -46,7 +66,61 @@ def load(turn: TurnRef) -> list[dict[str, Any]]:
             .order_by(Message.seq.desc())
             .limit(settings.history_max_messages)
         ).all()
-    return to_llm_messages(_newest(rows, settings.history_max_chars))
+    replayed = [_replayed(_Row(*row)) for row in rows]
+    return to_llm_messages(_newest(replayed, settings.history_max_chars))
+
+
+def _replayed(row: _Row) -> _Row:
+    """Every row here is from an earlier turn: its tool reply becomes a digest, and is
+    counted as one."""
+    if row.role != "tool" or row.content is None:
+        return row
+    return row._replace(content=digest(row.content))
+
+
+def digest(result: str) -> str:
+    """A tool reply in at most MAX_REPLAYED_RESULT_CHARS, as JSON marked truncated when
+    it was cut: its lists get fewer items and its texts are clipped, then only its plain
+    fields stay, then only its status. The reply is our own JSON; anything else that is
+    too long keeps only the mark."""
+    if len(result) <= MAX_REPLAYED_RESULT_CHARS:
+        return result
+    try:
+        parsed = json.loads(result)
+        if isinstance(parsed, dict):
+            for candidate in _shorter(parsed):
+                encoded = json.dumps(
+                    {**candidate, "truncated": True}, separators=(",", ":")
+                )
+                if len(encoded) <= MAX_REPLAYED_RESULT_CHARS:
+                    return encoded
+    except (ValueError, RecursionError):
+        pass
+    return _TRUNCATED
+
+
+def _shorter(result: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    for items in _DIGEST_ITEMS:
+        yield _clipped(result, items)
+    plain = {k: _clipped(v, 0) for k, v in result.items() if _is_plain(v)}
+    yield plain
+    yield {k: v for k, v in plain.items() if k in _DIGEST_SUMMARY_KEYS}
+
+
+def _clipped(value: Any, items: int) -> Any:
+    if isinstance(value, str):
+        if len(value) <= _DIGEST_TEXT_CHARS:
+            return value
+        return value[: _DIGEST_TEXT_CHARS - 1] + "…"
+    if isinstance(value, list):
+        return [_clipped(v, items) for v in value[:items]]
+    if isinstance(value, dict):
+        return {k: _clipped(v, items) for k, v in value.items()}
+    return value
+
+
+def _is_plain(value: Any) -> bool:
+    return value is None or isinstance(value, (str, int, float, bool))
 
 
 def _newest(rows: Sequence[Any], max_chars: int) -> list[Any]:
