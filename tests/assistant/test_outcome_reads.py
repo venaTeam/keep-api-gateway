@@ -5,6 +5,7 @@ version does not know, plus keys it has never heard of. The conversation still l
 """
 import ast
 import json
+import uuid
 from pathlib import Path
 
 import pydantic
@@ -148,6 +149,36 @@ async def test_an_object_type_this_version_does_not_know(app, db, conversation):
         outcomes.UNREADABLE_OUTCOME,
     )
     assert read(db, Draft, draft)["outcome"]["object"] == stored_object
+
+
+@pytest.mark.asyncio
+async def test_no_link_for_an_object_type_this_version_does_not_know(
+    app, db, conversation
+):
+    """Where such a page is, if anywhere, only the newer version knows: the view has
+    no path, and the stored row keeps it."""
+    incident = str(uuid.uuid4())
+    stored_object = {
+        "type": "incident",
+        "id": incident,
+        "name": "x",
+        "path": f"/incidents/{incident}",
+    }
+    draft = with_draft(
+        db, conversation, state="applied", outcome=stored(object=stored_object)
+    )
+    outcome = (await shown(app, conversation))["outcome"]
+    assert outcome["message"] == outcomes.UNREADABLE_OUTCOME
+    assert outcome["object"] == {**stored_object, "path": None}
+    assert read(db, Draft, draft)["outcome"]["object"] == stored_object
+
+
+def test_an_object_type_this_version_knows_keeps_its_link():
+    preset = str(uuid.uuid4())
+    saved = {"type": "preset", "id": preset, "name": "x", "path": f"/alerts/{preset}"}
+    outcome = outcomes.readable(stored(object=saved))
+    assert outcome.object.path == saved["path"]
+    assert outcome.message == "The stored text."
 
 
 @pytest.mark.asyncio

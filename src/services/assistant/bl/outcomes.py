@@ -33,12 +33,17 @@ _OPENED_IN_FORM = "Opened in the form, to finish there."
 def readable(stored: Mapping) -> StoredOutcome:
     """A stored outcome as the card shows it. Unknown keys are dropped; an unknown
     value, an object's type among them, keeps its place, and the text becomes one that
-    claims nothing. An object without the shape of one is left out, with the same
-    text."""
+    claims nothing. An object of a type this version does not know has no link: where
+    its page is, if anywhere, only the newer version knows. An object without the
+    shape of one is left out, with the same text. The stored row stays as it is."""
     object_parsed = _object_parsed(stored.get("object"))
     if not object_parsed:
         stored = {key: value for key, value in stored.items() if key != "object"}
     outcome = StoredOutcome.parse_obj(stored)
+    saved = outcome.object
+    type_known = saved is None or saved.type in get_args(ObjectType)
+    if not type_known:
+        outcome = outcome.copy(update={"object": saved.copy(update={"path": None})})
     known = (
         object_parsed
         and outcome.code in get_args(OutcomeCode)
@@ -47,7 +52,7 @@ def readable(stored: Mapping) -> StoredOutcome:
             or outcome.gateway_result in get_args(GatewayResult)
         )
         and all(item.result in get_args(AlertResult) for item in outcome.results)
-        and (outcome.object is None or outcome.object.type in get_args(ObjectType))
+        and type_known
     )
     return outcome if known else outcome.copy(update={"message": UNREADABLE_OUTCOME})
 
