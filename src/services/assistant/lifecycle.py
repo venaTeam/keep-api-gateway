@@ -74,6 +74,7 @@ def _start_series() -> None:
         if KINDS[kind].can_open_in_form:
             metrics.drafts_total.labels(kind=kind, event="opened_in_form")
     metrics.internal_errors_total.labels(site="sweep_close")
+    metrics.internal_errors_total.labels(site="confirm_after_write")
     for endpoint in WRITE_ENDPOINTS:
         for status_class in metrics.STATUS_CLASSES:
             metrics.gateway_requests_total.labels(

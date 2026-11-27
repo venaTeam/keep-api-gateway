@@ -12,7 +12,8 @@ write after it and tell the result (`seconds_needed`).
 Before each write a checkpoint stores Confirm's `confirm_state` (kinds/base.py) and,
 after the first, what the writes before it made: then the drain and time checks, then
 the send, with no await between them. A checkpoint that finds the draft settled
-already sends nothing more.
+already sends nothing more. A failure after a write stores what it may have made
+(`_keep_what_was_sent`) and leaves the draft applying, for whoever finishes it.
 """
 import asyncio
 import logging
@@ -188,6 +189,11 @@ class _Attempt:
         # How long the next look may take: READ_SECONDS, or what the last write sent
         # asked for the look after it.
         self._read_limit = READ_SECONDS
+        # For a failure after a write: the plan, the writes that came back, and the
+        # last `confirm_state` stored.
+        self._plan: Optional[ConfirmPlan] = None
+        self._came_back: list[Sent] = []
+        self._confirm_state: dict[str, Any] = {}
 
     @property
     def _sent(self) -> bool:
@@ -197,13 +203,30 @@ class _Attempt:
     async def run(self) -> DraftView:
         try:
             decision = await self._decide()
-        except BaseException:
+            if decision is None:
+                # Settled by somebody else before anything was sent.
+                return await run_db(drafts_bl.load, self._key)
+            draft = await self._store(decision)
+        except AssistantError:
             if not self._sent:
                 await self._revert()
             raise
-        if decision is None:
-            # Settled by somebody else before anything was sent.
-            return await run_db(drafts_bl.load, self._key)
+        except Exception as exc:
+            if not self._sent:
+                await self._revert()
+                raise
+            log_failure("confirm_after_write", "assistant: confirm failed", exc)
+            await self._keep_what_was_sent()
+            raise AssistantError("internal") from None
+        except BaseException:
+            # Cancelled: after a write, the last checkpoint stays.
+            if not self._sent:
+                await self._revert()
+            raise
+        self._report(draft, decision)
+        return draft
+
+    async def _store(self, decision: Decision) -> DraftView:
         state, outcome = decision
         if state == "applying":
             draft = await run_db(drafts_bl.keep_applying, self._key, outcome)
@@ -219,8 +242,41 @@ class _Attempt:
         if draft is None:
             # A look at the conversation has settled it meanwhile.
             draft = await run_db(drafts_bl.load, self._key)
-        self._report(draft, decision)
         return draft
+
+    async def _keep_what_was_sent(self) -> None:
+        """After a failure past a sent write: what the writes may have made, for
+        whoever finishes the draft, which stays applying. The plan's `pending` outcome,
+        else its `stopped` one, else one that claims nothing; each with the object ids
+        of every write that came back. Only the last one when the last write sent never
+        came back: the plan's would describe the write before it. Never raises."""
+        came_back = list(self._came_back)
+        confirm_state = {
+            # The last write that may have been sent, and since when.
+            **self._confirm_state,
+            "object_ids": [s.answer.object_id for s in came_back],
+        }
+        candidates: list[Callable[[], DraftOutcome]] = []
+        plan = self._plan
+        if plan is not None and came_back and len(came_back) == self._writes_sent:
+            candidates += [
+                lambda: plan.pending(came_back),
+                lambda: plan.stopped(came_back)[1],
+            ]
+        candidates.append(outcomes.pending_after_a_failure)
+        failure: Optional[Exception] = None
+        for outcome_of in candidates:
+            try:
+                await run_db(
+                    drafts_bl.checkpoint, self._key, confirm_state, outcome_of()
+                )
+                return
+            except Exception as exc:
+                failure = exc
+        if failure is not None:
+            log_failure(
+                "confirm_after_write", "assistant: what a write left was not kept", failure
+            )
 
     async def _decide(self) -> Optional[Decision]:
         """What to store. None: the draft was settled meanwhile, and nothing was sent."""
@@ -237,8 +293,9 @@ class _Attempt:
         )
         # Raises for a row the client does not have: before anything is read or sent.
         self._timeouts = tuple(write_timeout(row) for row in plan.rows)
+        self._plan = plan
         step = await self._first(plan)
-        sent: list[Sent] = []
+        sent = self._came_back
         while isinstance(step, WriteRequest):
             k = len(sent)
             self._check(plan, k, step)
@@ -274,7 +331,10 @@ class _Attempt:
             "sent_at": datetime.now(timezone.utc).isoformat(),
             "object_ids": [s.answer.object_id for s in sent],
         }
-        return await run_db(drafts_bl.checkpoint, self._key, confirm_state, outcome)
+        stored = await run_db(drafts_bl.checkpoint, self._key, confirm_state, outcome)
+        if stored:
+            self._confirm_state = confirm_state
+        return stored
 
     @staticmethod
     def _check(plan: ConfirmPlan, k: int, step: WriteRequest) -> None:

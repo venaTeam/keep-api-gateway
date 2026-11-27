@@ -21,6 +21,7 @@ from tests.assistant.logs import rendered
 from tests.assistant.rows import (
     add_conversation,
     add_draft,
+    add_message,
     ago,
     change,
     draft_payload,
@@ -29,6 +30,7 @@ from tests.assistant.rows import (
     skipped_alert,
 )
 from tests.assistant.running import (
+    Exchange,
     Keep,
     equip,
     post_confirm,
@@ -812,16 +814,20 @@ async def test_the_model_learns_the_outcome_without_the_alerts(
 async def test_all_or_nothing_of_the_result_is_stored(
     app, db, keep, conversation, draft, monkeypatch
 ):
-    """The event row cannot be stored: then the draft does not have its result."""
+    """The event row cannot be stored: then the draft does not have its result, only
+    what is known while it stays applying."""
     monkeypatch.setattr(outcomes, "event_text", lambda *args: "\x00")
     before = read(db, Conversation, conversation)
     exchange = await post_confirm(app, draft).finish()
     assert (exchange.status, exchange.code) == (500, "internal")
     row = read(db, Draft, draft)
     assert row["state"] == "applying"
-    # Only Confirm's own record of the write it sent.
-    assert row["outcome"].keys() == {"confirm_state"}
-    assert row["outcome"]["confirm_state"]["step"] == 0
+    assert (row["outcome"]["code"], row["outcome"]["unconfirmed_count"]) == (
+        "outcome_pending",
+        2,
+    )
+    state = row["outcome"]["confirm_state"]
+    assert (state["step"], state["object_ids"]) == (0, [None])
     assert read(db, Conversation, conversation) == before
     assert messages(db, conversation) == []
 
@@ -1007,6 +1013,43 @@ async def test_a_bug_after_the_write_does_not(
     assert len(keep.writes) == 1
     again = await post_confirm(app, draft).finish()
     assert (again.status, again.code) == (409, "draft_applying")
+
+
+@pytest.mark.asyncio
+async def test_a_bug_after_the_write_keeps_what_it_left(
+    app, db, keep, conversation, draft, monkeypatch, caplog
+):
+    """Stored while the draft stays applying, and a look finishes it."""
+
+    def fail(*args):
+        raise RuntimeError(CANARY)
+
+    errors = counter(metrics.internal_errors_total, site="confirm_after_write")
+    with monkeypatch.context() as patch:
+        patch.setattr(alert_set, "verified", fail)
+        with caplog.at_level(logging.DEBUG):
+            exchange = await post_confirm(app, draft).finish()
+    assert (exchange.status, exchange.code) == (500, "internal")
+    assert CANARY not in exchange.text
+    assert not [r for r in caplog.records if CANARY in rendered(r)]
+    assert counter(
+        metrics.internal_errors_total, site="confirm_after_write"
+    ) == errors + 1
+    row = read(db, Draft, draft)
+    assert row["state"] == "applying"
+    assert (row["outcome"]["code"], row["outcome"]["gateway_result"]) == (
+        "outcome_pending",
+        "ok",
+    )
+    assert row["outcome"]["unconfirmed_count"] == 2
+    assert row["outcome"]["confirm_state"]["object_ids"] == [None]
+    add_message(db, conversation, "tool", tool_call_id="1", draft_id=draft)
+    change(db, Draft, draft, updated_at=ago(seconds=31))
+    viewed = await Exchange(
+        app, "GET", f"/assistant/conversations/{conversation}"
+    ).finish()
+    [shown] = [i["draft"] for i in viewed.json()["items"] if i["type"] == "draft"]
+    assert (shown["state"], shown["outcome"]["code"]) == ("applied", "applied")
 
 
 @pytest.mark.asyncio

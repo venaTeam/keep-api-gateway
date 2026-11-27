@@ -188,7 +188,7 @@ thresholds are starting points.
 | `keep_assistant_retention_last_success_unixtime` | |
 | `keep_assistant_retention_failures_total` | |
 | `keep_assistant_retention_lock_skipped_total` | normal with several workers |
-| `keep_assistant_internal_errors_total` | by `site`, every failure without a metric of its own |
+| `keep_assistant_internal_errors_total` | by `site`, every failure without a metric of its own. `confirm_after_write`: Confirm failed after a write was sent; the draft stays applying with what the write left, and a look at the conversation finishes it |
 
 With the switch off none of them exist.
 

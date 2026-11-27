@@ -92,6 +92,7 @@ def test_rare_series_exist_from_the_start():
     assert WRITE_ENDPOINTS == tuple(WRITE_ROUTES)
     expected = [
         'internal_errors_total{site="sweep_close"}',
+        'internal_errors_total{site="confirm_after_write"}',
         *(f'confirm_budget_refusals_total{{kind="{kind}",step="0"}}' for kind in KINDS),
         *(
             f'draft_outcomes_total{{kind="{kind}",outcome="{outcome}"}}'

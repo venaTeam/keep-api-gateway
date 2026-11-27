@@ -26,6 +26,7 @@ UNREADABLE_OUTCOME = (
     "This version of Keep Assistant cannot show the result of this change."
 )
 _OUTCOME_UNKNOWN = "The result of this change could not be determined."
+_OUTCOME_PENDING = "Keep is still applying this change."
 _OPENED_IN_FORM = "Opened in the form, to finish there."
 
 
@@ -82,6 +83,24 @@ def unreadable_for_good() -> Decision:
         not_found_count=0,
         results=[],
         finished_at=datetime.now(timezone.utc),
+    )
+
+
+def pending_after_a_failure() -> DraftOutcome:
+    """Of a draft whose Confirm failed after a write, when its kind could not say
+    what is known: nothing is claimed, and whoever finishes the draft looks."""
+    return DraftOutcome(
+        code="outcome_pending",
+        message=_OUTCOME_PENDING,
+        gateway_result="unknown",
+        applied_count=0,
+        failed_count=0,
+        unconfirmed_count=0,
+        skipped_count=0,
+        not_found_count=0,
+        results=[],
+        finished_at=None,
+        object=None,
     )
 
 

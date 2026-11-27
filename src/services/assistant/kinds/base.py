@@ -31,10 +31,13 @@ READ_AFTER_SECONDS = 4.0
 
 # `confirm_state`: Confirm's own record in the draft's stored outcome, given to
 # `reconcile` and `close_unknown` (None when there is none). Confirm stores it at the
-# checkpoint before each write, and it stays until the draft is settled:
+# checkpoint before each write, and again when it fails after one; it stays until the
+# draft is settled:
 #   "step": the write (from 0) that may have been sent last;
 #   "sent_at": ISO 8601 in UTC: that write was not sent before this moment;
-#   "object_ids": per write answered before it, the id of what it made, or None.
+#   "object_ids": per write that came back when it was stored, in order, the id of
+#     what it made, or None (none, or not known). Before write k it has k of them;
+#     after a failure, k + 1 when write k came back.
 # Server-made values only, never a model's or a user's text; never shown to anyone.
 MAX_CONFIRM_STATE_BYTES = 4096
 
