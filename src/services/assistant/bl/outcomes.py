@@ -12,11 +12,12 @@ from src.services.assistant.kinds.base import Decision
 from src.services.assistant.kinds.registry import kind_of
 from src.services.assistant.models.api.draft import (
     AlertResult,
-    DraftObject,
     DraftOutcome,
     DraftView,
     GatewayResult,
+    ObjectType,
     OutcomeCode,
+    StoredObject,
     StoredOutcome,
 )
 
@@ -29,29 +30,38 @@ _OUTCOME_UNKNOWN = "The result of this change could not be determined."
 
 def readable(stored: Mapping) -> StoredOutcome:
     """A stored outcome as the card shows it. Unknown keys are dropped; an unknown
-    value keeps its place, and the text becomes one that claims nothing. An object
-    this version cannot read is left out, with the same text."""
-    object_known = _object_readable(stored.get("object"))
-    if not object_known:
+    value, an object's type among them, keeps its place, and the text becomes one that
+    claims nothing. An object without the shape of one is left out, with the same
+    text."""
+    object_parsed = _object_parsed(stored.get("object"))
+    if not object_parsed:
         stored = {key: value for key, value in stored.items() if key != "object"}
     outcome = StoredOutcome.parse_obj(stored)
     known = (
-        object_known
+        object_parsed
         and outcome.code in get_args(OutcomeCode)
         and (
             outcome.gateway_result is None
             or outcome.gateway_result in get_args(GatewayResult)
         )
         and all(item.result in get_args(AlertResult) for item in outcome.results)
+        and (outcome.object is None or outcome.object.type in get_args(ObjectType))
     )
     return outcome if known else outcome.copy(update={"message": UNREADABLE_OUTCOME})
 
 
-def _object_readable(stored: object) -> bool:
+def fully_readable(outcome: StoredOutcome) -> bool:
+    """Whether `readable` knew every value of it and left nothing out. Only these are
+    acted on (reconcile, the sweep): of another, what the newer version did is not
+    known. No outcome is stored with the text `readable` gives the others."""
+    return outcome.message != UNREADABLE_OUTCOME
+
+
+def _object_parsed(stored: object) -> bool:
     if stored is None:
         return True
     try:
-        DraftObject.parse_obj(stored)
+        StoredObject.parse_obj(stored)
     except ValueError:  # pydantic's ValidationError is a ValueError
         return False
     return True

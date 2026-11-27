@@ -27,6 +27,9 @@ from src.services.assistant.models.api.draft import (
     DraftView,
     FingerprintSelector,
     SkippedAlert,
+    StoredAlertOutcome,
+    StoredObject,
+    StoredOutcome,
 )
 
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "assistant_stream.json"
@@ -416,6 +419,136 @@ def outcomes() -> dict[str, DraftOutcome]:
     }
 
 
+# What a newer version may send that this one has no name for. A client reads them
+# without knowing them: it drops an item it cannot show, and shows a generic text for a
+# value it does not know.
+NEWER = {
+    "event": "event_of_a_newer_version",
+    "item_type": "item_of_a_newer_version",
+    "kind": "kind_of_a_newer_version",
+    "outcome_code": "code_of_a_newer_version",
+    "object_type": "object_of_a_newer_version",
+    "tool_outcome": "tool_outcome_of_a_newer_version",
+    "gateway_result": "result_of_a_newer_version",
+    "alert_result": "alert_result_of_a_newer_version",
+}
+
+
+def _newer_draft(number: int, state: str, outcome=None) -> DraftView:
+    final = state not in ("pending", "applying")
+    return DraftView(
+        id=uid(number),
+        conversation_id=CONVERSATION,
+        kind=NEWER["kind"],
+        state=state,
+        permitted=True,
+        created_at=CREATED,
+        expires_at=EXPIRES,
+        resolved_at=RESOLVED if final else None,
+        # Of a kind this version does not know, nothing in it is understood.
+        payload={"version": 3, "title": "Quiet hours", "starts": "22:00"},
+        outcome=outcome,
+    )
+
+
+def _newer_outcome() -> StoredOutcome:
+    """Every value a newer version may have stored that this one does not know."""
+    return StoredOutcome(
+        code=NEWER["outcome_code"],
+        message="The quiet hours were saved.",
+        gateway_result=NEWER["gateway_result"],
+        applied_count=1,
+        failed_count=0,
+        unconfirmed_count=0,
+        skipped_count=0,
+        not_found_count=0,
+        results=[
+            StoredAlertOutcome(
+                fingerprint=ALERTS[0].fingerprint,
+                name=ALERTS[0].name,
+                result=NEWER["alert_result"],
+                status_after="firing",
+            )
+        ],
+        finished_at=RESOLVED,
+        object=StoredObject(
+            type=NEWER["object_type"], id=uid(43), name="Quiet hours", path=None
+        ),
+    )
+
+
+def _frame(event: str, data: dict) -> dict:
+    return {"event": event, "data": data}
+
+
+def _raw(events: list[dict]) -> str:
+    """Framed as StreamEvent.encode frames the events this version has."""
+    return "".join(
+        f"event: {e['event']}\ndata: {json.dumps(e['data'])}\n\n" for e in events
+    )
+
+
+def future() -> dict:
+    """What a client must still read, from a newer version of this API: one of each
+    kind of value it cannot know."""
+    pending = _newer_draft(50, "pending")
+    applied = _newer_draft(51, "applied", _newer_outcome())
+    tool = {"tool": "save_quiet_hours", "label": "Preparing quiet hours"}
+    events = [
+        _frame("conversation", _conversation_event().data()),
+        _frame(NEWER["event"], {"id": uid(52), "text": "Something new."}),
+        _frame("tool_status", _tool("call_1", "started", **tool).data()),
+        _frame("draft", s.DraftEvent(draft=pending).data()),
+        _frame(
+            "tool_status",
+            {
+                **_tool("call_1", "finished", **tool).data(),
+                "outcome": NEWER["tool_outcome"],
+            },
+        ),
+        _frame("text_delta", _text(4, "I drafted quiet hours.").data()),
+        _frame("done", _done("stop", 4).data()),
+    ]
+    conversation = json.loads(
+        ConversationView(
+            id=CONVERSATION,
+            title="quiet hours at night",
+            created_at=CREATED,
+            updated_at=RESOLVED,
+            turn_in_progress=False,
+            has_more=False,
+            items=[
+                TimelineMessage(
+                    id=uid(2),
+                    role="user",
+                    content="quiet hours at night",
+                    status="complete",
+                    created_at=CREATED,
+                ),
+                TimelineDraft(draft=applied),
+            ],
+        ).json()
+    )
+    conversation["items"].insert(
+        1,
+        {
+            "type": NEWER["item_type"],
+            "id": uid(53),
+            "created_at": CREATED.isoformat(),
+            "text": "Something new.",
+        },
+    )
+    return {
+        "values": NEWER,
+        "stream": {"raw": _raw(events), "events": events},
+        "drafts": {
+            "pending": json.loads(pending.json()),
+            "applied": json.loads(applied.json()),
+        },
+        "conversation": conversation,
+    }
+
+
 def _conversation_event():
     return s.ConversationEvent(
         conversation_id=CONVERSATION, user_message_id=uid(2), turn_id=uid(3)
@@ -638,6 +771,7 @@ def build() -> dict:
             name: json.loads(c.json()) for name, c in conversations().items()
         },
         "errors": errors(),
+        "future": future(),
     }
 
 

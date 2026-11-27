@@ -95,15 +95,17 @@ async def _reconcile(
 
 
 def _readable(draft: DraftView) -> DraftKind | None:
-    """None: a kind, a payload or a stored outcome this version cannot read, left by a
-    newer one that may still be applying it. Such a draft is neither claimed nor
-    closed here, and nothing is logged: it is looked at again on every view, and only
-    the 24 h sweep closes it."""
+    """None: a kind, a payload or a stored outcome (its object too) this version cannot
+    read, left by a newer one that may still be applying it. Such a draft is neither
+    claimed nor closed here, and nothing is logged: it is looked at again on every
+    view, and only the 24 h sweep closes it."""
     kind = kind_of(draft.kind)
     if kind is None:
         return None
     try:
         if draft.outcome is not None:
+            if not outcomes.fully_readable(draft.outcome):
+                return None
             DraftOutcome(**draft.outcome.dict())
         kind.payload_model.parse_obj(draft.payload)
     except ValueError:  # pydantic's ValidationError is a ValueError

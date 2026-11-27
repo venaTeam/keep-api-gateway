@@ -443,8 +443,10 @@ async def test_a_kind_this_version_does_not_know(app, db, keep, conversation):
         {"kind": "from_the_future"},
         {"payload": {"kind": CANARY}},
         {"outcome": pending_outcome(gateway_result=CANARY)},
+        {"outcome": {**pending_outcome(), "object": {"type": CANARY, "id": "an-id"}}},
+        {"outcome": {**pending_outcome(), "object": {"type": "preset"}}},
     ],
-    ids=["kind", "payload", "outcome"],
+    ids=["kind", "payload", "outcome", "object_type", "object"],
 )
 async def test_what_this_version_cannot_read_waits_for_the_sweep(
     app, db, keep, conversation, caplog, unreadable

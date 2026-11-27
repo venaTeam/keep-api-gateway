@@ -3923,5 +3923,216 @@
         "detail": "This field is required."
       }
     }
+  },
+  "future": {
+    "values": {
+      "event": "event_of_a_newer_version",
+      "item_type": "item_of_a_newer_version",
+      "kind": "kind_of_a_newer_version",
+      "outcome_code": "code_of_a_newer_version",
+      "object_type": "object_of_a_newer_version",
+      "tool_outcome": "tool_outcome_of_a_newer_version",
+      "gateway_result": "result_of_a_newer_version",
+      "alert_result": "alert_result_of_a_newer_version"
+    },
+    "stream": {
+      "raw": "event: conversation\ndata: {\"conversation_id\": \"00000000-0000-4000-8000-000000000001\", \"user_message_id\": \"00000000-0000-4000-8000-000000000002\", \"turn_id\": \"00000000-0000-4000-8000-000000000003\"}\n\nevent: event_of_a_newer_version\ndata: {\"id\": \"00000000-0000-4000-8000-000000000052\", \"text\": \"Something new.\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_1\", \"tool\": \"save_quiet_hours\", \"phase\": \"started\", \"label\": \"Preparing quiet hours\"}\n\nevent: draft\ndata: {\"draft\": {\"id\": \"00000000-0000-4000-8000-000000000050\", \"conversation_id\": \"00000000-0000-4000-8000-000000000001\", \"kind\": \"kind_of_a_newer_version\", \"state\": \"pending\", \"permitted\": true, \"created_at\": \"2026-11-24T10:00:00+00:00\", \"expires_at\": \"2026-11-24T10:30:00+00:00\", \"resolved_at\": null, \"payload\": {\"version\": 3, \"title\": \"Quiet hours\", \"starts\": \"22:00\"}, \"outcome\": null}}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_1\", \"tool\": \"save_quiet_hours\", \"phase\": \"finished\", \"label\": \"Preparing quiet hours\", \"outcome\": \"tool_outcome_of_a_newer_version\"}\n\nevent: text_delta\ndata: {\"message_id\": \"00000000-0000-4000-8000-000000000004\", \"delta\": \"I drafted quiet hours.\"}\n\nevent: done\ndata: {\"message_id\": \"00000000-0000-4000-8000-000000000004\", \"finish_reason\": \"stop\"}\n\n",
+      "events": [
+        {
+          "event": "conversation",
+          "data": {
+            "conversation_id": "00000000-0000-4000-8000-000000000001",
+            "user_message_id": "00000000-0000-4000-8000-000000000002",
+            "turn_id": "00000000-0000-4000-8000-000000000003"
+          }
+        },
+        {
+          "event": "event_of_a_newer_version",
+          "data": {
+            "id": "00000000-0000-4000-8000-000000000052",
+            "text": "Something new."
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_1",
+            "tool": "save_quiet_hours",
+            "phase": "started",
+            "label": "Preparing quiet hours"
+          }
+        },
+        {
+          "event": "draft",
+          "data": {
+            "draft": {
+              "id": "00000000-0000-4000-8000-000000000050",
+              "conversation_id": "00000000-0000-4000-8000-000000000001",
+              "kind": "kind_of_a_newer_version",
+              "state": "pending",
+              "permitted": true,
+              "created_at": "2026-11-24T10:00:00+00:00",
+              "expires_at": "2026-11-24T10:30:00+00:00",
+              "resolved_at": null,
+              "payload": {
+                "version": 3,
+                "title": "Quiet hours",
+                "starts": "22:00"
+              },
+              "outcome": null
+            }
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_1",
+            "tool": "save_quiet_hours",
+            "phase": "finished",
+            "label": "Preparing quiet hours",
+            "outcome": "tool_outcome_of_a_newer_version"
+          }
+        },
+        {
+          "event": "text_delta",
+          "data": {
+            "message_id": "00000000-0000-4000-8000-000000000004",
+            "delta": "I drafted quiet hours."
+          }
+        },
+        {
+          "event": "done",
+          "data": {
+            "message_id": "00000000-0000-4000-8000-000000000004",
+            "finish_reason": "stop"
+          }
+        }
+      ]
+    },
+    "drafts": {
+      "pending": {
+        "id": "00000000-0000-4000-8000-000000000050",
+        "conversation_id": "00000000-0000-4000-8000-000000000001",
+        "kind": "kind_of_a_newer_version",
+        "state": "pending",
+        "permitted": true,
+        "created_at": "2026-11-24T10:00:00+00:00",
+        "expires_at": "2026-11-24T10:30:00+00:00",
+        "resolved_at": null,
+        "payload": {
+          "version": 3,
+          "title": "Quiet hours",
+          "starts": "22:00"
+        },
+        "outcome": null
+      },
+      "applied": {
+        "id": "00000000-0000-4000-8000-000000000051",
+        "conversation_id": "00000000-0000-4000-8000-000000000001",
+        "kind": "kind_of_a_newer_version",
+        "state": "applied",
+        "permitted": true,
+        "created_at": "2026-11-24T10:00:00+00:00",
+        "expires_at": "2026-11-24T10:30:00+00:00",
+        "resolved_at": "2026-11-24T10:02:00.123456+00:00",
+        "payload": {
+          "version": 3,
+          "title": "Quiet hours",
+          "starts": "22:00"
+        },
+        "outcome": {
+          "code": "code_of_a_newer_version",
+          "message": "The quiet hours were saved.",
+          "gateway_result": "result_of_a_newer_version",
+          "applied_count": 1,
+          "failed_count": 0,
+          "unconfirmed_count": 0,
+          "skipped_count": 0,
+          "not_found_count": 0,
+          "results": [
+            {
+              "fingerprint": "prod-db-01:cpu",
+              "name": "High CPU on prod-db-01",
+              "result": "alert_result_of_a_newer_version",
+              "status_after": "firing"
+            }
+          ],
+          "finished_at": "2026-11-24T10:02:00.123456+00:00",
+          "object": {
+            "type": "object_of_a_newer_version",
+            "id": "00000000-0000-4000-8000-000000000043",
+            "name": "Quiet hours",
+            "path": null
+          }
+        }
+      }
+    },
+    "conversation": {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "title": "quiet hours at night",
+      "created_at": "2026-11-24T10:00:00+00:00",
+      "updated_at": "2026-11-24T10:02:00.123456+00:00",
+      "turn_in_progress": false,
+      "has_more": false,
+      "items": [
+        {
+          "type": "message",
+          "id": "00000000-0000-4000-8000-000000000002",
+          "role": "user",
+          "content": "quiet hours at night",
+          "status": "complete",
+          "created_at": "2026-11-24T10:00:00+00:00"
+        },
+        {
+          "type": "item_of_a_newer_version",
+          "id": "00000000-0000-4000-8000-000000000053",
+          "created_at": "2026-11-24T10:00:00+00:00",
+          "text": "Something new."
+        },
+        {
+          "type": "draft",
+          "draft": {
+            "id": "00000000-0000-4000-8000-000000000051",
+            "conversation_id": "00000000-0000-4000-8000-000000000001",
+            "kind": "kind_of_a_newer_version",
+            "state": "applied",
+            "permitted": true,
+            "created_at": "2026-11-24T10:00:00+00:00",
+            "expires_at": "2026-11-24T10:30:00+00:00",
+            "resolved_at": "2026-11-24T10:02:00.123456+00:00",
+            "payload": {
+              "version": 3,
+              "title": "Quiet hours",
+              "starts": "22:00"
+            },
+            "outcome": {
+              "code": "code_of_a_newer_version",
+              "message": "The quiet hours were saved.",
+              "gateway_result": "result_of_a_newer_version",
+              "applied_count": 1,
+              "failed_count": 0,
+              "unconfirmed_count": 0,
+              "skipped_count": 0,
+              "not_found_count": 0,
+              "results": [
+                {
+                  "fingerprint": "prod-db-01:cpu",
+                  "name": "High CPU on prod-db-01",
+                  "result": "alert_result_of_a_newer_version",
+                  "status_after": "firing"
+                }
+              ],
+              "finished_at": "2026-11-24T10:02:00.123456+00:00",
+              "object": {
+                "type": "object_of_a_newer_version",
+                "id": "00000000-0000-4000-8000-000000000043",
+                "name": "Quiet hours",
+                "path": null
+              }
+            }
+          }
+        }
+      ]
+    }
   }
 }

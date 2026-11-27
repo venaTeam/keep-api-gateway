@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, ValidationError
 
+from src.services.assistant.bl import outcomes
 from src.services.assistant.config import get_settings
 from src.services.assistant.exceptions import ERRORS
 from src.services.assistant.models import api as api_models
@@ -19,14 +20,18 @@ from src.services.assistant.models.api.conversation import (
     TimelineDraft,
     TimelineMessage,
 )
-from src.services.assistant.kinds.registry import KINDS, PAYLOAD_MODELS
+from src.services.assistant.kinds.registry import KINDS, PAYLOAD_MODELS, kind_of
 from src.services.assistant.models.api.draft import (
     AlertOutcome,
+    AlertResult,
     ChangeAlertStatusPayload,
     DraftAlert,
     DraftObject,
     DraftOutcome,
     DraftView,
+    GatewayResult,
+    ObjectType,
+    OutcomeCode,
     SkippedAlert,
 )
 from tests.assistant import golden_stream
@@ -35,7 +40,7 @@ from tests.assistant.fakes import TOKEN
 GOLDEN = json.loads(golden_stream.FIXTURE.read_bytes())
 EVENTS_BY_NAME = {event.event: event for event in s.STREAM_EVENTS}
 # keep-ui pins the same blob (sse-parser.test.ts) once it has copied this fixture.
-FIXTURE_BLOB = "3cf194e981a2c0723cfb57af58877cb70e26906e"
+FIXTURE_BLOB = "c7bf141038ca974362989a11d71903474adc32a5"
 
 
 def parse_sse(raw: str):
@@ -271,6 +276,99 @@ def test_golden_errors_match_the_error_table():
             DraftView.parse_obj(error["body"]["draft"])
     service_only = {"not_found", "method_not_allowed", "http_error", "not_ready"}
     assert set(ERRORS) - service_only == set(GOLDEN["errors"]) - {"validation"}
+
+
+# --- what a newer version may send -------------------------------------------
+
+FUTURE = GOLDEN["future"]
+ITEM_MODELS = {
+    model.__fields__["type"].default: model for model in (TimelineMessage, TimelineDraft)
+}
+
+
+def test_the_future_values_are_unknown_here():
+    """Each stands for a value this version has no name for: one that gets a name moves
+    out of this section."""
+    known = {
+        "event": set(EVENTS_BY_NAME),
+        "item_type": set(ITEM_MODELS),
+        "kind": set(KINDS),
+        "outcome_code": set(get_args(OutcomeCode)),
+        "object_type": set(get_args(ObjectType)),
+        "tool_outcome": set(get_args(s.ToolOutcomeCode)),
+        "gateway_result": set(get_args(GatewayResult)),
+        "alert_result": set(get_args(AlertResult)),
+    }
+    assert set(FUTURE["values"]) == set(known)
+    for name, value in FUTURE["values"].items():
+        assert value not in known[name], name
+
+
+def test_a_newer_stream_parses_generically():
+    """Every frame parses; the events this version has validate, but the one with a
+    tool outcome it does not know, which it could never send."""
+    values = FUTURE["values"]
+    events = FUTURE["stream"]["events"]
+    assert parse_sse(FUTURE["stream"]["raw"]) == events
+    unknown = [e for e in events if e["event"] not in EVENTS_BY_NAME]
+    assert [e["event"] for e in unknown] == [values["event"]]
+    newer = [e for e in events if e["data"].get("outcome") == values["tool_outcome"]]
+    assert [e["event"] for e in newer] == ["tool_status"]
+    for item in events:
+        if item in unknown:
+            continue
+        model = EVENTS_BY_NAME[item["event"]]
+        if item in newer:
+            with pytest.raises(ValidationError):
+                model.parse_obj(item["data"])
+        else:
+            assert model.parse_obj(item["data"]).data() == item["data"]
+    [draft] = [e["data"]["draft"] for e in events if e["event"] == "draft"]
+    assert draft == FUTURE["drafts"]["pending"]
+
+
+def test_a_newer_draft_is_read_leniently():
+    values = FUTURE["values"]
+    for draft in FUTURE["drafts"].values():
+        view = DraftView.parse_obj(draft)
+        assert json.loads(view.json()) == draft
+        assert kind_of(view.kind) is None
+        assert outcomes.discarded_text(view) == (
+            f"draft {view.id} ({values['kind']}): discarded by the user."
+        )
+    stored = FUTURE["drafts"]["applied"]["outcome"]
+    shown = outcomes.readable(stored)
+    assert shown.message == outcomes.UNREADABLE_OUTCOME
+    assert not outcomes.fully_readable(shown)
+    assert (
+        shown.code,
+        shown.gateway_result,
+        shown.object.type,
+        [r.result for r in shown.results],
+    ) == (
+        values["outcome_code"],
+        values["gateway_result"],
+        values["object_type"],
+        [values["alert_result"]],
+    )
+    # Strict on write.
+    with pytest.raises(ValidationError):
+        DraftOutcome.parse_obj(stored)
+
+
+def test_a_newer_conversation_parses_generically():
+    """An item of a type this version does not know is left out; the rest is a
+    conversation of this version."""
+    conversation = FUTURE["conversation"]
+    items = conversation["items"]
+    unknown = [i for i in items if i["type"] not in ITEM_MODELS]
+    assert [i["type"] for i in unknown] == [FUTURE["values"]["item_type"]]
+    known = [i for i in items if i["type"] in ITEM_MODELS]
+    for item in known:
+        assert json.loads(ITEM_MODELS[item["type"]].parse_obj(item).json()) == item
+    ConversationView.parse_obj({**conversation, "items": known})
+    drafts = [i["draft"] for i in known if i["type"] == "draft"]
+    assert drafts == [FUTURE["drafts"]["applied"]]
 
 
 # --- framing -----------------------------------------------------------------

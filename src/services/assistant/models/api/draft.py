@@ -118,16 +118,23 @@ class AlertOutcome(StoredAlertOutcome):
     result: AlertResult
 
 
-class DraftObject(BaseModel):
-    """What the write made or changed. Logged by type and id only: the name is a
-    user's text."""
+class StoredObject(BaseModel):
+    """What the write made or changed, as read back: a newer version may have saved a
+    type this one does not know. Logged by type and id only: the name is a user's
+    text."""
 
-    type: ObjectType
+    type: str
     id: str
     # None when this version could not tell.
     name: Optional[str]
     # The page in keep-ui, for a link; None when there is none to show.
     path: Optional[str]
+
+
+class DraftObject(StoredObject):
+    """What this version writes."""
+
+    type: ObjectType
 
 
 class StoredOutcome(BaseModel):
@@ -147,7 +154,7 @@ class StoredOutcome(BaseModel):
     # None while the outcome is still pending.
     finished_at: Optional[datetime]
     # None for a draft of alerts, and while nothing was made or changed.
-    object: Optional[DraftObject]
+    object: Optional[StoredObject]
 
 
 class DraftOutcome(StoredOutcome):
@@ -156,6 +163,7 @@ class DraftOutcome(StoredOutcome):
     code: OutcomeCode
     gateway_result: Optional[GatewayResult]
     results: List[AlertOutcome]
+    object: Optional[DraftObject]
 
 
 class DraftView(BaseModel):
