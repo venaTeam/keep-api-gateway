@@ -15,7 +15,7 @@ import sqlalchemy as sa
 from src.services.assistant.bl import conversations_bl, drafts_bl
 from src.services.assistant.exceptions import VALIDATION_MESSAGES
 from src.services.assistant.llm.client import Finished, LlmError
-from src.services.assistant.models.db import Draft
+from src.services.assistant.models.db import Draft, Message
 from tests.assistant.fakes import TOKEN, FakeGateway, alert, query_result, whoami
 from tests.assistant.logs import rendered
 from tests.assistant.rows import (
@@ -177,6 +177,44 @@ async def test_a_chat(app, db, records, capfd):
             assert carried == [ANSWER]
         elif name != "draft":
             assert carried == [], name
+
+
+ASSIGNEE = "canary-assignee-0b6e@example.com"
+
+
+@pytest.mark.asyncio
+async def test_an_assignees_email_reaches_neither_the_model_nor_the_card(
+    app, db, records, capfd
+):
+    """Selected, matched by a filter or named by fingerprint: an alert is projected
+    before a prompt, a tool result or a draft sees it."""
+    assigned = telling_alert()
+    assigned.update(assignee=ASSIGNEE, enriched_by=ASSIGNEE)
+    assigned["labels"] = {"owner": ASSIGNEE}
+    by_fingerprint = {**by_cel(), "fingerprints": [FINGERPRINT], "cel": None}
+    llm = FakeLlm(calls(by_cel(), by_fingerprint), says(ANSWER))
+    equip(app, llm, gateway().on_json(*QUERY, query_result(assigned)))
+    exchange = await ask(app).finish()
+    assert exchange.names.count("draft") == 2
+    prompt = json.dumps([r.messages for r in llm.requests])
+    assert FINGERPRINT in prompt and ALERT in prompt
+    assert ASSIGNEE not in prompt
+    assert ASSIGNEE not in exchange.text
+    conversation = uuid.UUID(exchange.event("conversation")["conversation_id"])
+    with db.connect() as conn:
+        stored = [
+            dict(row)
+            for model in (Draft, Message)
+            for row in conn.execute(
+                sa.select(model.__table__).where(
+                    model.__table__.c.conversation_id == conversation
+                )
+            ).mappings()
+        ]
+    assert len(stored) == 7  # 2 drafts; the question, 2 answers, 2 tool rows
+    assert ASSIGNEE not in json.dumps(stored, default=str)
+    assert [r.name for r in records if ASSIGNEE in rendered(r)] == []
+    assert ASSIGNEE not in "".join(capfd.readouterr())
 
 
 @pytest.mark.asyncio

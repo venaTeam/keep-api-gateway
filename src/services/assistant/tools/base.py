@@ -11,6 +11,14 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from src.services.assistant.bl.projection import clean_text
+from src.services.assistant.gateway.errors import (
+    GatewayForbidden,
+    GatewayUnauthorized,
+    GatewayUnavailable,
+    InvalidCel,
+    QueryFailed,
+)
 from src.services.assistant.gateway.reader import ReadGateway
 from src.services.assistant.llm.client import LlmTool
 from src.services.assistant.models.api.stream import StreamErrorCode, ToolOutcomeCode
@@ -18,6 +26,8 @@ from src.services.assistant.models.identity import Identity
 
 MAX_CEL_LOOKUPS_PER_TURN = 4
 MAX_TOOL_RESULT_CHARS = 8000
+MAX_DIAGNOSTICS_SHOWN = 5
+MAX_DIAGNOSTIC_CHARS = 300
 
 
 @dataclass
@@ -27,8 +37,19 @@ class ToolContext:
     identity: Identity
     # Reads only, under the turn's id; `for_request` gives one under another.
     gateway: ReadGateway
-    # Model-written filters have no early exit on the gateway's side.
+    # Model-written filters have no early exit on the gateway's side. Charged through
+    # `take_filter_lookup` only.
     cel_lookups_left: int = MAX_CEL_LOOKUPS_PER_TURN
+
+    def take_filter_lookup(self, units: int = 1) -> bool:
+        """Charge `units` of the turn's filter budget. True when that many were left;
+        False, with nothing charged, when not."""
+        if units < 1:
+            raise ValueError("a lookup costs at least one unit")
+        if units > self.cel_lookups_left:
+            return False
+        self.cel_lookups_left -= units
+        return True
 
 
 @dataclass(frozen=True)
@@ -71,6 +92,46 @@ def tool_error(code: str, *, stream_error: StreamErrorCode | None = None):
     return ToolOutcome(
         "error", {"status": "error", "code": code}, stream_error=stream_error
     )
+
+
+# What a tool's read can fail with that it tells the model, never raises:
+# `except READ_FAILURES as exc: return read_failure_outcome(exc)`.
+READ_FAILURES: tuple[type[Exception], ...] = (
+    InvalidCel,
+    QueryFailed,
+    GatewayUnauthorized,
+    GatewayForbidden,
+    GatewayUnavailable,
+)
+
+
+def read_failure_outcome(exc: Exception) -> ToolOutcome:
+    """The outcome of a read that failed with one of READ_FAILURES."""
+    if isinstance(exc, InvalidCel):
+        return ToolOutcome(
+            "invalid_cel",
+            {
+                "status": "invalid_cel",
+                "diagnostics": [
+                    clean_text(str(item.get("message", "")), MAX_DIAGNOSTIC_CHARS)
+                    for item in exc.diagnostics[:MAX_DIAGNOSTICS_SHOWN]
+                ],
+            },
+        )
+    if isinstance(exc, QueryFailed):
+        # The expression itself can do this; the model can ask for another wording.
+        return tool_error("query_failed")
+    if isinstance(exc, GatewayUnauthorized):
+        return ToolOutcome(
+            "unauthenticated",
+            {"status": "unauthenticated"},
+            stream_error="unauthenticated",
+        )
+    if isinstance(exc, GatewayForbidden):
+        return tool_error("forbidden")
+    if isinstance(exc, GatewayUnavailable):
+        return tool_error("gateway_unavailable", stream_error="gateway_unavailable")
+    raise TypeError(f"not a read failure: {type(exc).__name__}") from exc
 
 
 def encode_result(result: dict[str, Any]) -> str:

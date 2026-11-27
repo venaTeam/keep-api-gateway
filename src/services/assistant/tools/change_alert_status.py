@@ -12,22 +12,15 @@ from pydantic import (
     validator,
 )
 
-from src.services.assistant.bl.projection import (
-    clean_text,
-    project_alert,
-    visible_text,
-)
+from src.services.assistant.bl.projection import clean_text, project_alert, visible_text
 from src.services.assistant.bl.scopes import has_scope
-from src.services.assistant.gateway.client import FetchedAlert, can_use_cel, can_use_path
-from src.services.assistant.gateway.errors import (
-    GatewayForbidden,
-    GatewayUnauthorized,
-    GatewayUnavailable,
-    InvalidCel,
-    QueryFailed,
+from src.services.assistant.kinds.alert_status import NAME, WRITE_SCOPE
+from src.services.assistant.models.api.chat import (
+    MAX_FINGERPRINT_CHARS,
+    has_control_characters,
+    storable,
 )
-from src.services.assistant.models.api.chat import MAX_FINGERPRINT_CHARS, has_control_characters, storable
-from src.services.assistant.models.api.draft import (
+from src.services.assistant.models.api.draft import (  # noqa: F401 (the cap, for importers)
     MAX_ALERTS_PER_DRAFT,
     CelSelector,
     ChangeAlertStatusPayload,
@@ -36,21 +29,17 @@ from src.services.assistant.models.api.draft import (
     SkippedAlert,
     TargetStatus,
 )
-from src.services.assistant.gateway.reader import ReadGateway
-from src.services.assistant.kinds.alert_status import NAME, WRITE_SCOPE
+from src.services.assistant.tools.alert_selection import AlertSelection, select_alerts
 from src.services.assistant.tools.base import (
     NewDraft,
     ToolContext,
     ToolOutcome,
     ToolSpec,
-    tool_error,
 )
 
 MAX_CEL_CHARS = 2000
 MAX_NOTE_CHARS = 2000
 MAX_ERRORS_SHOWN = 10
-MAX_DIAGNOSTICS_SHOWN = 5
-MAX_DIAGNOSTIC_CHARS = 300
 
 PARAMETERS: dict[str, Any] = {
     "type": "object",
@@ -166,128 +155,33 @@ def _parse(arguments: str) -> ChangeAlertStatusArgs | ToolOutcome:
         )
 
 
-def _too_many(matched_count: int | None) -> ToolOutcome:
-    # None: more than the limit, and the exact number could not be had.
-    return ToolOutcome(
-        "too_many_matches",
-        {
-            "status": "too_many_matches",
-            "matched_count": matched_count,
-            "limit": MAX_ALERTS_PER_DRAFT,
-        },
-    )
-
-
-def _invalid_cel(exc: InvalidCel) -> ToolOutcome:
-    return ToolOutcome(
-        "invalid_cel",
-        {
-            "status": "invalid_cel",
-            "diagnostics": [
-                clean_text(str(item.get("message", "")), MAX_DIAGNOSTIC_CHARS)
-                for item in exc.diagnostics[:MAX_DIAGNOSTICS_SHOWN]
-            ],
-        },
-    )
-
-
 async def run(context: ToolContext, arguments: str) -> ToolOutcome:
     args = _parse(arguments)
     if isinstance(args, ToolOutcome):
         return args
-    if args.fingerprints and len(args.fingerprints) > MAX_ALERTS_PER_DRAFT:
-        return _too_many(len(args.fingerprints))
-
     # Minted before any lookup: it is also the X-Request-ID of this run's calls.
     draft_id = uuid.uuid4()
-    reader = context.gateway.for_request(draft_id)
-    try:
-        if args.cel:
-            return await _draft_by_cel(context, reader, draft_id, args)
-        return await _draft_by_fingerprints(context, reader, draft_id, args)
-    except InvalidCel as exc:
-        return _invalid_cel(exc)
-    except QueryFailed:
-        # The expression itself can do this; the model can ask for another wording.
-        return tool_error("query_failed")
-    except GatewayUnauthorized:
-        return ToolOutcome(
-            "unauthenticated",
-            {"status": "unauthenticated"},
-            stream_error="unauthenticated",
-        )
-    except GatewayForbidden:
-        return tool_error("forbidden")
-    except GatewayUnavailable:
-        return tool_error("gateway_unavailable", stream_error="gateway_unavailable")
-
-
-async def _draft_by_cel(
-    context: ToolContext,
-    reader: ReadGateway,
-    draft_id: uuid.UUID,
-    args: ChangeAlertStatusArgs,
-) -> ToolOutcome:
-    if context.cel_lookups_left <= 0:
-        return tool_error("cel_lookup_limit")
-    context.cel_lookups_left -= 1
-    alerts = await reader.query_alerts(args.cel, MAX_ALERTS_PER_DRAFT + 1)
-    matched = {alert.fingerprint: alert for alert in alerts}
-    if len(matched) > MAX_ALERTS_PER_DRAFT:
-        count = await reader.count_alerts(args.cel)
-        # The alerts can change between the two calls.
-        exact = count is not None and count > MAX_ALERTS_PER_DRAFT
-        return _too_many(count if exact else None)
-    # Confirm reads each alert again: one that cannot be looked up by its
-    # fingerprint could not be checked there, so it is not drafted.
-    readable = [fp for fp in matched if can_use_cel(fp) or can_use_path(fp)]
-    return _draft(
+    selection = await select_alerts(
         context,
-        draft_id,
-        args,
-        [matched[fp] for fp in readable],
-        not_found=[],
-        unresolvable=[fp for fp in matched if fp not in readable],
+        context.gateway.for_request(draft_id),
+        fingerprints=args.fingerprints,
+        cel=args.cel,
     )
-
-
-async def _draft_by_fingerprints(
-    context: ToolContext,
-    reader: ReadGateway,
-    draft_id: uuid.UUID,
-    args: ChangeAlertStatusArgs,
-) -> ToolOutcome:
-    fetched = await reader.fetch_alerts_by_fingerprints(args.fingerprints)
-    return _draft(
-        context,
-        draft_id,
-        args,
-        list(fetched.found.values()),
-        not_found=fetched.not_found,
-        unresolvable=fetched.unresolvable,
-    )
+    if isinstance(selection, ToolOutcome):
+        return selection
+    return _draft(context, draft_id, args, selection)
 
 
 def _draft(
     context: ToolContext,
     draft_id: uuid.UUID,
     args: ChangeAlertStatusArgs,
-    matched: list[FetchedAlert],
-    *,
-    not_found: list[str],
-    unresolvable: list[str],
+    selection: AlertSelection,
 ) -> ToolOutcome:
-    missing: dict[str, Any] = {}
-    if not_found:
-        missing["not_found"] = _shown(not_found)
-    if unresolvable:
-        missing["unresolvable"] = _shown(unresolvable)
-    if not matched:
-        return ToolOutcome("no_matches", {"status": "no_matches", **missing})
-
+    missing = selection.missing()
     to_change: list[DraftAlert] = []
     skipped: list[SkippedAlert] = []
-    for alert in matched:
+    for alert in selection.alerts:
         view = project_alert(alert)
         if alert.data.get("status") == args.status:
             skipped.append(
@@ -355,18 +249,14 @@ def _draft(
                 target_status=args.status,
                 note=args.note,
                 dispose_on_new_alert=args.dispose_on_new_alert,
-                matched_count=len(matched),
+                matched_count=len(selection.alerts),
                 alerts=to_change,
                 skipped=skipped,
-                not_found=not_found,
-                unresolvable=unresolvable,
+                not_found=list(selection.not_found),
+                unresolvable=list(selection.unresolvable),
             ),
         ),
     )
-
-
-def _shown(fingerprints: list[str]) -> list[str]:
-    return [clean_text(fp, MAX_FINGERPRINT_CHARS) for fp in fingerprints]
 
 
 SPEC = ToolSpec(
