@@ -293,9 +293,14 @@ class WriteRoute:
             raise ValueError("int_path_params must be path parameters of the row")
 
     def timeout(self) -> float:
-        if self.timeout_seconds is None:
-            return get_settings().gateway_write_timeout_seconds
-        return self.timeout_seconds
+        return _write_seconds(self.timeout_seconds)
+
+
+def _write_seconds(fixed: float | None) -> float:
+    """A row's own timeout; None: ASSISTANT_GATEWAY_WRITE_TIMEOUT_SECONDS."""
+    if fixed is None:
+        return get_settings().gateway_write_timeout_seconds
+    return fixed
 
 
 @dataclass(frozen=True)
@@ -352,6 +357,17 @@ WRITE_ROUTES: Mapping[str, WriteRoute] = MappingProxyType(
 # The rows' names only, for the metrics a worker starts with: the routes themselves
 # stay with `write`.
 WRITE_ENDPOINTS: tuple[str, ...] = tuple(WRITE_ROUTES)
+# Each row's own timeout (None: the setting), for Confirm's time rule. The same:
+# nothing of the routes but the number.
+_WRITE_TIMEOUTS: Mapping[str, float | None] = MappingProxyType(
+    {name: route.timeout_seconds for name, route in WRITE_ROUTES.items()}
+)
+
+
+def write_timeout(endpoint: str) -> float:
+    """How long a write of this row may take, as `write` waits for it. Raises KeyError
+    for a row that does not exist."""
+    return _write_seconds(_WRITE_TIMEOUTS[endpoint])
 
 
 def _path_of(

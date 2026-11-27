@@ -325,6 +325,30 @@ async def take_every_chat_place(
     raise AssertionError("no chat call was refused")
 
 
+class FakeClock:
+    """A monotonic clock that moves only when told."""
+
+    def __init__(self, now: float = 1000.0):
+        self.now = now
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def use_fake_clock(monkeypatch) -> FakeClock:
+    """Confirm's clock, and the one its request's `started` is read from."""
+    from src.services.assistant.api import deps
+    from src.services.assistant.bl import confirm_bl
+
+    clock = FakeClock()
+    monkeypatch.setattr(confirm_bl, "monotonic", clock)
+    monkeypatch.setattr(deps, "time", SimpleNamespace(monotonic=clock))
+    return clock
+
+
 async def until(condition, timeout: float = 10) -> None:
     deadline = time.monotonic() + timeout
     while not condition():

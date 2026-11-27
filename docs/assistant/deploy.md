@@ -183,6 +183,7 @@ thresholds are starting points.
 | `keep_assistant_gateway_requests_total` | by `endpoint` and `status_class`, also `timeout`, `not_sent`, `dropped`, `cancelled` |
 | `keep_assistant_drafts_total` | by `event`: `created`, `confirmed`, `discarded`, `expired`, `finalized_after_timeout` |
 | `keep_assistant_draft_outcomes_total` | by `outcome`, the final ones |
+| `keep_assistant_confirm_budget_refusals_total` | by `kind` and `step`: a write Confirm did not send because too little of its 26 s was left to tell the result. At `step="0"` the draft went back to pending; at a later step what the earlier writes made stands |
 | `keep_assistant_drafts_stale_applying` | drafts whose result nobody knows, 5 minutes to 24 hours old |
 | `keep_assistant_retention_last_success_unixtime` | |
 | `keep_assistant_retention_failures_total` | |

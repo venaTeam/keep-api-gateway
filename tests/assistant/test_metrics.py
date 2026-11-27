@@ -35,6 +35,7 @@ def test_every_collector_is_in_the_registry_the_gateway_serves():
         "tool_calls_total",
         "drafts_total",
         "draft_outcomes_total",
+        "confirm_budget_refusals_total",
         "drafts_stale_applying",
         "gateway_requests_total",
         "gateway_request_seconds",
@@ -83,6 +84,7 @@ def test_rare_series_exist_from_the_start():
         metrics.internal_errors_total,
         metrics.gateway_requests_total,
         metrics.tool_calls_total,
+        metrics.confirm_budget_refusals_total,
     ):
         collector.clear()
     lifecycle._start_series()
@@ -90,6 +92,7 @@ def test_rare_series_exist_from_the_start():
     assert WRITE_ENDPOINTS == tuple(WRITE_ROUTES)
     expected = [
         'internal_errors_total{site="sweep_close"}',
+        *(f'confirm_budget_refusals_total{{kind="{kind}",step="0"}}' for kind in KINDS),
         *(
             f'draft_outcomes_total{{kind="{kind}",outcome="{outcome}"}}'
             for kind in KINDS

@@ -68,6 +68,9 @@ def _start_series() -> None:
         for outcome in get_args(OutcomeCode):
             metrics.draft_outcomes_total.labels(kind=kind, outcome=outcome)
         metrics.drafts_total.labels(kind=kind, event="finalized_after_timeout")
+        # The first write: the one a slow claim or look holds back. A later one shows
+        # in the draft's outcome as well.
+        metrics.confirm_budget_refusals_total.labels(kind=kind, step="0")
         if KINDS[kind].can_open_in_form:
             metrics.drafts_total.labels(kind=kind, event="opened_in_form")
     metrics.internal_errors_total.labels(site="sweep_close")

@@ -34,6 +34,7 @@ from tests.assistant.running import (
     post_confirm,
     take_every_chat_place,
     until,
+    use_fake_clock,
 )
 
 CANARY = "canary-7c01de"
@@ -651,22 +652,22 @@ async def test_the_first_look_takes_too_long(app, db, keep, draft, monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("spare", [0.15, 3], ids=["too-late", "in-time"])
+@pytest.mark.parametrize("spare", [-0.05, 0.05], ids=["too-late", "in-time"])
 async def test_the_write_starts_only_with_time_left_to_tell(
     app, db, keep, draft, monkeypatch, spare
 ):
-    """Counted from the moment the request came in, identity included."""
-    monkeypatch.setattr(
-        confirm_bl, "BUDGET_SECONDS", confirm_bl.NEEDED_FOR_WRITE_SECONDS + spare
-    )
+    """Counted from the moment the request came in, identity included. The one write
+    needs 17.2 s: 12 s for it, 4 s for the look after it, 0.1 s after each for a late
+    answer, and 1 s for the last transaction."""
+    clock = use_fake_clock(monkeypatch)
 
     async def slow_whoami(request):
-        await asyncio.sleep(0.2)
+        clock.advance(confirm_bl.BUDGET_SECONDS - 17.2 - spare)
         return httpx.Response(200, json=whoami())
 
     keep.on("GET", "/whoami", slow_whoami)
     exchange = await post_confirm(app, draft).finish()
-    if spare < 0.2:
+    if spare < 0:
         assert (exchange.status, exchange.code) == (502, "gateway_unavailable")
         assert state_of(db, draft) == "pending"
         assert keep.writes == []
@@ -677,7 +678,13 @@ async def test_the_write_starts_only_with_time_left_to_tell(
 def test_the_budget_holds_before_the_proxy_gives_up():
     assert confirm_bl.BUDGET_SECONDS == 26
     assert confirm_bl.READ_SECONDS == 4
-    assert confirm_bl.NEEDED_FOR_WRITE_SECONDS == 17
+    assert confirm_bl.FINISH_SECONDS == 1
+    assert client_module.LATE_ANSWER_SECONDS == 0.1
+    # One write at the longest the setting allows: was 17 s before the waits for a
+    # late answer were counted.
+    assert confirm_bl.seconds_needed([12.0], 0, confirm_bl.READ_SECONDS) == (
+        pytest.approx(17.2)
+    )
 
 
 # --- who may, and when -----------------------------------------------------------------------

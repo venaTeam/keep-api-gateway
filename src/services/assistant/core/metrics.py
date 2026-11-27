@@ -46,6 +46,13 @@ drafts_total = Counter(f"{_PREFIX}drafts_total", "Draft events", ["kind", "event
 draft_outcomes_total = Counter(
     f"{_PREFIX}draft_outcomes_total", "Final draft outcomes", ["kind", "outcome"]
 )
+# A write Confirm did not send: too little of its time was left to tell the result.
+# step: the write's index in the plan, from "0"; at "0" the draft went back to pending.
+confirm_budget_refusals_total = Counter(
+    f"{_PREFIX}confirm_budget_refusals_total",
+    "Confirm writes not sent for lack of time",
+    ["kind", "step"],
+)
 drafts_stale_applying = Gauge(
     f"{_PREFIX}drafts_stale_applying",
     "Drafts stuck in applying for more than 5 minutes",
