@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import get_args
 
+from src.services.assistant import navigation as nav
 from src.services.assistant.exceptions import ERRORS, VALIDATION_MESSAGES, error_body
 from src.services.assistant.models.api import confirm as confirm_models
 from src.services.assistant.models.api import conversation as conversation_models
@@ -820,6 +821,162 @@ def chat_context() -> dict:
     }
 
 
+NAV_ID = "6f1c2b9e-3d4a-4c5b-8e7f-0a1b2c3d4e5f"
+
+# The pages a link may open (navigation.py, keep-ui's navigation.ts). Every path is
+# written out here, never built: each side must reach it on its own, with
+# encodeURIComponent's encoding. A vector is (page, param, role, path, accepted,
+# noc_allowed):
+# - a path of a page: `build(page, param)` gives it and `parse` gives back (page, param);
+#   `accepted` is for a user of `role`; `noc_allowed` is the page's;
+# - any other path: page, param and noc_allowed are None and nobody accepts it.
+NAVIGATION = [
+    ("alerts_feed", None, "admin", "/alerts/feed", True, True),
+    ("alerts_feed", None, "noc", "/alerts/feed", True, True),
+    ("alerts_preset", "payments", "admin", "/alerts/payments", True, True),
+    ("alerts_preset", "prod (eu)!", "noc", "/alerts/prod%20(eu)!", True, True),
+    ("alerts_preset", "it's * ~ 100%", "admin", "/alerts/it's%20*%20~%20100%25", True, True),
+    ("alerts_preset", "db/payments", "admin", "/alerts/db%2Fpayments", True, True),
+    ("alerts_preset", "équipe nuit", "admin", "/alerts/%C3%A9quipe%20nuit", True, True),
+    ("alerts_preset", "日本の警報", "admin",
+     "/alerts/%E6%97%A5%E6%9C%AC%E3%81%AE%E8%AD%A6%E5%A0%B1", True, True),
+    ("alerts_preset", "\U0001f525 sev1", "admin", "/alerts/%F0%9F%94%A5%20sev1", True, True),
+    ("alerts_preset", "a+b=c&d", "admin", "/alerts/a%2Bb%3Dc%26d", True, True),
+    ("alerts_preset", "v1.2...", "admin", "/alerts/v1.2...", True, True),
+    ("alerts_search", 'name == "db"', "noc",
+     "/alerts/feed?cel=name%20%3D%3D%20%22db%22", True, True),
+    ("alerts_search", '!(status == "resolved") && count > 5', "admin",
+     "/alerts/feed?cel=!(status%20%3D%3D%20%22resolved%22)%20%26%26%20count%20%3E%205",
+     True, True),
+    ("alerts_search", "service.startsWith('pay')", "admin",
+     "/alerts/feed?cel=service.startsWith('pay')", True, True),
+    ("incidents", None, "admin", "/incidents", True, False),
+    ("rules", None, "admin", "/rules", True, False),
+    ("rule", NAV_ID, "admin", f"/rules?id={NAV_ID}", True, False),
+    ("dashboard", "Ops Overview", "admin", "/dashboard/Ops%20Overview", True, False),
+    ("dashboard", "SRE: 50% (prod)", "editor",
+     "/dashboard/SRE%3A%2050%25%20(prod)", True, False),
+    # A NOC user is sent back to the feed from anywhere outside /alerts.
+    ("incidents", None, "noc", "/incidents", False, False),
+    ("rules", None, "noc", "/rules", False, False),
+    ("rule", NAV_ID, "noc", f"/rules?id={NAV_ID}", False, False),
+    ("dashboard", "Ops Overview", "noc", "/dashboard/Ops%20Overview", False, False),
+    # Elsewhere, or not spelled the one way a page is.
+    *(
+        (None, None, "admin", path, False, None)
+        for path in [
+            "",
+            "alerts/feed",
+            "//evil.example",
+            "//evil.example/alerts/feed",
+            "\\\\evil.example",
+            "/\\evil.example",
+            "javascript:alert(1)",
+            "https://evil.example/alerts/feed",
+            "/alerts/%2F..",
+            "/alerts/..",
+            "/alerts/.",
+            "/alerts/%2e%2e",
+            "/alerts/%2E%2E",
+            "/alerts/my%2520preset",
+            "/alerts/feed?cel=name%20%3D%3D%20%22a%2520b%22",
+            "/alerts/Payments",
+            "/alerts/a%2fb",
+            "/alerts/%61bc",
+            "/alerts/my preset",
+            "/alerts/café",
+            "/alerts/caf%C3",
+            "/alerts/a%00b",
+            "/alerts/a/b",
+            "/alerts/",
+            "/alerts",
+            "/alerts/feed/",
+            "/alerts/feed#top",
+            "/alerts/feed?cel=",
+            "/alerts/feed?cel=%20",
+            "/alerts/feed?cel=name%20%3D%3D%20%22a%22%0A",
+            "/alerts/feed?cel=name\n",
+            "/alerts/feed?cel=a%20b&x=1",
+            "/alerts/feed?x=1",
+            "/alerts/feed?cel=a?b",
+            f"/rules?id={NAV_ID.upper()}",
+            f"/rules?id={NAV_ID.replace('-', '')}",
+            f"/rules?id=%7B{NAV_ID}%7D",
+            "/rules?id=not-a-uuid",
+            f"/rules?id={NAV_ID}&x=1",
+            "/rules?id=",
+            "/rules/",
+            "/incidents?x=1",
+            f"/incidents/{NAV_ID}",
+            "/dashboard/",
+            "/dashboard/..",
+            "/workflows",
+            "/providers",
+            "/settings",
+            "/deduplication",
+            "/extraction",
+            "/mapping",
+            "/topology",
+        ]
+    ),
+]  # fmt: skip
+
+# What a link is built from, when the page reads it another way: a preset is found by
+# its lowercased name.
+NAVIGATION_BUILT = [
+    ("alerts_preset", "Payments", "/alerts/payments"),
+    ("alerts_preset", "Prod (EU)!", "/alerts/prod%20(eu)!"),
+    ("alerts_preset", "Équipe Nuit", "/alerts/%C3%A9quipe%20nuit"),
+]
+
+# What no link is built from.
+NAVIGATION_REFUSED = [
+    ("alerts_feed", "payments"),
+    ("incidents", "x"),
+    ("rules", NAV_ID),
+    ("alerts_preset", None),
+    ("alerts_preset", ""),
+    ("alerts_preset", "   "),
+    ("alerts_preset", "feed"),
+    ("alerts_preset", "Feed"),
+    ("alerts_preset", "."),
+    ("alerts_preset", ".."),
+    ("alerts_preset", "/.."),
+    ("alerts_preset", "a/../b"),
+    ("alerts_preset", "a\\..\\b"),
+    ("alerts_preset", "my%20preset"),
+    ("alerts_preset", "a\nb"),
+    ("alerts_preset", "x" * 257),
+    ("alerts_search", None),
+    ("alerts_search", ""),
+    ("alerts_search", "name ==\t1"),
+    ("alerts_search", 'name == "a%20b"'),
+    ("alerts_search", "x" * 2001),
+    ("rule", None),
+    ("rule", NAV_ID.upper()),
+    ("rule", "not-a-uuid"),
+    ("dashboard", ""),
+    ("dashboard", ".."),
+    ("workflows", None),
+    ("incident", NAV_ID),
+]
+
+
+def navigation() -> dict:
+    keys = ("page", "param", "role", "path", "accepted", "noc_allowed")
+    return {
+        "pages": list(nav.PAGES),
+        "name_chars": nav.MAX_NAME_CHARS,
+        "cel_chars": nav.MAX_CEL_CHARS,
+        "vectors": [dict(zip(keys, vector)) for vector in NAVIGATION],
+        "built": [
+            {"page": page, "param": param, "path": path}
+            for page, param, path in NAVIGATION_BUILT
+        ],
+        "refused": [{"page": page, "param": param} for page, param in NAVIGATION_REFUSED],
+    }
+
+
 def build() -> dict:
     encoded = {name: _encode_stream(items) for name, items in streams().items()}
     encoded["truncated"] = _truncated(encoded["draft_created"])
@@ -851,6 +1008,7 @@ def build() -> dict:
         "requests": requests(),
         "confirm_limits": confirm_limits(),
         "chat_context": chat_context(),
+        "navigation": navigation(),
         "future": future(),
     }
 

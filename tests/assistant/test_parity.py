@@ -292,6 +292,7 @@ ROUTES = PACKAGE.parent.parent / "routes" / "assistant.py"
 CONFIRM = PACKAGE / "bl" / "confirm_bl.py"
 CLIENT = PACKAGE / "gateway" / "client.py"
 TRANSPORT = PACKAGE / "gateway" / "transport.py"
+NAVIGATION = PACKAGE / "navigation.py"
 
 
 def sources() -> dict[Path, ast.Module]:
@@ -408,10 +409,12 @@ def test_only_the_client_talks_to_the_gateway():
             for node in ast.walk(tree)
             if isinstance(node, ast.Constant) and isinstance(node.value, str)
         ]
-        if path != CLIENT:
+        # keep-ui's pages, each of which is pinned below.
+        if path not in (CLIENT, NAVIGATION):
             assert not [s for s in strings if s.startswith(("/alerts", "/incidents"))]
             # Anywhere in a string: an address of its own.
             assert not [s for s in strings if "/alerts/" in s]
+        if path != CLIENT:
             assert not mentions(tree, "_send") or path == CONFIRM
             assert not mentions(tree, "_http")
             assert "gateway._request" not in path.read_text("utf-8")
@@ -423,6 +426,92 @@ def test_only_the_client_talks_to_the_gateway():
 
 def test_the_client_uses_httpx_in_one_place():
     assert users(sources()[CLIENT], "_http") == {"__init__", "aclose", "_request"}
+
+
+def _docstrings(tree: ast.Module) -> set[int]:
+    return {
+        id(node.body[0].value)
+        for node in ast.walk(tree)
+        if isinstance(
+            node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+        )
+        and node.body
+        and isinstance(node.body[0], ast.Expr)
+        and isinstance(node.body[0].value, ast.Constant)
+    }
+
+
+# Every string navigation.py may hold, keep-ui's pages among them. A gateway route
+# could hide in the module the checks above leave out, so a new string is added here.
+NAVIGATION_STRINGS = {
+    # keep-ui's paths
+    "/alerts/feed",
+    "/alerts/",
+    "/incidents",
+    "/incidents/",
+    "/rules",
+    "/dashboard/",
+    "/",
+    "?",
+    "=",
+    "cel",
+    "id",
+    # pages
+    "alerts_feed",
+    "alerts_preset",
+    "alerts_search",
+    "incidents",
+    "rules",
+    "rule",
+    "dashboard",
+    # what they show
+    "feed",
+    "preset_name",
+    "dashboard_name",
+    # encoding and checks
+    "!'()*",
+    "utf-8",
+    "strict",
+    r"[\x00-\x1f\x7f-\x9f]",
+    r"%[0-9A-Fa-f]{2}",
+    r"(?:^|[/\\])\.\.?(?:[/\\]|$)",
+    r"(?:[A-Za-z0-9_.~!'()*-]|%[0-9A-F]{2})+",
+    "not a page",
+    "not a usable value",
+}
+STANDARD_LIBRARY = {
+    "re",
+    "uuid",
+    "collections.abc",
+    "dataclasses",
+    "types",
+    "typing",
+    "urllib.parse",
+}
+
+
+def test_navigation_holds_keep_uis_pages_and_nothing_else():
+    """The one module exempt from the gateway-path check: pure, of the standard
+    library, and with no string but these."""
+    tree = sources()[NAVIGATION]
+    docstrings = _docstrings(tree)
+    strings = {
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and id(node) not in docstrings
+    }
+    assert strings <= NAVIGATION_STRINGS, strings - NAVIGATION_STRINGS
+    imported = {
+        alias.name if isinstance(node, ast.Import) else node.module
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+        for alias in node.names
+    }
+    assert imported <= STANDARD_LIBRARY, imported
+    for name in ("gateway", "_send", "_http", "_request", "GatewayClient", "httpx"):
+        assert not mentions(tree, name), name
 
 
 TABLE_MAKERS = ("table", "Table", "reflect", "automap_base")
