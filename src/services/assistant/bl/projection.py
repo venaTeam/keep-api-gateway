@@ -3,6 +3,7 @@
 Alert text comes from external monitoring systems. It is cleaned here so that it
 cannot close the prompt's data delimiter, hide text or break jsonb storage.
 """
+import json
 import unicodedata
 from typing import Any
 
@@ -14,6 +15,17 @@ MAX_DESCRIPTION_CHARS = 200
 MAX_LABEL_CHARS = 100
 
 DELIMITERS = str.maketrans({"<": "‹", ">": "›"})
+# In JSON, `<` and `>` can only be inside strings, where their escapes mean the same:
+# the model reads a filter like `count < 5` as it was written, and nothing inside can
+# close the data delimiter.
+ANGLE_ESCAPES = str.maketrans({"<": "\\u003c", ">": "\\u003e"})
+
+
+def to_json(value: Any, *, ensure_ascii: bool = True) -> str:
+    """Compact JSON for the model, without a literal angle bracket."""
+    return json.dumps(
+        value, separators=(",", ":"), ensure_ascii=ensure_ascii
+    ).translate(ANGLE_ESCAPES)
 
 
 def strip_control(value: str) -> str:

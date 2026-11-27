@@ -3,12 +3,11 @@
 The system message is fixed text. Everything that comes from a tenant, an alert or a
 tool goes into a user or tool message, marked as data.
 """
-import json
 from collections.abc import Collection
 from typing import Any
 
 from src.services.assistant.bl.context import TurnContext
-from src.services.assistant.bl.projection import DELIMITERS
+from src.services.assistant.bl.projection import DELIMITERS, to_json
 from src.services.assistant.tools.base import ToolSpec
 
 _SYSTEM = """\
@@ -58,7 +57,8 @@ def system_message(tools: Collection[ToolSpec]) -> dict[str, Any]:
 
 
 def untrusted(text: str) -> str:
-    """Mark `text` as data. It cannot close the mark: it has no angle brackets."""
+    """Mark `text` as data. It cannot close the mark: it has no angle brackets. JSON
+    made with `to_json` has none to begin with, and reads as it was."""
     return f"<untrusted_data>\n{text.translate(DELIMITERS)}\n</untrusted_data>"
 
 
@@ -84,7 +84,5 @@ def context_message(context: TurnContext) -> dict[str, Any]:
         data["timezone_note"] = NO_TIMEZONE_NOTE
     return {
         "role": "user",
-        "content": untrusted(
-            json.dumps(data, separators=(",", ":"), ensure_ascii=False)
-        ),
+        "content": untrusted(to_json(data, ensure_ascii=False)),
     }

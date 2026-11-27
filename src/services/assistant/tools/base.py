@@ -4,7 +4,6 @@ A new tool is one module with a ToolSpec, plus its line in the registry. A tool 
 makes drafts names its kind of `kinds/registry.py` in `draft_kind`; one that links to
 a page says so in `makes_link`. The chat turn counts both against their caps.
 """
-import json
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -13,7 +12,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from src.services.assistant.bl.projection import clean_text
+from src.services.assistant.bl.projection import clean_text, to_json
 from src.services.assistant.gateway.errors import (
     AnswerTooLarge,
     GatewayForbidden,
@@ -187,11 +186,12 @@ def read_failure_outcome(exc: Exception) -> ToolOutcome:
 
 def encode_result(result: dict[str, Any]) -> str:
     """Compact JSON within the budget of one tool message: the lists are cut to
-    fewer items until it fits. The card, not the model, shows them in full."""
-    encoded = json.dumps(result, separators=(",", ":"))
+    fewer items until it fits. The card, not the model, shows them in full. Angle
+    brackets are JSON escapes (`to_json`), counted as such."""
+    encoded = to_json(result)
     for keep in (10, 5, 2, 0):
         if len(encoded) <= MAX_TOOL_RESULT_CHARS:
             break
         cut = {k: v[:keep] if isinstance(v, list) else v for k, v in result.items()}
-        encoded = json.dumps({**cut, "truncated": True}, separators=(",", ":"))
+        encoded = to_json({**cut, "truncated": True})
     return encoded

@@ -16,6 +16,7 @@ import sqlalchemy as sa
 
 from src.services.assistant.bl import conversations_bl
 from src.services.assistant.bl.conversations_bl import TurnRef
+from src.services.assistant.bl.projection import to_json
 from src.services.assistant.bl.prompt import untrusted
 from src.services.assistant.config import get_settings
 from src.services.assistant.core.db import get_session
@@ -89,9 +90,7 @@ def digest(result: str) -> str:
         parsed = json.loads(result)
         if isinstance(parsed, dict):
             for candidate in _shorter(parsed):
-                encoded = json.dumps(
-                    {**candidate, "truncated": True}, separators=(",", ":")
-                )
+                encoded = to_json({**candidate, "truncated": True})
                 if len(encoded) <= MAX_REPLAYED_RESULT_CHARS:
                     return encoded
     except (ValueError, RecursionError):
