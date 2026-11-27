@@ -14,7 +14,12 @@ import sqlalchemy as sa
 
 from src.services.assistant.bl import conversations_bl, drafts_bl
 from src.services.assistant.exceptions import VALIDATION_MESSAGES
-from src.services.assistant.llm.client import Finished, LlmError
+from src.services.assistant.llm.client import (
+    Finished,
+    LlmError,
+    ToolCallComplete,
+    Usage,
+)
 from src.services.assistant.models.db import Draft, Message
 from tests.assistant.fakes import TOKEN, FakeGateway, alert, query_result, whoami
 from tests.assistant.logs import rendered
@@ -215,6 +220,76 @@ async def test_an_assignees_email_reaches_neither_the_model_nor_the_card(
     assert ASSIGNEE not in json.dumps(stored, default=str)
     assert [r.name for r in records if ASSIGNEE in rendered(r)] == []
     assert ASSIGNEE not in "".join(capfd.readouterr())
+
+
+def read_round(*named: tuple[str, dict]) -> list:
+    """One round that calls each (tool, arguments)."""
+    return [
+        *(
+            ToolCallComplete(f"call_{n}", name, json.dumps(arguments))
+            for n, (name, arguments) in enumerate(named, 1)
+        ),
+        Usage(100, 10),
+        Finished("tool_calls"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_an_assignees_email_reaches_no_read_tool_result(app, db, records, capfd):
+    """Searched, read by fingerprint, counted or asked for by its own field name."""
+    assigned = telling_alert()
+    assigned.update(assignee=ASSIGNEE, enriched_by=ASSIGNEE)
+    assigned["labels"] = {"owner": ASSIGNEE, "team": ALERT}
+    fields = ["name", "assignee", "enriched_by", "labels.owner", "labels.team"]
+    rounds = read_round(
+        ("search_alerts", {"cel": "", "limit": 5, "sort": None}),
+        ("get_alerts", {"fingerprints": [FINGERPRINT]}),
+        ("get_field_values", {"field": "assignee", "cel": None}),
+        ("get_field_values", {"field": "enriched_by", "cel": None}),
+        ("get_field_values", {"field": "labels.owner", "cel": None}),
+        ("get_field_values", {"field": "labels.team", "cel": None}),
+        ("count_alerts", {"cel": f"name == '{CEL}'"}),
+    )
+    llm = FakeLlm(rounds, says(ANSWER))
+    fake = (
+        gateway()
+        .on_json("GET", "/alerts/facets/fields", fields)
+        .on_json("GET", "/alerts/facets", [])
+        .on_json(*QUERY, query_result(assigned))
+    )
+    equip(app, llm, fake)
+    exchange = await ask(app).finish()
+    finished = [
+        (data["tool"], data["outcome"])
+        for name, data in exchange.events
+        if name == "tool_status" and data["phase"] == "finished"
+    ]
+    assert finished == [
+        ("search_alerts", "found"),
+        ("get_alerts", "found"),
+        ("get_field_values", "error"),
+        ("get_field_values", "error"),
+        ("get_field_values", "found"),
+        ("get_field_values", "found"),
+        ("count_alerts", "found"),
+    ]
+    prompt = json.dumps([r.messages for r in llm.requests])
+    assert FINGERPRINT in prompt and ALERT in prompt
+    assert ASSIGNEE not in prompt
+    assert ASSIGNEE not in exchange.text
+    conversation = uuid.UUID(exchange.event("conversation")["conversation_id"])
+    with db.connect() as conn:
+        stored = [
+            dict(row)
+            for row in conn.execute(
+                sa.select(Message.__table__).where(
+                    Message.__table__.c.conversation_id == conversation
+                )
+            ).mappings()
+        ]
+    assert ASSIGNEE not in json.dumps(stored, default=str)
+    assert [r.name for r in records if ASSIGNEE in rendered(r)] == []
+    assert_not_logged(records, capfd)
 
 
 @pytest.mark.asyncio

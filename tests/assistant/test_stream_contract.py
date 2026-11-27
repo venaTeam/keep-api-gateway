@@ -45,7 +45,7 @@ from tests.assistant.fakes import TOKEN
 GOLDEN = json.loads(golden_stream.FIXTURE.read_bytes())
 EVENTS_BY_NAME = {event.event: event for event in s.STREAM_EVENTS}
 # keep-ui pins the same blob (sse-parser.test.ts) once it has copied this fixture.
-FIXTURE_BLOB = "e6940eb7d984174aa48e71c8b3b640bb7cdcdc01"
+FIXTURE_BLOB = "c6078c8bebc51faeb440c2aa02a1452daabc8a35"
 
 
 def parse_sse(raw: str):

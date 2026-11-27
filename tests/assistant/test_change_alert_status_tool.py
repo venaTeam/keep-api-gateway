@@ -62,8 +62,10 @@ def results(*alerts):
 # --- the registry and the schema ---------------------------------------------
 
 
-def test_the_registry_holds_exactly_one_tool():
-    assert list(TOOLS) == ["change_alert_status"] == list(PAYLOAD_MODELS)
+def test_the_registry_holds_exactly_one_draft_tool():
+    """Every other tool only reads (tests/assistant/test_read_tools.py)."""
+    drafts = [name for name, spec in TOOLS.items() if spec.draft_kind is not None]
+    assert drafts == ["change_alert_status"] == list(PAYLOAD_MODELS)
     assert TOOLS["change_alert_status"] is SPEC
 
 

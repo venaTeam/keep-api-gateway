@@ -35,6 +35,13 @@ from src.services.assistant.models.api.draft import (
     StoredObject,
     StoredOutcome,
 )
+from src.services.assistant.tools import (
+    count_alerts,
+    get_alerts,
+    get_field_values,
+    search_alerts,
+    validate_cel,
+)
 
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "assistant_stream.json"
 
@@ -582,6 +589,10 @@ def _tool_round(call: str, outcome_code: str, **tool):
     return [_tool(call, "started", **tool), _tool(call, "finished", outcome_code, **tool)]
 
 
+def _read_round(call: str, outcome_code: str, spec):
+    return _tool_round(call, outcome_code, tool=spec.name, label=spec.label)
+
+
 def _done(finish_reason: str, message: int | None = None):
     return s.DoneEvent(
         message_id=uid(message) if message else None, finish_reason=finish_reason
@@ -649,6 +660,18 @@ def streams() -> dict[str, list]:
                 "call_4", "name_taken", tool="save_preset", label="Preparing a preset"
             ),
             _text(4, "A preset with this name exists already."),
+            _done("stop", 4),
+        ],
+        # The tools that only read, with their own names and labels.
+        "read_tools": [
+            _conversation_event(),
+            *_read_round("call_1", "found", get_field_values.SPEC),
+            *_read_round("call_2", "invalid_cel", validate_cel.SPEC),
+            *_read_round("call_3", "found", count_alerts.SPEC),
+            *_read_round("call_4", "no_matches", search_alerts.SPEC),
+            *_read_round("call_5", "error", search_alerts.SPEC),
+            *_read_round("call_6", "found", get_alerts.SPEC),
+            _text(4, "12 alerts are critical; none of them is firing."),
             _done("stop", 4),
         ],
         # The 12th call runs, the 13th of the same round does not; then no tools.

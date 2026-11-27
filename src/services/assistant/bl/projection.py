@@ -64,6 +64,13 @@ def clean_text(value: str, max_chars: int) -> str:
     return strip_control(bounded)[:max_chars].translate(DELIMITERS)
 
 
+def readable_text(value: str, max_chars: int) -> str:
+    """`value` without control characters, truncated, its angle brackets kept: for
+    text that reaches the model only through `to_json` (a tool result), like a
+    filter or the gateway's diagnostics of one."""
+    return strip_control(value[: max_chars * 4])[:max_chars]
+
+
 def text_or_none(value: Any) -> str | None:
     """Alert fields are free-form: only text (or a number) is shown."""
     if isinstance(value, str):

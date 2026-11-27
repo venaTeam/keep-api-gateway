@@ -111,7 +111,14 @@ async def test_what_the_model_is_sent(app, db, gateway):
     assert '"fingerprint":"fp-1"' in context["content"]
     assert "labels.team" in context["content"]
     assert user == {"role": "user", "content": "ack these"}
-    assert [tool.name for tool in request.tools] == ["change_alert_status"]
+    assert [tool.name for tool in request.tools] == [
+        "change_alert_status",
+        "get_field_values",
+        "validate_cel",
+        "count_alerts",
+        "search_alerts",
+        "get_alerts",
+    ]
     assert request.tool_choice == "auto"
     me = identity()
     assert request.safety_identifier == make_safety_identifier(me.tenant_id, me.email)
@@ -241,7 +248,9 @@ async def test_at_most_eight_tool_rounds(app, db, gateway):
 
 
 @pytest.mark.asyncio
-async def test_calls_after_the_last_round_are_ignored(app, db, gateway):
+async def test_calls_after_the_last_round_are_ignored(
+    app, db, gateway, no_read_tools
+):
     equip(app, FakeLlm(calls(change("fp-1"), text="x")), gateway)
     exchange = await post_chat(app, "ack").finish()
     assert exchange.names.count("draft") == 3
@@ -252,7 +261,7 @@ async def test_calls_after_the_last_round_are_ignored(app, db, gateway):
 
 
 @pytest.mark.asyncio
-async def test_at_most_three_drafts(app, db, gateway):
+async def test_at_most_three_drafts(app, db, gateway, no_read_tools):
     # The fourth call comes in one round with the third.
     llm = FakeLlm(
         calls(change("fp-1"), first=1),

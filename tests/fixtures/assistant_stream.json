@@ -652,6 +652,147 @@
         }
       ]
     },
+    "read_tools": {
+      "raw": "event: conversation\ndata: {\"conversation_id\": \"00000000-0000-4000-8000-000000000001\", \"user_message_id\": \"00000000-0000-4000-8000-000000000002\", \"turn_id\": \"00000000-0000-4000-8000-000000000003\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_1\", \"tool\": \"get_field_values\", \"phase\": \"started\", \"label\": \"Reading field values\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_1\", \"tool\": \"get_field_values\", \"phase\": \"finished\", \"label\": \"Reading field values\", \"outcome\": \"found\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_2\", \"tool\": \"validate_cel\", \"phase\": \"started\", \"label\": \"Checking a filter\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_2\", \"tool\": \"validate_cel\", \"phase\": \"finished\", \"label\": \"Checking a filter\", \"outcome\": \"invalid_cel\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_3\", \"tool\": \"count_alerts\", \"phase\": \"started\", \"label\": \"Counting alerts\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_3\", \"tool\": \"count_alerts\", \"phase\": \"finished\", \"label\": \"Counting alerts\", \"outcome\": \"found\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_4\", \"tool\": \"search_alerts\", \"phase\": \"started\", \"label\": \"Searching alerts\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_4\", \"tool\": \"search_alerts\", \"phase\": \"finished\", \"label\": \"Searching alerts\", \"outcome\": \"no_matches\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_5\", \"tool\": \"search_alerts\", \"phase\": \"started\", \"label\": \"Searching alerts\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_5\", \"tool\": \"search_alerts\", \"phase\": \"finished\", \"label\": \"Searching alerts\", \"outcome\": \"error\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_6\", \"tool\": \"get_alerts\", \"phase\": \"started\", \"label\": \"Reading alerts\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_6\", \"tool\": \"get_alerts\", \"phase\": \"finished\", \"label\": \"Reading alerts\", \"outcome\": \"found\"}\n\nevent: text_delta\ndata: {\"message_id\": \"00000000-0000-4000-8000-000000000004\", \"delta\": \"12 alerts are critical; none of them is firing.\"}\n\nevent: done\ndata: {\"message_id\": \"00000000-0000-4000-8000-000000000004\", \"finish_reason\": \"stop\"}\n\n",
+      "events": [
+        {
+          "event": "conversation",
+          "data": {
+            "conversation_id": "00000000-0000-4000-8000-000000000001",
+            "user_message_id": "00000000-0000-4000-8000-000000000002",
+            "turn_id": "00000000-0000-4000-8000-000000000003"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_1",
+            "tool": "get_field_values",
+            "phase": "started",
+            "label": "Reading field values"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_1",
+            "tool": "get_field_values",
+            "phase": "finished",
+            "label": "Reading field values",
+            "outcome": "found"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_2",
+            "tool": "validate_cel",
+            "phase": "started",
+            "label": "Checking a filter"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_2",
+            "tool": "validate_cel",
+            "phase": "finished",
+            "label": "Checking a filter",
+            "outcome": "invalid_cel"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_3",
+            "tool": "count_alerts",
+            "phase": "started",
+            "label": "Counting alerts"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_3",
+            "tool": "count_alerts",
+            "phase": "finished",
+            "label": "Counting alerts",
+            "outcome": "found"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_4",
+            "tool": "search_alerts",
+            "phase": "started",
+            "label": "Searching alerts"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_4",
+            "tool": "search_alerts",
+            "phase": "finished",
+            "label": "Searching alerts",
+            "outcome": "no_matches"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_5",
+            "tool": "search_alerts",
+            "phase": "started",
+            "label": "Searching alerts"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_5",
+            "tool": "search_alerts",
+            "phase": "finished",
+            "label": "Searching alerts",
+            "outcome": "error"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_6",
+            "tool": "get_alerts",
+            "phase": "started",
+            "label": "Reading alerts"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_6",
+            "tool": "get_alerts",
+            "phase": "finished",
+            "label": "Reading alerts",
+            "outcome": "found"
+          }
+        },
+        {
+          "event": "text_delta",
+          "data": {
+            "message_id": "00000000-0000-4000-8000-000000000004",
+            "delta": "12 alerts are critical; none of them is firing."
+          }
+        },
+        {
+          "event": "done",
+          "data": {
+            "message_id": "00000000-0000-4000-8000-000000000004",
+            "finish_reason": "stop"
+          }
+        }
+      ]
+    },
     "past_the_tool_calls": {
       "raw": "event: conversation\ndata: {\"conversation_id\": \"00000000-0000-4000-8000-000000000001\", \"user_message_id\": \"00000000-0000-4000-8000-000000000002\", \"turn_id\": \"00000000-0000-4000-8000-000000000003\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_12\", \"tool\": \"get_alerts\", \"phase\": \"started\", \"label\": \"Reading alerts\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_12\", \"tool\": \"get_alerts\", \"phase\": \"finished\", \"label\": \"Reading alerts\", \"outcome\": \"found\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_13\", \"tool\": \"get_alerts\", \"phase\": \"started\", \"label\": \"Reading alerts\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_13\", \"tool\": \"get_alerts\", \"phase\": \"finished\", \"label\": \"Reading alerts\", \"outcome\": \"tool_limit\"}\n\nevent: text_delta\ndata: {\"message_id\": \"00000000-0000-4000-8000-000000000005\", \"delta\": \"That took too many steps. Ask me for less at a time.\"}\n\nevent: done\ndata: {\"message_id\": \"00000000-0000-4000-8000-000000000005\", \"finish_reason\": \"tool_limit\"}\n\n",
       "events": [

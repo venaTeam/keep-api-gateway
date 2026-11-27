@@ -126,7 +126,9 @@ def test_the_caps():
 
 
 @pytest.mark.asyncio
-async def test_one_round_of_four_draft_calls_makes_three_drafts(app, db, gateway):
+async def test_one_round_of_four_draft_calls_makes_three_drafts(
+    app, db, gateway, no_read_tools
+):
     llm = FakeLlm(
         calls(change("fp-1"), change("fp-1"), change("fp-2"), change("fp-2")),
         says("Three of them."),
@@ -211,7 +213,9 @@ async def test_only_a_link_that_was_made_counts(app, db, gateway, links):
 
 
 @pytest.mark.asyncio
-async def test_with_no_draft_or_link_left_no_tools(app, db, gateway, links, set_env):
+async def test_with_no_draft_or_link_left_no_tools(
+    app, db, gateway, no_read_tools, links, set_env
+):
     set_env("ASSISTANT_MAX_DRAFTS_PER_TURN", 0)
     llm = FakeLlm(calls({}, {}, {}, name="open_page"), says("Here."))
     equip(app, llm, gateway)

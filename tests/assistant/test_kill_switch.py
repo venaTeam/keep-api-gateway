@@ -186,7 +186,9 @@ def test_the_longest_reason():
     assert registry._disabled_by_code == {NAME: "a" * 40}
 
 
-def test_the_setting_and_a_call_switch_off_together(monkeypatch, set_env):
+def test_the_setting_and_a_call_switch_off_together(
+    monkeypatch, set_env, no_read_tools
+):
     other = "other_kind"
     monkeypatch.setattr(
         registry,
@@ -205,7 +207,9 @@ def test_the_setting_and_a_call_switch_off_together(monkeypatch, set_env):
     assert gauge(NAME) == gauge(other) == 0
 
 
-def test_a_tool_goes_with_its_draft_kind_and_not_its_name(monkeypatch, set_env):
+def test_a_tool_goes_with_its_draft_kind_and_not_its_name(
+    monkeypatch, set_env, no_read_tools
+):
     for spec in TOOLS.values():
         assert spec.draft_kind is None or spec.draft_kind in registry.KINDS
     reads = dataclasses.replace(SPEC, name="read_alerts", draft_kind=None)
@@ -252,7 +256,9 @@ def conversation(db):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("how", HOWS)
-async def test_its_tool_and_guidance_are_not_offered(app, db, set_env, how):
+async def test_its_tool_and_guidance_are_not_offered(
+    app, db, set_env, how, no_read_tools
+):
     switch_off(how, set_env)
     gateway = FakeGateway().on_json("GET", "/whoami", whoami())
     gateway.on_json("GET", "/alerts/facets/fields", ["name"])

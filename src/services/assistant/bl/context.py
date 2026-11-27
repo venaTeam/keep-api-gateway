@@ -35,6 +35,8 @@ _MAX_PAGE_SEGMENTS = 6
 _MAX_CACHED_TENANTS = 1000
 # tenant id -> (monotonic time it ends, field names). Names only, no values.
 _fields_cache: dict[str, tuple[float, list[str]]] = {}
+# tenant id -> (monotonic time it ends, facet id by field name). Ids only, no values.
+_facets_cache: dict[str, tuple[float, dict[str, str]]] = {}
 
 
 UTC_NAME = "UTC"
@@ -129,22 +131,64 @@ async def _selected_alerts(
 async def _fields(
     reader: ReadGateway, tenant_id: str, notes: list[str]
 ) -> list[str]:
+    try:
+        return await available_fields(reader, tenant_id)
+    except GatewayError:
+        notes.append("The other fields could not be read: use the core fields only.")
+        return []
+
+
+async def available_fields(reader: ReadGateway, tenant_id: str) -> list[str]:
+    """The alert field names the context message shows, cached per tenant. Raises the
+    read's GatewayError, which is not cached."""
     # By the tenant the gateway named for this token, never by one a client sent.
     until, names = _fields_cache.get(tenant_id, (0.0, []))
     if time.monotonic() < until:
         return names
-    try:
-        names = usable_fields(await reader.alert_fields())
-    except GatewayError:
-        notes.append("The other fields could not be read: use the core fields only.")
-        return []
-    if len(_fields_cache) >= _MAX_CACHED_TENANTS:
-        _fields_cache.clear()
-    _fields_cache[tenant_id] = (
-        time.monotonic() + get_settings().fields_cache_ttl_seconds,
-        names,
-    )
+    names = usable_fields(await reader.alert_fields())
+    _remember(_fields_cache, tenant_id, names)
     return names
+
+
+async def facet_ids(reader: ReadGateway, tenant_id: str) -> dict[str, str]:
+    """The id of each of the alerts table's facets, by the field it counts, cached
+    per tenant like the field names. Raises the read's GatewayError, which is not
+    cached."""
+    until, ids = _facets_cache.get(tenant_id, (0.0, {}))
+    if time.monotonic() < until:
+        return ids
+    ids = {}
+    for facet in await reader.facets():
+        path, facet_id = facet.get("property_path"), facet.get("id")
+        # Only an id the gateway can take: it answers any other with a 500.
+        if isinstance(path, str) and _is_canonical_uuid(facet_id):
+            ids.setdefault(path, facet_id)
+    _remember(_facets_cache, tenant_id, ids)
+    return ids
+
+
+def _is_canonical_uuid(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        return str(uuid.UUID(value)) == value
+    except ValueError:
+        return False
+
+
+def drop_facet_ids(tenant_id: str) -> None:
+    """Forget a tenant's facet ids: the gateway refused a read with one of them."""
+    _facets_cache.pop(tenant_id, None)
+
+
+def _remember(cache: dict[str, tuple[float, Any]], tenant_id: str, value: Any) -> None:
+    # At most this many tenants: past it, all of them are read again.
+    if tenant_id not in cache and len(cache) >= _MAX_CACHED_TENANTS:
+        cache.clear()
+    cache[tenant_id] = (
+        time.monotonic() + get_settings().fields_cache_ttl_seconds,
+        value,
+    )
 
 
 def usable_fields(names: list[str]) -> list[str]:
@@ -164,3 +208,8 @@ def usable_fields(names: list[str]) -> list[str]:
 def reset_fields_cache() -> None:
     """Forget everything (tests)."""
     _fields_cache.clear()
+
+
+def reset_facets_cache() -> None:
+    """Forget every tenant's facet ids (tests)."""
+    _facets_cache.clear()

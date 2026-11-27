@@ -20,7 +20,7 @@ import pytest
 import sqlalchemy as sa
 
 from src.config import consts
-from src.services.assistant.bl.context import reset_fields_cache
+from src.services.assistant.bl.context import reset_facets_cache, reset_fields_cache
 from src.services.assistant.config import ENABLED_ENV_VAR, Settings, reset_settings
 from src.services.assistant.core import db as db_core
 from src.services.assistant.models.db import Conversation, Draft, Message
@@ -55,7 +55,19 @@ def assistant_environment(monkeypatch):
     yield
     reset_settings()
     reset_fields_cache()
+    reset_facets_cache()
     db_core.dispose_engine()
+
+
+@pytest.fixture()
+def no_read_tools(monkeypatch):
+    """Only the tools a turn caps (drafts, links): with a read tool offered there is
+    always one left, so a turn never runs out of tools by its caps alone."""
+    from src.services.assistant.tools.registry import TOOLS
+
+    for name, spec in list(TOOLS.items()):
+        if spec.draft_kind is None and not spec.makes_link:
+            monkeypatch.delitem(TOOLS, name)
 
 
 @pytest.fixture(autouse=True)

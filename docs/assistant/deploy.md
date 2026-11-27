@@ -70,7 +70,7 @@ role's permission to change alert status and the soft-delete guard.
 | `ASSISTANT_HISTORY_MAX_CHARS` | 48000 | |
 | `ASSISTANT_MAX_USER_MESSAGE_CHARS` | 4000 | the UI's composer has its own limit of 4000 |
 | `ASSISTANT_HEARTBEAT_SECONDS` | 10 | keep it well under the 30 s idle timeout of the UI's proxy |
-| `ASSISTANT_FIELDS_CACHE_TTL_SECONDS` | 600 | alert field names, per tenant |
+| `ASSISTANT_FIELDS_CACHE_TTL_SECONDS` | 600 | alert field names and facet ids, per tenant, for at most 1000 tenants |
 | `ASSISTANT_RATE_LIMIT_PER_MINUTE` | 10 | messages per user |
 | `ASSISTANT_RATE_LIMIT_PER_DAY` | 200 | messages per user |
 | `ASSISTANT_DRAFT_TTL_SECONDS` | 1800 | how long a draft can be confirmed |
@@ -156,7 +156,7 @@ of many lookups waits for that too. What bounds it:
 | Database threads | 5 per worker, one per connection |
 | Rounds of tool calls per turn | 8 (`ASSISTANT_MAX_TOOL_ROUNDS`) |
 | Tool calls per turn | 12, of any tool (`ASSISTANT_MAX_TOOL_CALLS_PER_TURN`) |
-| Filters the model wrote, per turn | 6; the next one gets the tool error `cel_lookup_limit` |
+| Filters the model wrote, per turn | 6: one for each `count_alerts`, `search_alerts` and `get_field_values` (none for `validate_cel` and `get_alerts`); the next one gets the tool error `cel_lookup_limit` |
 | The same read twice in a turn (a list of the tenant's, a check) | sent once, and charged once |
 | Links per turn | 3 |
 | Drafts per turn | 3 |
@@ -183,6 +183,13 @@ critical calls at the same moment, with every chat place taken, can still refuse
 - The messages of a conversation, the alerts a user selected or the model looked up, and
   the names of alert fields go to OpenAI, with `store` off, and with a hash that stands
   for the user. Another endpoint (`OPENAI_BASE_URL`) gets neither of the last two.
+- The read tools send OpenAI more of the tenant's alerts: the alerts a filter matches
+  (at most 20 a search, projected as a draft's are), how many match, the values an alert
+  field takes with their counts (counted over every match for a field with a facet,
+  over the newest 200 matches otherwise), and the filters the model wrote with the
+  gateway's diagnostics about them. A field that names people (`assignee`, `note`,
+  `*_by`, `*By`, anything with `email`) is refused, and a value that holds an email
+  address is left out. The facets cache holds field names and facet ids, never values.
 - Logs and error bodies of the assistant hold no message text, filter, alert value or
   exception text. The routes it calls log as they do for the UI.
 
