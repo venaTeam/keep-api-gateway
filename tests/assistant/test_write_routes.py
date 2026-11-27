@@ -151,6 +151,8 @@ def test_the_table_cannot_be_changed():
         assert all(isinstance(values, frozenset) for values in route.query.values())
         assert isinstance(route.path_params, tuple)
         assert route.allowed_keys is None or isinstance(route.allowed_keys, frozenset)
+        assert isinstance(route.int_path_params, frozenset)
+        assert route.int_path_params <= set(route.path_params)
 
 
 # --- what does not fit ------------------------------------------------------------------
@@ -227,6 +229,13 @@ LIST_ROW = dataclasses.replace(
     check_body=short_list,
 )
 BROKEN_ROW = dataclasses.replace(OBJECT_ROW, check_body=broken)
+# A row whose thing has a number for an id, under an owner with a UUID.
+NUMBERED_ROW = dataclasses.replace(
+    OBJECT_ROW,
+    path="/owners/{owner_id}/things/{number}",
+    path_params=("owner_id", "number"),
+    int_path_params=frozenset({"number"}),
+)
 
 
 @pytest.fixture()
@@ -235,7 +244,12 @@ def rows(monkeypatch):
         client_module,
         "WRITE_ROUTES",
         MappingProxyType(
-            {"thing": OBJECT_ROW, "things": LIST_ROW, "broken": BROKEN_ROW}
+            {
+                "thing": OBJECT_ROW,
+                "things": LIST_ROW,
+                "broken": BROKEN_ROW,
+                "numbered": NUMBERED_ROW,
+            }
         ),
     )
 
@@ -276,6 +290,100 @@ async def test_a_path_parameter_goes_into_the_path(gateway, rows):
     )
     assert (answer.result, answer.object_id) == ("ok", THING)
     assert gateway.paths() == [f"PUT /things/{THING}"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("number", ["1", "42", "9" * 19])
+async def test_a_positive_integer_goes_into_the_path_as_it_is(gateway, rows, number):
+    path = f"/owners/{THING}/things/{number}"
+    gateway.on_json("PUT", path, {"id": THING})
+    answer = await gateway.client().write(
+        caller(),
+        "numbered",
+        body={"name": "x"},
+        path_params={"owner_id": THING, "number": number},
+    )
+    assert answer.result == "ok"
+    assert gateway.paths() == [f"PUT {path}"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "number",
+    [
+        "0",
+        "01",
+        "-1",
+        "+1",
+        "1e3",
+        "1.0",
+        " 1",
+        "1 ",
+        "1\n",
+        "",
+        "1" * 20,
+        "١",  # an Arabic-Indic digit: a digit, not an ASCII one
+        "1/../2",
+        THING,
+        1,
+        True,
+        None,
+    ],
+    ids=repr,
+)
+async def test_an_integer_path_parameter_is_a_positive_integer_as_written(
+    gateway, rows, number
+):
+    """Never normalised: what is checked is what would be sent."""
+    client = gateway.client()
+    must_not_send(client)
+    with pytest.raises(GatewayUnavailable) as raised:
+        await client.write(
+            caller(),
+            "numbered",
+            body={"name": "x"},
+            path_params={"owner_id": THING, "number": number},
+        )
+    assert raised.value.sent is False
+    assert gateway.requests == []
+    assert not client._running and not client._writes
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("owner_id", ["1", "42"], ids=repr)
+async def test_the_other_path_parameters_of_such_a_row_stay_uuids(
+    gateway, rows, owner_id
+):
+    client = gateway.client()
+    must_not_send(client)
+    with pytest.raises(GatewayUnavailable) as raised:
+        await client.write(
+            caller(),
+            "numbered",
+            body={"name": "x"},
+            path_params={"owner_id": owner_id, "number": "7"},
+        )
+    assert raised.value.sent is False
+    assert gateway.requests == []
+
+
+@pytest.mark.parametrize(
+    "int_path_params",
+    [frozenset({"other"}), frozenset({"thing_id", "other"})],
+    ids=str,
+)
+def test_a_row_names_only_its_own_path_parameters_as_integers(int_path_params):
+    """Checked when the table is built, at import."""
+    with pytest.raises(ValueError):
+        dataclasses.replace(OBJECT_ROW, int_path_params=int_path_params)
+
+
+def test_a_rows_integer_path_parameters_are_a_frozenset():
+    with pytest.raises(TypeError):
+        dataclasses.replace(OBJECT_ROW, int_path_params={"thing_id"})  # type: ignore[arg-type]
+    assert dataclasses.replace(
+        OBJECT_ROW, int_path_params=frozenset({"thing_id"})
+    ).int_path_params == frozenset({"thing_id"})
 
 
 @pytest.mark.asyncio

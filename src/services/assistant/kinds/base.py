@@ -38,7 +38,7 @@ class WriteRequest:
     # A row of the client's write table.
     endpoint: str
     body: Union[dict[str, Any], list[Any]]
-    # Each value a canonical UUID.
+    # Each value a canonical UUID; a positive integer for the row's int_path_params.
     path_params: Mapping[str, str] = EMPTY
     # Keys and values from the row's allowlist.
     query: Mapping[str, str] = EMPTY

@@ -185,6 +185,16 @@ def _is_canonical_uuid(value: Any) -> bool:
         return False
 
 
+# ASCII digits only, at most a bigint's 19: `\d` would take other scripts' digits.
+_POSITIVE_INTEGER = re.compile(r"[1-9][0-9]{0,18}")
+
+
+def _is_positive_integer(value: Any) -> bool:
+    """A string of a positive integer as it is written: no sign, no leading zero, no
+    space, no exponent. Never normalised: what is checked is what is sent."""
+    return isinstance(value, str) and _POSITIVE_INTEGER.fullmatch(value) is not None
+
+
 def classify_batch_enrich(response: httpx.Response) -> GatewayResult:
     """What a batch_enrich answer says about the write."""
     status = response.status_code
@@ -257,7 +267,7 @@ class WriteRoute:
     method: Literal["POST", "PUT"]
     # A template: one `{name}` per path parameter.
     path: str
-    # Their values must be canonical UUIDs.
+    # Their values must be canonical UUIDs, except those of `int_path_params`.
     path_params: tuple[str, ...]
     # Allowed keys, each with its allowed values.
     query: Mapping[str, frozenset[str]]
@@ -270,6 +280,17 @@ class WriteRoute:
     object_id: Callable[[Any], str | None]
     # None: ASSISTANT_GATEWAY_WRITE_TIMEOUT_SECONDS.
     timeout_seconds: float | None = None
+    # Path parameters of `path_params` whose values are positive integers (a row
+    # whose id is a number) instead of canonical UUIDs.
+    int_path_params: frozenset[str] = frozenset()
+
+    def __post_init__(self) -> None:
+        # The table is built at import: a row naming a parameter it does not have
+        # fails then, not at its first write.
+        if not isinstance(self.int_path_params, frozenset):
+            raise TypeError("int_path_params must be a frozenset")
+        if not self.int_path_params <= set(self.path_params):
+            raise ValueError("int_path_params must be path parameters of the row")
 
     def timeout(self) -> float:
         if self.timeout_seconds is None:
@@ -342,8 +363,12 @@ def _path_of(
     """The path of a request that fits its route. Raises otherwise."""
     if set(path_params) != set(route.path_params):
         raise ValueError("path parameters")
-    if not all(_is_canonical_uuid(value) for value in path_params.values()):
-        raise ValueError("path parameter")
+    for name, value in path_params.items():
+        if name in route.int_path_params:
+            if not _is_positive_integer(value):
+                raise ValueError("path parameter")
+        elif not _is_canonical_uuid(value):
+            raise ValueError("path parameter")
     for key, value in query.items():
         if value not in route.query.get(key, ()):
             raise ValueError("query")

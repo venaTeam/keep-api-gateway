@@ -474,6 +474,7 @@ def test_the_client_calls_exactly_these_routes():
             route.classify.__name__,
             route.object_id.__name__,
             route.timeout_seconds,
+            route.int_path_params,
         )
         for name, route in WRITE_ROUTES.items()
     } == {
@@ -487,6 +488,7 @@ def test_the_client_calls_exactly_these_routes():
             "classify_batch_enrich",
             "_no_object",
             None,
+            frozenset(),
         ),
     }
 
