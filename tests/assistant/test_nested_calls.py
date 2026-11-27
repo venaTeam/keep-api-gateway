@@ -2,6 +2,7 @@
 own, which no deadline and no disconnect ends."""
 import ast
 import asyncio
+import dataclasses
 import itertools
 import logging
 import threading
@@ -516,6 +517,53 @@ async def test_the_wait_for_a_place_ends_at_the_callers_deadline(name, held):
     assert held.started == limit
     held.release.set()
     await asyncio.gather(*running)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", [*CALL_CLASSES, GENERAL])
+async def test_no_read_is_sent_after_the_callers_instant(name, held):
+    """A chat turn's last seconds are for the answer."""
+    client = held.fake.client()
+    late = dataclasses.replace(CHAT, deadline_at=time.monotonic() - 0.01)
+    async with asyncio.timeout(2):
+        for deadline_seconds in (None, 5):
+            with pytest.raises(GatewayUnavailable) as caught:
+                await class_call(
+                    client, name, who=late, deadline_seconds=deadline_seconds
+                )
+            assert caught.value.sent is False
+    assert held.started == 0
+    assert (await class_call(client, name, path="/fast")).status_code == 200
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", CALL_CLASSES)
+async def test_the_wait_for_a_place_ends_at_the_callers_instant(name, held):
+    limit = CALL_CLASSES[name].limit
+    client = held.fake.client()
+    running = await take_places(client, name, limit)
+    soon = dataclasses.replace(CHAT, deadline_at=time.monotonic() + 0.05)
+    started = time.monotonic()
+    with pytest.raises(GatewayUnavailable) as caught:
+        await class_call(client, name, who=soon, deadline_seconds=5)
+    assert caught.value.sent is False
+    assert time.monotonic() - started < 1
+    assert held.started == limit
+    held.release.set()
+    await asyncio.gather(*running)
+
+
+@pytest.mark.asyncio
+async def test_the_answer_is_not_awaited_past_the_callers_instant(slow):
+    soon = dataclasses.replace(CHAT, deadline_at=time.monotonic() + 0.05)
+    started = time.monotonic()
+    with pytest.raises(GatewayUnavailable):
+        await slow.fake.client().query_alerts(soon, "true", 5, deadline_seconds=5)
+    assert time.monotonic() - started < 1
+    # The call itself goes on.
+    assert slow.started == 1
+    slow.release.set()
+    await until(lambda: slow.finished == 1)
 
 
 @pytest.mark.asyncio

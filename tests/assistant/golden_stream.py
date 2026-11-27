@@ -651,6 +651,18 @@ def streams() -> dict[str, list]:
             _text(4, "A preset with this name exists already."),
             _done("stop", 4),
         ],
+        # The 12th call runs, the 13th of the same round does not; then no tools.
+        "past_the_tool_calls": [
+            _conversation_event(),
+            *_tool_round(
+                "call_12", "found", tool="get_alerts", label="Reading alerts"
+            ),
+            *_tool_round(
+                "call_13", "tool_limit", tool="get_alerts", label="Reading alerts"
+            ),
+            _text(5, "That took too many steps. Ask me for less at a time."),
+            _done("tool_limit", 5),
+        ],
     }
     for code in get_args(s.StreamErrorCode):
         tool_events = (

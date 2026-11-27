@@ -302,6 +302,27 @@ def test_a_reader_for_another_request_does_not_keep_the_deadline():
     assert [options["deadline_seconds"] for _, _, options in recorder.asked] == [None, 3]
 
 
+def test_a_turns_instant_goes_with_its_reads_and_only_comes_sooner():
+    """A chat turn's: every reader made from the turn's, a draft's included, ends its
+    calls in time for the answer."""
+    assert reader()._caller.deadline_at is None
+    turn = reader().for_request(uuid.uuid4(), deadline_at=100.0)
+    draft = turn.for_request(uuid.uuid4())
+    sooner = turn.for_request(uuid.uuid4(), deadline_at=50.0)
+    later = turn.for_request(uuid.uuid4(), deadline_at=200.0)
+    assert [r._caller.deadline_at for r in (turn, draft, sooner, later)] == [
+        100.0,
+        100.0,
+        50.0,
+        100.0,
+    ]
+    assert draft._caller.request_id != turn._caller.request_id
+    # Each read hands the client the reader's caller, instant and all.
+    recorder = Recorder()
+    every_read(ReadGateway(recorder, draft._caller))  # type: ignore[arg-type]
+    assert [args[0] for _, args, _ in recorder.asked] == [draft._caller] * 4
+
+
 def test_the_reads_are_the_clients_own():
     """The same signatures, less the caller and whether the call is critical, which
     the reader decides: nothing is added on the way."""

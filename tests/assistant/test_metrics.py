@@ -26,6 +26,7 @@ def test_every_collector_is_in_the_registry_the_gateway_serves():
     for name in (
         "turns_total",
         "turn_duration_seconds",
+        "turn_tool_rounds",
         "turn_lock_conflicts_total",
         "rate_limited_total",
         "llm_first_token_seconds",

@@ -119,6 +119,9 @@ class Caller:
     request_id: str
     # The address of the user's own request: what the gateway's rate limiter counts.
     client: tuple[str, int] = UNKNOWN_CLIENT
+    # A time.monotonic() instant no read runs past, the wait for a place included:
+    # a chat turn's, so that its last seconds are left for the answer. None: none.
+    deadline_at: float | None = None
 
 
 @dataclass(frozen=True)
@@ -801,22 +804,27 @@ class GatewayClient:
     ) -> httpx.Response:
         """A read whose failures are GatewayErrors. `call_class`: its row of
         CALL_CLASSES, None for a chat call of no class. `deadline_seconds` and
-        `critical` as for the reads above."""
+        `critical` as for the reads above; the caller's `deadline_at` bounds both."""
         started = time.monotonic()
         seconds = (
             get_settings().gateway_read_timeout_seconds if timeout is None else timeout
         )
+        ends = [] if caller.deadline_at is None else [caller.deadline_at]
+        if deadline_seconds is not None:
+            ends.append(started + deadline_seconds)
+        until = min(ends, default=None)
         slot, waits = self._class_place(call_class, critical)
         if slot is not None:
+            wait = seconds if deadline_seconds is None else deadline_seconds
             await self._place(
                 caller,
                 endpoint,
                 slot,
                 waits=waits,
-                seconds=seconds if deadline_seconds is None else deadline_seconds,
+                seconds=wait if until is None else min(wait, until - started),
             )
-        if deadline_seconds is not None:
-            seconds = min(seconds, deadline_seconds - (time.monotonic() - started))
+        if until is not None:
+            seconds = min(seconds, until - time.monotonic())
             if seconds <= 0:
                 # Nobody would wait for its answer.
                 if slot is not None:

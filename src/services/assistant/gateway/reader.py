@@ -44,13 +44,21 @@ class ReadGateway:
         *,
         deadline_seconds: float | None = None,
         critical: bool = False,
+        deadline_at: float | None = None,
     ) -> "ReadGateway":
         """The same user's reads under another X-Request-ID (a turn's or a draft's id,
         which the gateway's audit trail then names). `deadline_seconds` and `critical`
-        as above: neither is carried over."""
+        as above: neither is carried over. `deadline_at`: a time.monotonic() instant
+        no read of the new reader runs past (the Caller's); one this reader has is
+        carried over, and can only come sooner."""
+        caller = dataclasses.replace(self._caller, request_id=str(request_id))
+        if deadline_at is not None:
+            if caller.deadline_at is not None:
+                deadline_at = min(deadline_at, caller.deadline_at)
+            caller = dataclasses.replace(caller, deadline_at=deadline_at)
         return ReadGateway(
             self._client,
-            dataclasses.replace(self._caller, request_id=str(request_id)),
+            caller,
             deadline_seconds=deadline_seconds,
             critical=critical,
         )

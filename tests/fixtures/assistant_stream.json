@@ -24,7 +24,8 @@
       "found",
       "not_found",
       "link_ready",
-      "name_taken"
+      "name_taken",
+      "tool_limit"
     ],
     "stream_error_codes": [
       "llm_unavailable",
@@ -647,6 +648,71 @@
           "data": {
             "message_id": "00000000-0000-4000-8000-000000000004",
             "finish_reason": "stop"
+          }
+        }
+      ]
+    },
+    "past_the_tool_calls": {
+      "raw": "event: conversation\ndata: {\"conversation_id\": \"00000000-0000-4000-8000-000000000001\", \"user_message_id\": \"00000000-0000-4000-8000-000000000002\", \"turn_id\": \"00000000-0000-4000-8000-000000000003\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_12\", \"tool\": \"get_alerts\", \"phase\": \"started\", \"label\": \"Reading alerts\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_12\", \"tool\": \"get_alerts\", \"phase\": \"finished\", \"label\": \"Reading alerts\", \"outcome\": \"found\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_13\", \"tool\": \"get_alerts\", \"phase\": \"started\", \"label\": \"Reading alerts\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_13\", \"tool\": \"get_alerts\", \"phase\": \"finished\", \"label\": \"Reading alerts\", \"outcome\": \"tool_limit\"}\n\nevent: text_delta\ndata: {\"message_id\": \"00000000-0000-4000-8000-000000000005\", \"delta\": \"That took too many steps. Ask me for less at a time.\"}\n\nevent: done\ndata: {\"message_id\": \"00000000-0000-4000-8000-000000000005\", \"finish_reason\": \"tool_limit\"}\n\n",
+      "events": [
+        {
+          "event": "conversation",
+          "data": {
+            "conversation_id": "00000000-0000-4000-8000-000000000001",
+            "user_message_id": "00000000-0000-4000-8000-000000000002",
+            "turn_id": "00000000-0000-4000-8000-000000000003"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_12",
+            "tool": "get_alerts",
+            "phase": "started",
+            "label": "Reading alerts"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_12",
+            "tool": "get_alerts",
+            "phase": "finished",
+            "label": "Reading alerts",
+            "outcome": "found"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_13",
+            "tool": "get_alerts",
+            "phase": "started",
+            "label": "Reading alerts"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_13",
+            "tool": "get_alerts",
+            "phase": "finished",
+            "label": "Reading alerts",
+            "outcome": "tool_limit"
+          }
+        },
+        {
+          "event": "text_delta",
+          "data": {
+            "message_id": "00000000-0000-4000-8000-000000000005",
+            "delta": "That took too many steps. Ask me for less at a time."
+          }
+        },
+        {
+          "event": "done",
+          "data": {
+            "message_id": "00000000-0000-4000-8000-000000000005",
+            "finish_reason": "tool_limit"
           }
         }
       ]

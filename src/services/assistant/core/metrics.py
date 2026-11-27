@@ -13,6 +13,12 @@ turns_total = Counter(f"{_PREFIX}turns_total", "Finished chat turns", ["result"]
 turn_duration_seconds = Histogram(
     f"{_PREFIX}turn_duration_seconds", "Chat turn duration", buckets=_TURN_BUCKETS
 )
+# Rounds of tool calls in a turn: how close turns come to ASSISTANT_MAX_TOOL_ROUNDS.
+turn_tool_rounds = Histogram(
+    f"{_PREFIX}turn_tool_rounds",
+    "Rounds of tool calls in a chat turn",
+    buckets=(0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 16),
+)
 turn_lock_conflicts_total = Counter(
     f"{_PREFIX}turn_lock_conflicts_total", "Turns refused: one is already running"
 )

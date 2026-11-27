@@ -226,15 +226,15 @@ async def test_the_lock_is_free_when_done_arrives(app, db, gateway):
 
 
 @pytest.mark.asyncio
-async def test_at_most_four_tool_rounds(app, db, gateway):
+async def test_at_most_eight_tool_rounds(app, db, gateway):
     llm = FakeLlm(
-        *(calls(change(f"gone-{n}"), first=n) for n in range(4)), says("I give up.")
+        *(calls(change(f"gone-{n}"), first=n) for n in range(8)), says("I give up.")
     )
     gateway.on_json(*QUERY, query_result())
     equip(app, llm, gateway)
     before = counter(metrics.turns_total, result="tool_limit")
     exchange = await post_chat(app, "ack").finish()
-    assert [r.tool_choice for r in llm.requests] == ["auto"] * 4 + ["none"]
+    assert [r.tool_choice for r in llm.requests] == ["auto"] * 8 + ["none"]
     assert exchange.event("done")["finish_reason"] == "tool_limit"
     assert exchange.event("text_delta")["delta"] == "I give up."
     assert counter(metrics.turns_total, result="tool_limit") == before + 1
@@ -296,10 +296,10 @@ async def test_unusable_arguments_go_back_to_the_model(app, db, gateway):
 async def test_cel_lookups_are_counted_over_the_whole_turn(app, db, gateway):
     gateway.on_json(*QUERY, query_result())
     by_cel = change(cel="true")
-    llm = FakeLlm(calls(*[by_cel] * 5), says("ok"))
+    llm = FakeLlm(calls(*[by_cel] * 7), says("ok"))
     equip(app, llm, gateway)
     await post_chat(app, "ack").finish()
-    assert gateway.paths().count("POST /alerts/query") == 4
+    assert gateway.paths().count("POST /alerts/query") == 6
     assert '"code":"cel_lookup_limit"' in llm.requests[1].messages[-1]["content"]
 
 

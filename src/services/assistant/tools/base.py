@@ -1,7 +1,8 @@
 """What every tool provides. A tool only reads and proposes: it has no write path.
 
 A new tool is one module with a ToolSpec, plus its line in the registry. A tool that
-makes drafts also has a kind of the same name in `kinds/registry.py`.
+makes drafts names its kind of `kinds/registry.py` in `draft_kind`; one that links to
+a page says so in `makes_link`. The chat turn counts both against their caps.
 """
 import json
 import uuid
@@ -25,7 +26,10 @@ from src.services.assistant.llm.client import LlmTool
 from src.services.assistant.models.api.stream import StreamErrorCode, ToolOutcomeCode
 from src.services.assistant.models.identity import Identity
 
-MAX_CEL_LOOKUPS_PER_TURN = 4
+# Units of a turn's filter budget: a filter the model wrote costs at least one.
+MAX_FILTER_LOOKUPS_PER_TURN = 6
+# Links a turn makes; past them, a link tool gets the tool error `link_limit`.
+MAX_LINKS_PER_TURN = 3
 MAX_TOOL_RESULT_CHARS = 8000
 MAX_DIAGNOSTICS_SHOWN = 5
 MAX_DIAGNOSTIC_CHARS = 300
@@ -44,7 +48,7 @@ class ToolContext:
     gateway: ReadGateway
     # Model-written filters have no early exit on the gateway's side. Charged through
     # `take_filter_lookup` only.
-    cel_lookups_left: int = MAX_CEL_LOOKUPS_PER_TURN
+    cel_lookups_left: int = MAX_FILTER_LOOKUPS_PER_TURN
     # The turn's instant, the one its context message shows: UTC, whole seconds.
     now: datetime = field(default_factory=_this_second)
     # The user's time zone, for times they give in their own words. datetime's own UTC
@@ -95,6 +99,11 @@ class ToolSpec:
     prompt_guidance: str
     # (context, raw JSON arguments). Raises only on a bug.
     run: Callable[[ToolContext, str], Awaitable[ToolOutcome]]
+    # The kind of the drafts it makes, None for a tool that makes none: the per-turn
+    # draft cap and the kill switch apply to it.
+    draft_kind: str | None = None
+    # It links to a page: the per-turn link cap applies to it.
+    makes_link: bool = False
 
     def llm_tool(self) -> LlmTool:
         return LlmTool(self.name, self.description, self.parameters)

@@ -8,7 +8,11 @@ TOOLS: dict[str, ToolSpec] = {spec.name: spec for spec in (change_alert_status.S
 
 
 def offered_tools() -> dict[str, ToolSpec]:
-    """What a turn offers the model: every tool but those that make a draft kind that is
-    switched off (a draft tool is named after its kind)."""
+    """What a turn offers the model: every tool but those whose `draft_kind` is
+    switched off."""
     off = disabled_kinds()
-    return {name: spec for name, spec in TOOLS.items() if name not in off}
+    return {
+        name: spec
+        for name, spec in TOOLS.items()
+        if spec.draft_kind is None or spec.draft_kind not in off
+    }

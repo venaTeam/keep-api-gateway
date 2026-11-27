@@ -35,6 +35,8 @@ ToolOutcomeCode = Literal[
     "not_found",
     "link_ready",
     "name_taken",
+    # A call past the turn's tool calls: it did not run.
+    "tool_limit",
 ]
 StreamErrorCode = Literal[
     "llm_unavailable",

@@ -61,9 +61,10 @@ role's permission to change alert status and the soft-delete guard.
 | `OPENAI_BASE_URL` | OpenAI's | https, without credentials in it |
 | `ASSISTANT_OPENAI_TIMEOUT_SECONDS` | 60 | one LLM call |
 | `ASSISTANT_OPENAI_REASONING_EFFORT` |  | not sent when empty; `none` for models that refuse function tools on chat completions otherwise, such as `gpt-6-luna` |
-| `ASSISTANT_TURN_DEADLINE_SECONDS` | 90 | one chat turn |
-| `ASSISTANT_MAX_TOOL_ROUNDS` | 4 | per turn |
-| `ASSISTANT_MAX_DRAFTS_PER_TURN` | 3 | |
+| `ASSISTANT_TURN_DEADLINE_SECONDS` | 90 | one chat turn. No tools are offered in its last 20 s, and the calls to the app's own routes end 15 s before it: keep it well above 35 |
+| `ASSISTANT_MAX_TOOL_ROUNDS` | 8 | rounds of tool calls per turn |
+| `ASSISTANT_MAX_TOOL_CALLS_PER_TURN` | 12 | every tool call of a turn, whatever the tool. A call past it does not run (tool outcome `tool_limit`), and the model then answers without tools |
+| `ASSISTANT_MAX_DRAFTS_PER_TURN` | 3 | calls of draft tools only: reads and links go on after the last draft |
 | `ASSISTANT_MAX_COMPLETION_TOKENS` | 1024 | per LLM call |
 | `ASSISTANT_HISTORY_MAX_MESSAGES` | 30 | what the model sees of a conversation |
 | `ASSISTANT_HISTORY_MAX_CHARS` | 48000 | |
@@ -92,8 +93,15 @@ role's permission to change alert status and the soft-delete guard.
 The database is the gateway's own; `DATABASE_POOL_*` and the like do not reach the
 assistant. A value that cannot be read, or that is not above 0, is logged and the default
 is used. Only `ASSISTANT_DB_MAX_OVERFLOW`, `ASSISTANT_MAX_TOOL_ROUNDS`,
-`ASSISTANT_MAX_DRAFTS_PER_TURN`, `ASSISTANT_FIELDS_CACHE_TTL_SECONDS` and the rate limits
-may be 0. `ASSISTANT_GATEWAY_WRITE_TIMEOUT_SECONDS` above 12 is logged and 12 is used.
+`ASSISTANT_MAX_TOOL_CALLS_PER_TURN`, `ASSISTANT_MAX_DRAFTS_PER_TURN`,
+`ASSISTANT_FIELDS_CACHE_TTL_SECONDS` and the rate limits may be 0.
+`ASSISTANT_GATEWAY_WRITE_TIMEOUT_SECONDS` above 12 is logged and 12 is used.
+
+Before an upgrade, check the values a deployment pins: a pinned
+`ASSISTANT_MAX_TOOL_ROUNDS=4` (the earlier default) keeps 4 rounds, too few for the
+lookups of one question, and a pinned lower `ASSISTANT_HISTORY_MAX_MESSAGES` or
+`ASSISTANT_HISTORY_MAX_CHARS` shortens what the model sees of a conversation.
+`keep_assistant_turn_tool_rounds_bucket` shows how close turns come to the rounds.
 
 The assistant's connections set `statement_timeout` through the `options` startup
 parameter, in place of an `options` in the connection string. PgBouncer refuses that
@@ -131,7 +139,10 @@ and the next run repeats it.
 
 Everything runs in the gateway's own process and event loop. The calls to the app's own
 routes are requests like any other: they count in its HTTP metrics and against its rate
-limits, with the caller's address. What bounds it:
+limits, with the caller's address. With `KEEP_USE_LIMITER` on, they spend the same
+SlowAPI budget as the user's own clicks in the UI. With single-tenant Keycloak, each of
+them makes a UMA permission check against Keycloak, as a request from the UI does: a turn
+of many lookups waits for that too. What bounds it:
 
 | What | Bound |
 |---|---|
@@ -139,10 +150,16 @@ limits, with the caller's address. What bounds it:
 | Running turns per user | 2, one per conversation |
 | Calls to the app's own routes | 8 at once per worker, then `gateway_unavailable`: 1 kept for Confirm's write, 1 for critical calls (who is asking, Confirm's looks, reconcile's look), 6 for chats |
 | Filters the model wrote | 4 of the 6 at once; the next one waits 5 s for its turn |
+| Short reads of the tenant's lists, and checks | 2 of the 6 at once; the next one waits, at most as long as its caller does |
 | Reads of single alerts | 4 of the 6 at once; the others wait. A critical look reads 2 at once, in places of its own |
 | Database threads | 5 per worker, one per connection |
-| Alerts per draft | 20 |
+| Rounds of tool calls per turn | 8 (`ASSISTANT_MAX_TOOL_ROUNDS`) |
+| Tool calls per turn | 12, of any tool (`ASSISTANT_MAX_TOOL_CALLS_PER_TURN`) |
+| Filters the model wrote, per turn | 6; the next one gets the tool error `cel_lookup_limit` |
+| Links per turn | 3 |
 | Drafts per turn | 3 |
+| Time of a turn | 90 s. No tools in the last 20 s; calls to the app's own routes end 15 s before the end |
+| Alerts per draft | 20 |
 | Request body | 256 KiB |
 
 `batch_enrich` blocks the event loop while it runs, for the status modal as for Confirm.
@@ -179,6 +196,7 @@ thresholds are starting points.
 | `keep_assistant_llm_errors_total` | by `kind`: `unavailable`, `rate_limited`, `timeout`, `rejected`, `misconfigured` (401, 403 or 404) |
 | `keep_assistant_llm_tokens_total` | by `tenant_id`, `model` and `type`: one key serves all tenants |
 | `keep_assistant_turns_total` | by `result`: `ok`, `error`, `cancelled`, `tool_limit`, `timeout` |
+| `keep_assistant_turn_tool_rounds_bucket` | rounds of tool calls per turn; many at 8 mean the rounds are too few |
 | `keep_assistant_turn_lock_conflicts_total` | a message while the conversation's turn runs, or seems to |
 | `keep_assistant_rate_limited_total` | |
 | `keep_assistant_gateway_requests_total` | by `endpoint` and `status_class`, also `timeout`, `not_sent`, `dropped`, `cancelled` |

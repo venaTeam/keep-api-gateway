@@ -193,7 +193,9 @@ def test_the_setting_and_a_call_switch_off_together(monkeypatch, set_env):
         "KINDS",
         MappingProxyType({**registry.KINDS, other: alert_status.KIND}),
     )
-    monkeypatch.setitem(TOOLS, other, dataclasses.replace(SPEC, name=other))
+    monkeypatch.setitem(
+        TOOLS, other, dataclasses.replace(SPEC, name=other, draft_kind=other)
+    )
     set_env(SETTING, other)
     assert registry.disabled_kinds() == {other}
     registry.disable_kinds([NAME], "not_on_this_deployment")
@@ -201,6 +203,17 @@ def test_the_setting_and_a_call_switch_off_together(monkeypatch, set_env):
     assert offered_tools() == {}
     lifecycle._start_series()
     assert gauge(NAME) == gauge(other) == 0
+
+
+def test_a_tool_goes_with_its_draft_kind_and_not_its_name(monkeypatch, set_env):
+    for spec in TOOLS.values():
+        assert spec.draft_kind is None or spec.draft_kind in registry.KINDS
+    reads = dataclasses.replace(SPEC, name="read_alerts", draft_kind=None)
+    renamed = dataclasses.replace(SPEC, name="status_change")
+    for spec in (reads, renamed):
+        monkeypatch.setitem(TOOLS, spec.name, spec)
+    set_env(SETTING, NAME)
+    assert set(offered_tools()) == {"read_alerts"}
 
 
 def test_there_is_no_way_back_on():

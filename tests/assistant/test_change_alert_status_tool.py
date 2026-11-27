@@ -84,7 +84,7 @@ def test_the_schema_is_strict_and_matches_the_validated_arguments():
 
 def test_the_cap_is_a_constant():
     assert MAX_ALERTS_PER_DRAFT == 20
-    assert base.MAX_CEL_LOOKUPS_PER_TURN == 4
+    assert base.MAX_FILTER_LOOKUPS_PER_TURN == 6
 
 
 # --- arguments ---------------------------------------------------------------
@@ -448,12 +448,12 @@ async def test_gateway_failures_by_fingerprint():
 async def test_cel_lookups_are_limited_per_turn():
     fake = results(alert("a"))
     shared = context(fake)
-    for _ in range(4):
+    for _ in range(6):
         assert (await run(shared, arguments(cel="true"))).code == "draft_created"
     outcome = await run(shared, arguments(cel="true"))
     assert outcome.code == "error"
     assert outcome.result == {"status": "error", "code": "cel_lookup_limit"}
-    assert len(fake.requests) == 4
+    assert len(fake.requests) == 6
     # Fingerprint lookups do not count.
     assert (await run(shared, arguments(fingerprints=["a"]))).code == "draft_created"
 
@@ -472,6 +472,7 @@ def test_outcome_codes_are_the_contract():
         "not_found",
         "link_ready",
         "name_taken",
+        "tool_limit",
     }
 
 

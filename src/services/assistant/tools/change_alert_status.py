@@ -269,4 +269,5 @@ SPEC = ToolSpec(
     label="Preparing a status change",
     prompt_guidance=PROMPT_GUIDANCE,
     run=run,
+    draft_kind=NAME,
 )

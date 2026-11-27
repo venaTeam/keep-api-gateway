@@ -85,7 +85,7 @@ async def test_by_fingerprints():
     assert selection.not_found == ("gone",)
     assert selection.unresolvable == ("x y/z",)
     assert selection.missing() == {"not_found": ["gone"], "unresolvable": ["x y/z"]}
-    assert shared.cel_lookups_left == base.MAX_CEL_LOOKUPS_PER_TURN
+    assert shared.cel_lookups_left == base.MAX_FILTER_LOOKUPS_PER_TURN
     for request in fake.requests:
         assert request.headers["X-Request-ID"] == str(DRAFT_ID)
 
@@ -111,7 +111,7 @@ async def test_more_fingerprints_than_a_draft_holds_need_no_lookup():
         {"status": "too_many_matches", "matched_count": 21, "limit": 20},
     )
     assert fake.requests == []
-    assert shared.cel_lookups_left == base.MAX_CEL_LOOKUPS_PER_TURN
+    assert shared.cel_lookups_left == base.MAX_FILTER_LOOKUPS_PER_TURN
 
 
 @pytest.mark.asyncio
@@ -147,7 +147,7 @@ async def test_by_cel():
     assert fake.paths() == ["POST /alerts/query"]
     assert fake.body() == {"cel": 'severity == "critical"', "limit": 21}
     assert fake.requests[0].headers["X-Request-ID"] == str(DRAFT_ID)
-    assert shared.cel_lookups_left == base.MAX_CEL_LOOKUPS_PER_TURN - 1
+    assert shared.cel_lookups_left == base.MAX_FILTER_LOOKUPS_PER_TURN - 1
 
 
 @pytest.mark.asyncio
@@ -201,11 +201,11 @@ async def test_more_matches_than_a_draft_holds(count, matched_count):
 async def test_a_filter_costs_one_unit_of_the_turns_budget():
     fake = results(alert("a"))
     shared = context(fake)
-    for _ in range(base.MAX_CEL_LOOKUPS_PER_TURN):
+    for _ in range(base.MAX_FILTER_LOOKUPS_PER_TURN):
         assert isinstance(await select(fake, shared, cel="true"), AlertSelection)
     outcome = await select(fake, shared, cel="true")
     assert outcome == ToolOutcome("error", {"status": "error", "code": "cel_lookup_limit"})
-    assert len(fake.requests) == base.MAX_CEL_LOOKUPS_PER_TURN
+    assert len(fake.requests) == base.MAX_FILTER_LOOKUPS_PER_TURN
     assert shared.cel_lookups_left == 0
     # Fingerprints cost nothing.
     assert isinstance(await select(fake, shared, fingerprints=["a"]), AlertSelection)
@@ -327,8 +327,8 @@ def test_anything_else_is_not_a_read_failure(exc):
 
 def test_the_filter_budget_is_charged_only_when_it_holds():
     shared = context(FakeGateway())
-    assert shared.cel_lookups_left == base.MAX_CEL_LOOKUPS_PER_TURN == 4
-    assert shared.take_filter_lookup(3) is True
+    assert shared.cel_lookups_left == base.MAX_FILTER_LOOKUPS_PER_TURN == 6
+    assert shared.take_filter_lookup(5) is True
     assert shared.take_filter_lookup(2) is False
     assert shared.cel_lookups_left == 1
     assert shared.take_filter_lookup() is True

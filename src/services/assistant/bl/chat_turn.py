@@ -13,6 +13,7 @@ import uuid
 from collections.abc import AsyncGenerator
 from contextlib import aclosing
 from dataclasses import dataclass, field
+from time import monotonic
 
 from src.services.assistant.api.route import describe_exception
 from src.services.assistant.bl import context as context_bl
@@ -47,8 +48,10 @@ from src.services.assistant.models.api.stream import (
 )
 from src.services.assistant.models.identity import Identity
 from src.services.assistant.tools.base import (
+    MAX_LINKS_PER_TURN,
     ToolContext,
     ToolOutcome,
+    ToolSpec,
     encode_result,
     tool_error,
 )
@@ -59,6 +62,13 @@ logger = logging.getLogger(__name__)
 # A producer that does not end when it is cancelled is left behind: without the turn
 # lock it cannot store anything.
 PRODUCER_END_SECONDS = 10.0
+# The last seconds of a turn are for the answer: no tools are offered in them.
+TOOLS_OFF_SECONDS = 20.0
+# A nested call of a turn ends at the latest this long before the turn's deadline.
+NESTED_CALL_MARGIN_SECONDS = 15.0
+
+# A call past the turn's tool calls, which does not run.
+_TOOL_LIMIT = ToolOutcome("tool_limit", {"status": "error", "code": "tool_limit"})
 
 
 class TurnFailed(Exception):
@@ -114,8 +124,14 @@ class Turn:
         self.ref = ref
         self._identity = identity
         self._chat_request = request
-        # Reads only: a turn never writes.
-        self._gateway = gateway.for_request(ref.turn_id)
+        # A time.monotonic() instant. `_run` keeps the deadline; this one, a moment
+        # earlier, decides what is still worth starting.
+        self._deadline = monotonic() + get_settings().turn_deadline_seconds
+        # Reads only: a turn never writes. Its nested calls leave the last seconds of
+        # the turn to the answer.
+        self._gateway = gateway.for_request(
+            ref.turn_id, deadline_at=self._deadline - NESTED_CALL_MARGIN_SECONDS
+        )
         self._llm = llm
         zone, zone_name = context_bl.user_zone(request.context.timezone)
         # Its `now` is the turn's instant: the context message shows the same.
@@ -125,8 +141,11 @@ class Turn:
         # Without those of a draft kind that is switched off, for the whole turn.
         self._offered = offered_tools()
         self._round = _Round()
+        # What the turn's caps count: rounds of calls, every call, drafts and links.
         self._rounds = 0
+        self._calls = 0
         self._drafts = 0
+        self._links = 0
         # The last stored answer that has text.
         self._message_id: uuid.UUID | None = None
         self._stop = asyncio.Event()
@@ -252,6 +271,7 @@ class Turn:
     def _report(self, end: _End, seconds: float) -> None:
         metrics.turns_total.labels(result=end.result).inc()
         metrics.turn_duration_seconds.observe(seconds)
+        metrics.turn_tool_rounds.observe(self._rounds)
         logger.info(
             "assistant: turn finished",
             extra={
@@ -262,7 +282,9 @@ class Turn:
                 "finish_reason": end.finish,
                 "stream_error": end.error,
                 "rounds": self._rounds,
+                "calls": self._calls,
                 "drafts": self._drafts,
+                "links": self._links,
                 "seconds": round(seconds, 2),
             },
         )
@@ -288,14 +310,27 @@ class Turn:
             {"role": "user", "content": self._chat_request.message},
         ]
         while True:
-            out_of_rounds = self._rounds >= settings.max_tool_rounds
-            no_tools = out_of_rounds or self._drafts >= settings.max_drafts_per_turn
+            out_of_tools = (
+                self._rounds >= settings.max_tool_rounds
+                or self._calls >= settings.max_tool_calls_per_turn
+            )
+            # Every tool it offers has reached its cap. With none offered there is no
+            # choice to send, and a call is answered like any unknown tool's.
+            all_capped = bool(self._offered) and not any(
+                self._usable(tool) for tool in self._offered.values()
+            )
+            # The same tools every round, offered or not: the prompt's prefix stays.
+            no_tools = (
+                out_of_tools
+                or all_capped
+                or self._deadline - monotonic() < TOOLS_OFF_SECONDS
+            )
             round_ = await self._complete(messages, "none" if no_tools else "auto")
             if no_tools:
                 round_.calls = []  # an endpoint may not keep to it
             await self._save(round_)
             if not round_.calls:
-                if out_of_rounds:
+                if out_of_tools:
                     return "tool_limit"
                 return "length" if round_.reason == "length" else "stop"
             self._rounds += 1
@@ -424,14 +459,35 @@ class Turn:
             raise TurnFailed(outcome.stream_error)
         return result
 
+    def _usable(self, tool: ToolSpec) -> bool:
+        """Whether a call of `tool` can still do something in this turn."""
+        return self._cap_reached(tool) is None
+
+    def _cap_reached(self, tool: ToolSpec) -> str | None:
+        """The tool error of a per-turn cap `tool` has reached, if any. The caps count
+        only the tools they are about: reads go on after the last draft."""
+        if tool.draft_kind is not None:
+            if self._drafts >= get_settings().max_drafts_per_turn:
+                return "draft_limit"
+        if tool.makes_link and self._links >= MAX_LINKS_PER_TURN:
+            return "link_limit"
+        return None
+
     async def _outcome(self, call: ToolCallComplete) -> ToolOutcome:
+        # Every call counts, an unknown tool's too. Several can come in one round.
+        self._calls += 1
+        if self._calls > get_settings().max_tool_calls_per_turn:
+            return _TOOL_LIMIT
         tool = self._offered.get(call.name)
         if tool is None:
             return tool_error("unknown_tool")
-        # Several calls can come in one round.
-        if self._drafts >= get_settings().max_drafts_per_turn:
-            return tool_error("draft_limit")
-        return await tool.run(self._tools, call.arguments)
+        cap = self._cap_reached(tool)
+        if cap is not None:
+            return tool_error(cap)
+        outcome = await tool.run(self._tools, call.arguments)
+        if tool.makes_link and outcome.code == "link_ready":
+            self._links += 1
+        return outcome
 
 
 async def begin(

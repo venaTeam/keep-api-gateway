@@ -52,6 +52,7 @@ NUMBERS = [
 MAY_BE_ZERO = {
     "db_max_overflow",
     "max_tool_rounds",
+    "max_tool_calls_per_turn",
     "max_drafts_per_turn",
     "fields_cache_ttl_seconds",
     "rate_limit_per_minute",

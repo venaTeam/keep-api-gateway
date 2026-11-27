@@ -112,7 +112,11 @@ class Settings:
 
     # Chat turn
     turn_deadline_seconds: float = _env("ASSISTANT_TURN_DEADLINE_SECONDS", 90.0, float)
-    max_tool_rounds: int = _env("ASSISTANT_MAX_TOOL_ROUNDS", 4, int, zero=True)
+    max_tool_rounds: int = _env("ASSISTANT_MAX_TOOL_ROUNDS", 8, int, zero=True)
+    # Every tool call counts, whatever the tool and the round.
+    max_tool_calls_per_turn: int = _env(
+        "ASSISTANT_MAX_TOOL_CALLS_PER_TURN", 12, int, zero=True
+    )
     max_drafts_per_turn: int = _env(
         "ASSISTANT_MAX_DRAFTS_PER_TURN", 3, int, zero=True
     )
