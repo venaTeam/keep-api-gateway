@@ -5,7 +5,10 @@ import pytest
 
 from src.services.assistant.bl import drafts_bl
 from src.services.assistant.core import metrics
+from src.services.assistant.exceptions import VALIDATION_MESSAGES
+from src.services.assistant.kinds import alert_status
 from src.services.assistant.models.db import Conversation, Draft
+from tests.assistant import golden_stream
 from tests.assistant.conftest import OTHER_TENANT
 from tests.assistant.fakes import whoami
 from tests.assistant.rows import (
@@ -208,4 +211,150 @@ async def test_without_a_token(app, db, conversation):
     draft = add_draft(db, conversation)
     exchange = await post(app, draft, token=None).finish()
     assert (exchange.status, exchange.code) == (401, "unauthenticated")
+    assert read(db, Draft, draft)["state"] == "pending"
+
+
+# --- put away to finish in the form ---------------------------------------------------
+
+OPENED = {"reason": "opened_in_form"}
+
+
+@pytest.fixture()
+def has_a_form(monkeypatch):
+    """A kind with a form to finish in, as presets and correlation rules have. What
+    the model is told is recorded."""
+    monkeypatch.setattr(alert_status.AlertStatusKind, "can_open_in_form", True)
+    told = []
+    text = alert_status.AlertStatusKind.discarded_text
+
+    def recorded(self, draft, reason):
+        told.append(reason)
+        return text(self, draft, reason)
+
+    monkeypatch.setattr(alert_status.AlertStatusKind, "discarded_text", recorded)
+    return told
+
+
+def opened_in_form() -> float:
+    return metrics.drafts_total.labels(
+        kind="change_alert_status", event="opened_in_form"
+    )._value.get()
+
+
+def refused(exchange, field: str) -> None:
+    message = VALIDATION_MESSAGES["invalid_value"]
+    assert exchange.status == 400, exchange.text
+    assert exchange.json() == {
+        "errors": [{"field": field, "code": "invalid_value", "message": message}],
+        "detail": message,
+    }
+
+
+@pytest.mark.asyncio
+async def test_opened_in_form(app, db, keep, conversation, has_a_form):
+    """Put away as any discard, with an outcome that says why, and counted apart."""
+    draft = add_draft(db, conversation)
+    counts = discarded(), opened_in_form()
+    exchange = await post(app, draft, body=OPENED).finish()
+    assert exchange.status == 200, exchange.text
+    body = exchange.json()
+    assert (body["id"], body["state"]) == (str(draft), "discarded")
+    assert body["outcome"].pop("finished_at") is not None
+    golden = golden_stream.outcomes()["opened_in_form"].dict(exclude={"finished_at"})
+    assert body["outcome"] == golden
+    row = read(db, Draft, draft)
+    assert (row["state"], row["outcome"]["code"]) == ("discarded", "opened_in_form")
+    assert (discarded(), opened_in_form()) == (counts[0], counts[1] + 1)
+    assert has_a_form == ["opened_in_form"]
+    [event] = messages(db, conversation)
+    assert event["draft_id"] == draft
+    assert keep.paths() == ["GET /whoami"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    [None, {}, {"reason": None}, {"reason": "from_the_future"}, {"reason": 5}],
+    ids=["none", "empty", "null", "newer", "number"],
+)
+async def test_no_reason_this_version_knows(app, db, conversation, has_a_form, body):
+    """A plain discard: a newer keep-ui may say why in words this one does not know."""
+    draft = add_draft(db, conversation)
+    counts = discarded(), opened_in_form()
+    exchange = await post(app, draft, body=body).finish()
+    assert exchange.status == 200, exchange.text
+    assert (exchange.json()["state"], exchange.json()["outcome"]) == ("discarded", None)
+    assert (discarded(), opened_in_form()) == (counts[0] + 1, counts[1])
+    assert has_a_form == [None]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "kind", ["change_alert_status", "from_the_future"], ids=["no-form", "unknown"]
+)
+async def test_opened_in_form_of_a_kind_without_a_form(app, db, conversation, kind):
+    draft = add_draft(db, conversation, kind=kind)
+    before = read(db, Draft, draft)
+    refused(await post(app, draft, body=OPENED).finish(), "reason")
+    assert read(db, Draft, draft) == before
+    assert messages(db, conversation) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body", [[], "opened_in_form", 5], ids=str)
+async def test_a_body_that_is_not_an_object(app, db, conversation, body):
+    draft = add_draft(db, conversation)
+    before = read(db, Draft, draft)
+    refused(await post(app, draft, body=body).finish(), "body")
+    assert read(db, Draft, draft) == before
+
+
+@pytest.mark.asyncio
+async def test_opened_in_form_again(app, db, conversation, has_a_form):
+    """Whichever way it was put away first."""
+    draft = add_draft(db, conversation)
+    first = await post(app, draft).finish()
+    count = opened_in_form()
+    second = await post(app, draft, body=OPENED).finish()
+    assert (second.status, second.json()) == (200, first.json())
+    assert second.json()["outcome"] is None
+    assert len(messages(db, conversation)) == 1
+    assert opened_in_form() == count
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("state", "code"),
+    [
+        ("applying", "draft_applying"),
+        ("applied", "draft_not_pending"),
+        ("expired", "draft_expired"),
+    ],
+)
+async def test_opened_in_form_only_while_pending(
+    app, db, conversation, has_a_form, state, code
+):
+    """Applying: it may still change, and the form would save it a second time."""
+    draft = add_draft(db, conversation, state=state)
+    before = read(db, Draft, draft)
+    exchange = await post(app, draft, body=OPENED).finish()
+    assert (exchange.status, exchange.code) == (409, code)
+    assert exchange.json()["draft"]["state"] == state
+    assert read(db, Draft, draft) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "me", [{"email": "else@example.com"}, {"tenant_id": OTHER_TENANT}], ids=str
+)
+@pytest.mark.parametrize("body", [OPENED, [], {"reason": 5}], ids=str)
+async def test_someone_elses_draft_does_not_exist_for_any_body(
+    app, db, keep, conversation, has_a_form, me, body
+):
+    draft = add_draft(db, conversation)
+    keep.on_json("GET", "/whoami", whoami(**me))
+    theirs = await post(app, draft, body=body).finish()
+    missing = await post(app, uuid.uuid4(), body=body).finish()
+    assert (theirs.status, theirs.code) == (404, "draft_not_found")
+    assert theirs.json() == missing.json()
     assert read(db, Draft, draft)["state"] == "pending"

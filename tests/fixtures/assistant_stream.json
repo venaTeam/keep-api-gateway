@@ -103,6 +103,9 @@
       "complete",
       "interrupted",
       "error"
+    ],
+    "discard_reasons": [
+      "opened_in_form"
     ]
   },
   "heartbeat": ": hb\n\n",
@@ -3936,7 +3939,79 @@
         ],
         "detail": "This field is required."
       }
+    },
+    "confirm_derived_required": {
+      "status": 400,
+      "headers": {},
+      "body": {
+        "errors": [
+          {
+            "field": "derived",
+            "code": "field_required",
+            "message": "This field is required."
+          }
+        ],
+        "detail": "This field is required."
+      }
+    },
+    "confirm_derived_invalid": {
+      "status": 400,
+      "headers": {},
+      "body": {
+        "errors": [
+          {
+            "field": "derived",
+            "code": "invalid_value",
+            "message": "This value is not valid."
+          }
+        ],
+        "detail": "This value is not valid."
+      }
+    },
+    "discard_reason_invalid": {
+      "status": 400,
+      "headers": {},
+      "body": {
+        "errors": [
+          {
+            "field": "reason",
+            "code": "invalid_value",
+            "message": "This value is not valid."
+          }
+        ],
+        "detail": "This value is not valid."
+      }
     }
+  },
+  "requests": {
+    "confirm": {
+      "without_body": null,
+      "derived": {
+        "derived": {
+          "cel_roundtrip": "labels.team == \"payments\"",
+          "sql_query": {
+            "sql": "(labels.team = :labels.team_1)",
+            "params": {
+              "labels.team_1": "payments"
+            }
+          }
+        }
+      }
+    },
+    "discard": {
+      "without_body": null,
+      "opened_in_form": {
+        "reason": "opened_in_form"
+      }
+    }
+  },
+  "confirm_limits": {
+    "sql_chars": 20000,
+    "params": 200,
+    "param_key_chars": 200,
+    "param_value_chars": 500,
+    "cel_roundtrip_chars": 4000,
+    "derived_bytes": 61440
   },
   "future": {
     "values": {

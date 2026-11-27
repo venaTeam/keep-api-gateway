@@ -12,6 +12,7 @@ from src.services.assistant import lifecycle
 from src.services.assistant.core import metrics
 from src.services.assistant.gateway import client as client_module
 from src.services.assistant.gateway.client import WRITE_ENDPOINTS, WRITE_ROUTES
+from src.services.assistant.kinds import alert_status
 from src.services.assistant.kinds.registry import KINDS
 from src.services.assistant.models.api.draft import OutcomeCode
 from src.services.assistant.models.api.stream import ToolOutcomeCode
@@ -107,6 +108,15 @@ def test_rare_series_exist_from_the_start():
     ]
     for series in expected:
         assert f"keep_assistant_{series} " in text, series
+
+
+def test_a_kind_with_a_form_counts_opened_in_form_from_the_start(monkeypatch):
+    metrics.drafts_total.clear()
+    monkeypatch.setattr(alert_status.AlertStatusKind, "can_open_in_form", True)
+    lifecycle._start_series()
+    text = generate_latest(REGISTRY).decode()
+    series = 'drafts_total{event="opened_in_form",kind="change_alert_status"}'
+    assert f"keep_assistant_{series} " in text
 
 
 def test_every_status_class_the_client_counts_is_known():

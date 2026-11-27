@@ -65,7 +65,12 @@ class AssistantError(Exception):
         headers: dict[str, str] | None = None,
         extra: dict[str, Any] | None = None,
     ):
-        spec = ERRORS[code]  # an unknown code is a programming error
+        # An unknown code is a programming error.
+        spec = (
+            ErrorSpec(400, VALIDATION_MESSAGES[code])
+            if code in VALIDATION_MESSAGES
+            else ERRORS[code]
+        )
         super().__init__(code)
         self.code = code
         self.status = spec.status
@@ -74,6 +79,14 @@ class AssistantError(Exception):
         self.headers = headers
         # Extra top-level body keys, e.g. the current `draft` on a 409.
         self.extra = extra or {}
+
+
+def validation_error(field: str, code: str) -> AssistantError:
+    """A 400 on one field, in the shape of a body that fails its model: for the checks
+    that need more than the body, such as the draft it is about."""
+    if code not in VALIDATION_MESSAGES:
+        raise KeyError(code)
+    return AssistantError(code, field=field)
 
 
 def error_body(code: str, message: str, field: str | None = None) -> dict[str, Any]:

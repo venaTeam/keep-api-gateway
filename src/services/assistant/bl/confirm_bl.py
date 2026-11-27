@@ -12,11 +12,14 @@ import asyncio
 import logging
 import time
 import uuid
+from typing import Any
+
+from pydantic import BaseModel
 
 from src.services.assistant.bl import drafts_bl, outcomes
 from src.services.assistant.core import metrics
 from src.services.assistant.core.work import OngoingWork, log_failure, run_db
-from src.services.assistant.exceptions import AssistantError
+from src.services.assistant.exceptions import AssistantError, validation_error
 from src.services.assistant.gateway.client import GatewayClient, WriteAnswer
 from src.services.assistant.gateway.errors import (
     GatewayError,
@@ -35,6 +38,7 @@ from src.services.assistant.kinds.base import (
     WriteRequest,
 )
 from src.services.assistant.kinds.registry import kind_of
+from src.services.assistant.models.api.confirm import ConfirmRequest
 from src.services.assistant.models.api.draft import DraftView
 from src.services.assistant.models.identity import Identity
 
@@ -59,11 +63,14 @@ async def confirm(
     gateway: GatewayClient,
     work: OngoingWork,
     started: float,
+    body: Any = None,
 ) -> DraftView:
     """Whoever calls this spawns it: it must not be cut off with the request. `started`
-    is the time.monotonic() of the request. Raises AssistantError only.
+    is the time.monotonic() of the request; `body` the request's JSON, None without.
+    Raises AssistantError only.
 
-    Whatever is refused before the claim leaves the draft as it is.
+    Whatever is refused before the claim leaves the draft as it is. The body is checked
+    once the draft was found: another user's draft does not exist for any body.
     """
     try:
         found = await run_db(drafts_bl.owned_draft, identity, draft_id)
@@ -71,14 +78,45 @@ async def confirm(
         if kind is None:
             # A newer version's: it may know how, this one does not.
             raise AssistantError("draft_unsupported")
+        confirm_input = _confirm_input(kind, body)
         draft = await run_db(drafts_bl.claim, identity, draft_id)
-        attempt = _Attempt(identity, draft, gateway, work, started, kind=kind)
+        attempt = _Attempt(
+            identity,
+            draft,
+            gateway,
+            work,
+            started,
+            kind=kind,
+            confirm_input=confirm_input,
+        )
         return await attempt.run()
     except AssistantError:
         raise
     except Exception as exc:
         log_failure("confirm", "assistant: confirm failed", exc)
         raise AssistantError("internal") from None
+
+
+def _confirm_input(kind: DraftKind, body: Any) -> BaseModel | None:
+    """The body, checked against what the kind takes. Raises a 400."""
+    if body is not None and not isinstance(body, dict):
+        raise validation_error("body", "invalid_value")
+    try:
+        derived = ConfirmRequest.parse_obj(body or {}).derived
+    except ValueError:  # pydantic's ValidationError is a ValueError
+        raise validation_error("derived", "invalid_value") from None
+    model = kind.confirm_input_model
+    if model is None:
+        if derived is not None:
+            raise validation_error("derived", "invalid_value")
+        return None
+    if derived is None:
+        # A keep-ui that does not know the kind's form yet.
+        raise validation_error("derived", "field_required")
+    try:
+        return model.parse_obj(derived)
+    except ValueError:
+        raise validation_error("derived", "invalid_value") from None
 
 
 class _Attempt:
@@ -91,10 +129,12 @@ class _Attempt:
         started: float,
         *,
         kind: DraftKind,
+        confirm_input: BaseModel | None = None,
     ):
         self._key = drafts_bl.key_of(identity, draft)
         self._draft = draft
         self._kind = kind
+        self._confirm_input = confirm_input
         # The audit trail of the gateway carries the draft's id.
         self._caller = identity.caller(draft.id)
         self._gateway = gateway
@@ -135,7 +175,7 @@ class _Attempt:
                 reader=ReadGateway(self._gateway, self._caller, critical=True),
                 caller=self._caller,
                 payload=kind.payload_model.parse_obj(self._draft.payload),
-                confirm_input=None,
+                confirm_input=self._confirm_input,
                 read_seconds=self._read_seconds,
             )
         )

@@ -9,9 +9,11 @@ from pathlib import Path
 from typing import get_args
 
 from src.services.assistant.exceptions import ERRORS, VALIDATION_MESSAGES, error_body
+from src.services.assistant.models.api import confirm as confirm_models
 from src.services.assistant.models.api import conversation as conversation_models
 from src.services.assistant.models.api import draft as draft_models
 from src.services.assistant.models.api import stream as s
+from src.services.assistant.models.api.confirm import DerivedInput, SqlQueryInput
 from src.services.assistant.models.api.conversation import (
     ConversationView,
     TimelineDraft,
@@ -736,14 +738,58 @@ def errors() -> dict[str, dict]:
             "headers": headers,
             "body": body,
         }
-    result["validation"] = {
-        "status": 400,
-        "headers": {},
-        "body": error_body(
-            "field_required", VALIDATION_MESSAGES["field_required"], "message"
-        ),
-    }
+    for name, (code, field) in VALIDATION_ERRORS.items():
+        result[name] = {
+            "status": 400,
+            "headers": {},
+            "body": error_body(code, VALIDATION_MESSAGES[code], field),
+        }
     return result
+
+
+# name -> (code, field) of the 400s a client handles by their field.
+VALIDATION_ERRORS = {
+    "validation": ("field_required", "message"),
+    # A kind that needs what only the browser computes, Confirmed without it.
+    "confirm_derived_required": ("field_required", "derived"),
+    # Not what the kind takes, or `derived` sent to a kind that takes none.
+    "confirm_derived_invalid": ("invalid_value", "derived"),
+    # A reason the draft's kind has no use for.
+    "discard_reason_invalid": ("invalid_value", "reason"),
+}
+
+# What keep-ui computes from `labels.team == "payments"` (shared/lib/cel-to-sql-query):
+# the vectors of U1 give both.
+DERIVED = DerivedInput(
+    cel_roundtrip='labels.team == "payments"',
+    sql_query=SqlQueryInput(
+        sql="(labels.team = :labels.team_1)", params={"labels.team_1": "payments"}
+    ),
+)
+
+
+def requests() -> dict:
+    """The bodies of Confirm and Discard: none, or one of these."""
+    return {
+        "confirm": {"without_body": None, "derived": {"derived": DERIVED.dict()}},
+        "discard": {
+            "without_body": None,
+            "opened_in_form": {"reason": "opened_in_form"},
+        },
+    }
+
+
+def confirm_limits() -> dict:
+    """Of `derived`; a Confirm past one answers 400 invalid_value on `derived`."""
+    return {
+        "sql_chars": confirm_models.MAX_SQL_CHARS,
+        "params": confirm_models.MAX_PARAMS,
+        "param_key_chars": confirm_models.MAX_PARAM_KEY_CHARS,
+        "param_value_chars": confirm_models.MAX_PARAM_VALUE_CHARS,
+        "cel_roundtrip_chars": confirm_models.MAX_CEL_ROUNDTRIP_CHARS,
+        # JSON.stringify(derived), in UTF-8.
+        "derived_bytes": confirm_models.MAX_DERIVED_BYTES,
+    }
 
 
 def build() -> dict:
@@ -763,6 +809,7 @@ def build() -> dict:
             "alert_results": list(get_args(draft_models.AlertResult)),
             "object_types": list(get_args(draft_models.ObjectType)),
             "message_statuses": list(get_args(conversation_models.MessageStatus)),
+            "discard_reasons": list(get_args(confirm_models.DiscardReason)),
         },
         "heartbeat": s.HEARTBEAT_FRAME,
         "response_headers": {"Content-Type": s.STREAM_MEDIA_TYPE, **s.STREAM_HEADERS},
@@ -773,6 +820,8 @@ def build() -> dict:
             name: json.loads(c.json()) for name, c in conversations().items()
         },
         "errors": errors(),
+        "requests": requests(),
+        "confirm_limits": confirm_limits(),
         "future": future(),
     }
 

@@ -26,6 +26,7 @@ UNREADABLE_OUTCOME = (
     "This version of Keep Assistant cannot show the result of this change."
 )
 _OUTCOME_UNKNOWN = "The result of this change could not be determined."
+_OPENED_IN_FORM = "Opened in the form, to finish there."
 
 
 def readable(stored: Mapping) -> StoredOutcome:
@@ -74,6 +75,23 @@ def unreadable_for_good() -> Decision:
         code="outcome_unknown",
         message=_OUTCOME_UNKNOWN,
         gateway_result="unknown",
+        applied_count=0,
+        failed_count=0,
+        unconfirmed_count=0,
+        skipped_count=0,
+        not_found_count=0,
+        results=[],
+        finished_at=datetime.now(timezone.utc),
+    )
+
+
+def opened_in_form() -> DraftOutcome:
+    """Of a draft the user put away to finish it in keep-ui's own form: nothing was
+    sent, and what the form saves is the user's own doing."""
+    return DraftOutcome(
+        code="opened_in_form",
+        message=_OPENED_IN_FORM,
+        gateway_result=None,
         applied_count=0,
         failed_count=0,
         unconfirmed_count=0,

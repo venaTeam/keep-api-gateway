@@ -18,7 +18,9 @@ from src.services.assistant.bl import outcomes
 from src.services.assistant.config import get_settings
 from src.services.assistant.core import metrics
 from src.services.assistant.core.db import get_session
-from src.services.assistant.exceptions import AssistantError
+from src.services.assistant.exceptions import AssistantError, validation_error
+from src.services.assistant.kinds.registry import kind_of
+from src.services.assistant.models.api.confirm import DiscardReason, DiscardRequest
 from src.services.assistant.models.api.draft import DraftOutcome, DraftState, DraftView
 from src.services.assistant.models.db import Conversation, Draft, Message
 from src.services.assistant.models.identity import Identity
@@ -262,24 +264,40 @@ def owned_draft(identity: Identity, draft_id: uuid.UUID) -> DraftView:
         return to_view(draft)
 
 
-def discard(identity: Identity, draft_id: uuid.UUID) -> DraftView:
-    """pending -> discarded; again is fine. Raises as `claim` does."""
+def discard(identity: Identity, draft_id: uuid.UUID, body: Any = None) -> DraftView:
+    """pending -> discarded; again is fine, whatever the reason. Raises as `claim`
+    does, and a 400 for a body this draft cannot take: after the draft was found, so
+    that another user's draft does not exist for any body."""
     view = owned_draft(identity, draft_id)
+    reason = _discard_reason(view, body)
     if view.state == "pending":
         key = key_of(identity, view)
         discarded = resolve(
             key,
             from_state="pending",
             state="discarded",
-            event=outcomes.discarded_text(view),
+            event=outcomes.discarded_text(view, reason),
+            outcome=None if reason is None else outcomes.opened_in_form(),
         )
         if discarded is not None:
-            metrics.drafts_total.labels(kind=view.kind, event="discarded").inc()
+            event = "discarded" if reason is None else "opened_in_form"
+            metrics.drafts_total.labels(kind=view.kind, event=event).inc()
             return discarded
         view = load(key)  # somebody was faster
     if view.state == "discarded":
         return view
     raise conflict(view)
+
+
+def _discard_reason(draft: DraftView, body: Any) -> DiscardReason | None:
+    if body is not None and not isinstance(body, dict):
+        raise validation_error("body", "invalid_value")
+    reason = DiscardRequest.parse_obj(body or {}).reason
+    if reason is not None:
+        kind = kind_of(draft.kind)
+        if kind is None or not kind.can_open_in_form:
+            raise validation_error("reason", "invalid_value")
+    return reason
 
 
 def load(key: DraftKey) -> DraftView:

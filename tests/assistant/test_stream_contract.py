@@ -11,16 +11,21 @@ from pydantic import BaseModel, ValidationError
 
 from src.services.assistant.bl import outcomes
 from src.services.assistant.config import get_settings
-from src.services.assistant.exceptions import ERRORS
+from src.services.assistant.exceptions import ERRORS, VALIDATION_MESSAGES
+from src.services.assistant.kinds.registry import KINDS, PAYLOAD_MODELS, kind_of
 from src.services.assistant.models import api as api_models
 from src.services.assistant.models.api import stream as s
 from src.services.assistant.models.api.chat import ChatRequest
+from src.services.assistant.models.api.confirm import (
+    ConfirmRequest,
+    DerivedInput,
+    DiscardRequest,
+)
 from src.services.assistant.models.api.conversation import (
     ConversationView,
     TimelineDraft,
     TimelineMessage,
 )
-from src.services.assistant.kinds.registry import KINDS, PAYLOAD_MODELS, kind_of
 from src.services.assistant.models.api.draft import (
     AlertOutcome,
     AlertResult,
@@ -40,7 +45,7 @@ from tests.assistant.fakes import TOKEN
 GOLDEN = json.loads(golden_stream.FIXTURE.read_bytes())
 EVENTS_BY_NAME = {event.event: event for event in s.STREAM_EVENTS}
 # keep-ui pins the same blob (sse-parser.test.ts) once it has copied this fixture.
-FIXTURE_BLOB = "edda1b8ff905312c5e522fc7c57e9f58b274220f"
+FIXTURE_BLOB = "bfaf94e1ed517d0f4d0911c7d5f93c82b800918c"
 
 
 def parse_sse(raw: str):
@@ -174,6 +179,10 @@ SEEN = {
     "StreamErrorCode": ("stream_error_codes", lambda: seen_in_streams("error", "code")),
     "FinishReason": ("finish_reasons", lambda: seen_in_streams("done", "finish_reason")),
     "MessageStatus": ("message_statuses", message_statuses),
+    "DiscardReason": (
+        "discard_reasons",
+        lambda: {r["reason"] for r in GOLDEN["requests"]["discard"].values() if r},
+    ),
 }
 
 
@@ -267,8 +276,11 @@ def test_golden_conversations_validate():
 def test_golden_errors_match_the_error_table():
     for code, error in GOLDEN["errors"].items():
         assert error["body"]["detail"] == error["body"]["errors"][0]["message"]
-        if code == "validation":
+        if code in golden_stream.VALIDATION_ERRORS:
+            [item] = error["body"]["errors"]
             assert error["status"] == 400
+            assert (item["code"], item["field"]) == golden_stream.VALIDATION_ERRORS[code]
+            assert item["message"] == VALIDATION_MESSAGES[item["code"]]
             continue
         assert error["body"]["errors"][0]["code"] == code
         assert error["status"] == ERRORS[code].status
@@ -282,7 +294,33 @@ def test_golden_errors_match_the_error_table():
         "draft_applying",
     }
     service_only = {"not_found", "method_not_allowed", "http_error", "not_ready"}
-    assert set(ERRORS) - service_only == set(GOLDEN["errors"]) - {"validation"}
+    assert set(ERRORS) - service_only == set(GOLDEN["errors"]) - set(
+        golden_stream.VALIDATION_ERRORS
+    )
+
+
+# --- confirm and discard bodies ------------------------------------------------
+
+
+def test_golden_requests_are_what_the_routes_take():
+    confirm, discard = GOLDEN["requests"]["confirm"], GOLDEN["requests"]["discard"]
+    assert confirm["without_body"] is None and discard["without_body"] is None
+    derived = ConfirmRequest.parse_obj(confirm["derived"]).derived
+    assert DerivedInput.parse_obj(derived).dict() == derived
+    assert DiscardRequest.parse_obj(discard["opened_in_form"]).reason == (
+        "opened_in_form"
+    )
+
+
+def test_golden_confirm_limits_are_the_models():
+    assert GOLDEN["confirm_limits"] == {
+        "sql_chars": 20000,
+        "params": 200,
+        "param_key_chars": 200,
+        "param_value_chars": 500,
+        "cel_roundtrip_chars": 4000,
+        "derived_bytes": 60 * 1024,
+    }
 
 
 # --- what a newer version may send -------------------------------------------

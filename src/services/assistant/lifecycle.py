@@ -68,6 +68,8 @@ def _start_series() -> None:
         for outcome in get_args(OutcomeCode):
             metrics.draft_outcomes_total.labels(kind=kind, outcome=outcome)
         metrics.drafts_total.labels(kind=kind, event="finalized_after_timeout")
+        if KINDS[kind].can_open_in_form:
+            metrics.drafts_total.labels(kind=kind, event="opened_in_form")
     metrics.internal_errors_total.labels(site="sweep_close")
     for endpoint in WRITE_ENDPOINTS:
         for status_class in metrics.STATUS_CLASSES:

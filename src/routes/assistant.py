@@ -1,7 +1,8 @@
 """Keep Assistant's routes. Imported and mounted only with KEEP_ASSISTANT_ENABLED."""
 import asyncio
+from typing import Any
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Body, Depends, Request
 from fastapi.responses import Response
 
 from src.services.assistant.api.deps import (
@@ -96,10 +97,15 @@ async def get_conversation(
     return view
 
 
+# The bodies are checked against the draft, once it was found (models/api/confirm.py):
+# another user's draft does not exist for any body.
+
+
 @router.post("/drafts/{draft_id}/confirm", description="Change what the card lists.")
 async def confirm_draft(
     request: Request,
     draft_id: str,
+    body: Any = Body(None, description="A ConfirmRequest; none for most kinds."),
     started: float = Depends(request_started),
     identity: Identity = Depends(get_identity),
 ) -> DraftView:
@@ -109,7 +115,12 @@ async def confirm_draft(
         raise AssistantError("not_ready")
     confirming = state.assistant_work.spawn(
         confirm_bl.confirm(
-            identity, draft, state.assistant_gateway, state.assistant_work, started
+            identity,
+            draft,
+            state.assistant_gateway,
+            state.assistant_work,
+            started,
+            body,
         )
     )
     # A user who leaves must not cut it off between the write and its result.
@@ -119,7 +130,8 @@ async def confirm_draft(
 @router.post("/drafts/{draft_id}/discard", description="Put a draft away.")
 async def discard_draft(
     draft_id: str,
+    body: Any = Body(None, description="A DiscardRequest; optional."),
     identity: Identity = Depends(get_identity),
 ) -> DraftView:
     draft = parse_resource_id(draft_id, "draft_not_found")
-    return await run_db(drafts_bl.discard, identity, draft)
+    return await run_db(drafts_bl.discard, identity, draft, body)

@@ -37,8 +37,8 @@ llm_configured = Gauge(
     multiprocess_mode="livemin",
 )
 
-# Tools and drafts. event: created | confirmed | discarded | expired |
-# finalized_after_timeout
+# Tools and drafts. event: created | confirmed | discarded | opened_in_form (put
+# away to finish in keep-ui's form) | expired | finalized_after_timeout
 tool_calls_total = Counter(
     f"{_PREFIX}tool_calls_total", "Tool calls by outcome", ["tool", "outcome"]
 )

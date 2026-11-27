@@ -97,8 +97,11 @@ class DraftKind(abc.ABC):
 
     name: ClassVar[str]
     payload_model: ClassVar[type[BaseModel]]
-    # The body a Confirm of this kind needs; None: it takes none.
+    # The body a Confirm of this kind needs (its `derived`); None: it takes none.
     confirm_input_model: ClassVar[Optional[type[BaseModel]]] = None
+    # Whether keep-ui can open a draft of this kind in its own form instead; such a
+    # draft is put away with the reason `opened_in_form`.
+    can_open_in_form: ClassVar[bool] = False
     # Every scope one of its writes needs. A hint for the card and the context only:
     # the gateway's own routes decide.
     scope_hint: ClassVar[frozenset[str]]
