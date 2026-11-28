@@ -4,10 +4,12 @@ import uuid
 import pytest
 import sqlalchemy as sa
 
+from src.services.assistant.bl.timeline import LINK_RESULT_PREFIX
 from src.services.assistant.core.db import get_engine
 from src.services.assistant.llm.client import TextDelta
 from src.services.assistant.models.api.conversation import TIMELINE_LIMIT
 from src.services.assistant.models.db import Conversation
+from src.services.assistant.tools.base import encode_result
 from tests.assistant.conftest import OTHER_TENANT
 from tests.assistant.fakes import FakeGateway, alert, query_result, whoami
 from tests.assistant.rows import (
@@ -56,8 +58,9 @@ async def view(app, conversation_id) -> dict:
 
 
 def texts(body: dict) -> list:
+    shown = {"message": "content", "link": "path"}
     return [
-        item["content"] if item["type"] == "message" else item["draft"]["id"]
+        item[shown[item["type"]]] if item["type"] in shown else item["draft"]["id"]
         for item in body["items"]
     ]
 
@@ -281,3 +284,121 @@ async def test_without_a_token(app, db):
         app, "GET", f"/assistant/conversations/{uuid.uuid4()}", token=None
     ).finish()
     assert (exchange.status, exchange.code) == (401, "unauthenticated")
+
+
+# --- links ---------------------------------------------------------------------------
+
+EDITOR = ["read:*", "write:*", "delete:*", "update:*", "execute:*"]
+
+
+def stored_link(page, param, path, label="Open it", **extra) -> str:
+    """A tool row's content as open_page stores it."""
+    link = {"page": page, "param": param, "path": path, "label": label, **extra}
+    return encode_result({"status": "link_ready", "link": link})
+
+
+def add_link(db, conversation, content, call_id, name="open_page", asked_in=None):
+    """The model's call, then its tool row; the call can be in another conversation."""
+    call = {"id": call_id, "name": name, "arguments": "{}"}
+    add_message(
+        db, asked_in or conversation, "assistant", content="", tool_calls=[call]
+    )
+    return add_message(db, conversation, "tool", content=content, tool_call_id=call_id)
+
+
+@pytest.mark.asyncio
+async def test_a_stored_link_is_shown_where_its_tool_row_is(app, db):
+    conversation = add_conversation(db)
+    add_message(db, conversation, content="where is payments")
+    row = add_link(
+        db,
+        conversation,
+        stored_link("alerts_preset", "payments", "/alerts/payments", "Open Payments"),
+        "call_1",
+    )
+    add_message(db, conversation, "assistant", content="Here.")
+    body = await view(app, conversation)
+    assert texts(body) == ["where is payments", "/alerts/payments", "Here."]
+    item = body["items"][1]
+    assert item == {
+        "type": "link",
+        "id": str(row),
+        "page": "alerts_preset",
+        "param": "payments",
+        "path": "/alerts/payments",
+        "label": "Open Payments",
+        "created_at": item["created_at"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_link_is_read_leniently(app, db):
+    """Keys it does not know are left out; the label is cleaned again."""
+    conversation = add_conversation(db)
+    add_link(
+        db,
+        conversation,
+        stored_link("alerts_feed", None, "/alerts/feed", "Open\u202e it", extra=1),
+        "call_1",
+    )
+    [item] = (await view(app, conversation))["items"]
+    assert set(item) == {"type", "id", "page", "param", "path", "label", "created_at"}
+    assert item["label"] == "Open it"
+
+
+@pytest.mark.asyncio
+async def test_a_link_the_user_may_no_longer_open_is_left_out(app, db):
+    conversation = add_conversation(db)
+    add_link(
+        db,
+        conversation,
+        stored_link("dashboard", "NOC", "/dashboard/NOC"),
+        "call_1",
+    )
+    add_message(db, conversation, "assistant", content="after")
+    # whoami's role is noc: keep-ui would send them back to the feed.
+    assert texts(await view(app, conversation)) == ["after"]
+    editor = whoami(role="editor", scopes=EDITOR)
+    equip(app, gateway=FakeGateway().on_json("GET", "/whoami", editor))
+    assert texts(await view(app, conversation)) == ["/dashboard/NOC", "after"]
+
+
+@pytest.mark.asyncio
+async def test_only_open_page_rows_that_made_a_link(app, db):
+    conversation = add_conversation(db)
+    elsewhere = add_conversation(db)
+    feed = stored_link("alerts_feed", None, "/alerts/feed")
+    # Mentions link_ready, but does not lead with it.
+    add_link(
+        db,
+        conversation,
+        encode_result({"status": "found", "rows": ["link_ready"]}),
+        "call_1",
+    )
+    # Leads with it, but answers a call of another tool.
+    add_link(db, conversation, feed, "call_2", name="list_presets")
+    # Leads with it, but the call is in another conversation.
+    add_link(db, conversation, feed, "call_3", asked_in=elsewhere)
+    # A path this version would not build.
+    add_link(db, conversation, stored_link("alerts_feed", None, "//evil"), "call_4")
+    add_link(
+        db, conversation, stored_link("alerts_preset", "x", "/alerts/feed"), "call_5"
+    )
+    add_link(
+        db,
+        conversation,
+        stored_link("alerts_preset", "Payments", "/alerts/payments"),
+        "call_6",
+    )
+    add_link(db, conversation, stored_link("alerts_feed", None, "/alerts/feed", 7),
+             "call_7")  # fmt: skip
+    add_link(db, conversation, stored_link("alerts_feed", None, "/alerts/feed", " "),
+             "call_8")  # fmt: skip
+    # Not JSON, or not the shape, after the prefix.
+    add_link(db, conversation, LINK_RESULT_PREFIX + "{", "call_9")
+    add_link(db, conversation, LINK_RESULT_PREFIX + '"link":[1]}', "call_10")
+    add_link(db, conversation, LINK_RESULT_PREFIX + '"link":{}}', "call_11")
+    add_message(db, conversation, "assistant", content="after")
+    assert texts(await view(app, conversation)) == ["after"]
+    add_link(db, conversation, feed, "call_12")
+    assert texts(await view(app, conversation)) == ["after", "/alerts/feed"]

@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel
 
 from src.services.assistant.models.api.draft import DraftView
+from src.services.assistant.models.api.stream import LinkPage
 
 # Items per view, newest last, ordered by message `seq`.
 TIMELINE_LIMIT = 100
@@ -31,6 +32,20 @@ class TimelineDraft(BaseModel):
     draft: DraftView
 
 
+class TimelineLink(BaseModel):
+    """At the position of the tool message that made the link: the `link` event's
+    fields, and that message's id. A stored link this version cannot read, or that
+    the user may no longer open, is left out."""
+
+    type: Literal["link"] = "link"
+    id: UUID
+    page: LinkPage
+    param: Optional[str]
+    path: str
+    label: str
+    created_at: datetime
+
+
 class ConversationView(BaseModel):
     id: UUID
     title: Optional[str]
@@ -40,4 +55,4 @@ class ConversationView(BaseModel):
     turn_in_progress: bool
     # Older items exist that this view leaves out.
     has_more: bool
-    items: List[Union[TimelineMessage, TimelineDraft]]
+    items: List[Union[TimelineMessage, TimelineDraft, TimelineLink]]

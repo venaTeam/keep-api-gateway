@@ -93,6 +93,7 @@ def test_the_registry_and_what_each_read_tool_is():
         "list_correlation_rules",
         "list_dashboards",
         "list_tags",
+        "open_page",
     ]
     for name, (spec, label) in READ_TOOLS.items():
         assert TOOLS[name] is spec

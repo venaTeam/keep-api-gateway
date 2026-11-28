@@ -10,6 +10,7 @@ from src.services.assistant.tools import (
     list_dashboards,
     list_presets,
     list_tags,
+    open_page,
     search_alerts,
     validate_cel,
 )
@@ -29,6 +30,8 @@ TOOLS: dict[str, ToolSpec] = {
         list_correlation_rules.SPEC,
         list_dashboards.SPEC,
         list_tags.SPEC,
+        # A link the user clicks: no draft.
+        open_page.SPEC,
     )
 }
 

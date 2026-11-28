@@ -122,6 +122,7 @@ async def test_what_the_model_is_sent(app, db, gateway):
         "list_correlation_rules",
         "list_dashboards",
         "list_tags",
+        "open_page",
     ]
     assert request.tool_choice == "auto"
     me = identity()

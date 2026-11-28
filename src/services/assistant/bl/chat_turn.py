@@ -40,6 +40,7 @@ from src.services.assistant.models.api.stream import (
     DoneEvent,
     DraftEvent,
     FinishReason,
+    LinkEvent,
     StreamErrorCode,
     StreamEvent,
     TextDeltaEvent,
@@ -454,6 +455,19 @@ class Turn:
             self._drafts += 1
             metrics.drafts_total.labels(kind=view.kind, event="created").inc()
             self._emit(DraftEvent(draft=view))
+        if outcome.link is not None:
+            # After the commit: the conversation's `link` item has the same id.
+            link = outcome.link
+            metrics.links_total.labels(page=link.page).inc()
+            self._emit(
+                LinkEvent(
+                    id=reply.id,
+                    page=link.page,
+                    param=link.param,
+                    path=link.path,
+                    label=link.label,
+                )
+            )
         if tool is not None:
             self._emit(status(phase="finished", outcome=outcome.code))
         if outcome.stream_error is not None:

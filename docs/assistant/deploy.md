@@ -156,9 +156,9 @@ of many lookups waits for that too. What bounds it:
 | Database threads | 5 per worker, one per connection |
 | Rounds of tool calls per turn | 8 (`ASSISTANT_MAX_TOOL_ROUNDS`) |
 | Tool calls per turn | 12, of any tool (`ASSISTANT_MAX_TOOL_CALLS_PER_TURN`) |
-| Filters the model wrote, per turn | 6: one for each `count_alerts`, `search_alerts`, `get_field_values` and `list_correlation_rules` (none for `validate_cel`, `get_alerts` and the other lists); the next one gets the tool error `cel_lookup_limit` |
+| Filters the model wrote, per turn | 6: one for each `count_alerts`, `search_alerts`, `get_field_values` and `list_correlation_rules`, and for an `open_page` link to one rule (none for `validate_cel`, `get_alerts`, the other lists and links); the next one gets the tool error `cel_lookup_limit` |
 | The same read twice in a turn (a list of the tenant's, a check) | sent once, and charged once |
-| Links per turn | 3 |
+| Links per turn | 3; the next `open_page` call gets the tool error `link_limit` |
 | Drafts per turn | 3 |
 | Time of a turn | 90 s. No tools in the last 20 s; calls to the app's own routes end 15 s before the end |
 | Alerts per draft | 20 |
@@ -202,8 +202,14 @@ critical calls at the same moment, with every chat place taken, can still refuse
   the name and filter of the preset of an alerts page, the id of the incident of an
   incident page, the browser's time zone name, and which kinds of draft the user's
   scopes allow. Not the user's email, role or tenant.
-- Logs and error bodies of the assistant hold no message text, filter, alert value or
-  exception text. The routes it calls log as they do for the UI.
+- A link (`open_page`) is stored in the conversation with its page, the name, filter or
+  id it shows, and the model's label; the model gets them back. Its path is built by the
+  gateway (`navigation.py`), never written by the model, and only to the pages of the
+  spec's table. A NOC user gets no link outside the alerts pages; a stored link that the
+  user may no longer open, or that this version cannot read, is left out of the
+  conversation.
+- Logs and error bodies of the assistant hold no message text, filter, alert value, link
+  label or name, or exception text. The routes it calls log as they do for the UI.
 
 ## Alerts
 
@@ -223,6 +229,7 @@ thresholds are starting points.
 | `keep_assistant_gateway_requests_total` | by `endpoint` and `status_class`, also `timeout`, `not_sent`, `dropped`, `cancelled`, `too_large` |
 | `keep_assistant_drafts_total` | by `event`: `created`, `confirmed`, `discarded`, `expired`, `finalized_after_timeout` |
 | `keep_assistant_draft_outcomes_total` | by `outcome`, the final ones |
+| `keep_assistant_links_total` | by `page`: links sent to the user (`open_page`) |
 | `keep_assistant_confirm_budget_refusals_total` | by `kind` and `step`: a write Confirm did not send because too little of its 26 s was left to tell the result. At `step="0"` the draft went back to pending; at a later step what the earlier writes made stands |
 | `keep_assistant_drafts_stale_applying` | drafts whose result nobody knows, 5 minutes to 24 hours old |
 | `keep_assistant_retention_last_success_unixtime` | |

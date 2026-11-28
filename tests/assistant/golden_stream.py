@@ -22,6 +22,7 @@ from src.services.assistant.models.api.confirm import DerivedInput, SqlQueryInpu
 from src.services.assistant.models.api.conversation import (
     ConversationView,
     TimelineDraft,
+    TimelineLink,
     TimelineMessage,
 )
 from src.services.assistant.models.api.draft import (
@@ -46,6 +47,7 @@ from src.services.assistant.tools import (
     list_dashboards,
     list_presets,
     list_tags,
+    open_page,
     search_alerts,
     validate_cel,
 )
@@ -606,6 +608,35 @@ def _done(finish_reason: str, message: int | None = None):
     )
 
 
+def link(number: int, page: str, param: str | None, label: str) -> dict:
+    """A link's fields, as open_page makes them: the path from navigation.build, the
+    parameter as the page reads it back (a preset's name lowercased)."""
+    path = nav.build(page, param)
+    return {
+        "id": uid(number),
+        "page": page,
+        "param": nav.parse(path)[1],
+        "path": path,
+        "label": label,
+    }
+
+
+# The stream's links are made by tool rows 30, 31 and 32; the conversation's by 40-43.
+LINK_RULE_ID = "0b3c2d1e-4f5a-4b6c-8d7e-9f0a1b2c3d4e"
+STREAM_LINKS = [
+    link(30, "alerts_preset", "Team A's (prod) ~ 100%", "Open Team A's (prod) ~ 100%"),
+    link(31, "alerts_search", 'severity == "critical" && name.contains("disk")',
+         "Critical disk alerts"),
+    link(32, "dashboard", "NOC overview / équipe", "Open NOC overview"),
+]  # fmt: skip
+CONVERSATION_LINKS = [
+    link(40, "alerts_feed", None, "Open the feed"),
+    link(41, "incidents", None, "Open incidents"),
+    link(42, "rules", None, "Open correlation rules"),
+    link(43, "rule", LINK_RULE_ID, "Open the rule"),
+]
+
+
 HEARTBEAT = object()
 
 
@@ -692,6 +723,31 @@ def streams() -> dict[str, list]:
             _text(4, "You have 3 presets; one correlation rule cannot be read."),
             _done("stop", 4),
         ],
+        # open_page: each link event comes after its tool row is committed, before
+        # the tool's status says finished. The model's text never holds the path.
+        "link_created": [
+            _conversation_event(),
+            *[
+                event
+                for number, fields in enumerate(STREAM_LINKS, start=1)
+                for event in (
+                    _tool(f"call_{number}", "started", tool=open_page.NAME,
+                          label=open_page.SPEC.label),
+                    s.LinkEvent(**fields),
+                    _tool(f"call_{number}", "finished", "link_ready",
+                          tool=open_page.NAME, label=open_page.SPEC.label),
+                )
+            ],
+            _text(4, "Here are the preset, the search and the dashboard."),
+            _done("stop", 4),
+        ],  # fmt: skip
+        # A name no list gave: no link, and no link event.
+        "not_found": [
+            _conversation_event(),
+            *_read_round("call_1", "not_found", open_page.SPEC),
+            _text(4, "I could not find a preset with that name."),
+            _done("stop", 4),
+        ],
         # The 12th call runs, the 13th of the same round does not; then no tools.
         "past_the_tool_calls": [
             _conversation_event(),
@@ -738,6 +794,29 @@ def conversations() -> dict[str, ConversationView]:
                 message(4, "assistant", "Let me look at the selected alerts."),
                 TimelineDraft(draft=all_drafts["applied"]),
                 message(5, "assistant", "I drafted the change."),
+            ],
+        ),
+        # A link stands where its tool row is, with that row's id.
+        "with_links": ConversationView(
+            id=CONVERSATION,
+            title="where are the critical alerts",
+            created_at=CREATED,
+            updated_at=CREATED,
+            turn_in_progress=False,
+            has_more=False,
+            items=[
+                message(2, "user", "where are the critical alerts"),
+                *[
+                    TimelineLink(**fields, created_at=CREATED)
+                    for fields in CONVERSATION_LINKS[:2]
+                ],
+                message(5, "assistant", "The feed and the incidents."),
+                message(6, "user", "and the rules?"),
+                *[
+                    TimelineLink(**fields, created_at=CREATED)
+                    for fields in CONVERSATION_LINKS[2:]
+                ],
+                message(7, "assistant", "All rules, and the one you asked about."),
             ],
         ),
         "in_progress": ConversationView(
@@ -1074,6 +1153,7 @@ def build() -> dict:
             "object_types": list(get_args(draft_models.ObjectType)),
             "message_statuses": list(get_args(conversation_models.MessageStatus)),
             "discard_reasons": list(get_args(confirm_models.DiscardReason)),
+            "link_pages": list(get_args(s.LinkPage)),
         },
         "heartbeat": s.HEARTBEAT_FRAME,
         "response_headers": {"Content-Type": s.STREAM_MEDIA_TYPE, **s.STREAM_HEADERS},

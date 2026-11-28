@@ -48,6 +48,16 @@ StreamErrorCode = Literal[
     "internal",
 ]
 FinishReason = Literal["stop", "tool_limit", "length", "error", "cancelled"]
+# The pages a link may open: navigation.PAGES, whose spec is rules/assistant.md.
+LinkPage = Literal[
+    "alerts_feed",
+    "alerts_preset",
+    "alerts_search",
+    "incidents",
+    "rules",
+    "rule",
+    "dashboard",
+]
 
 
 class StreamEvent(BaseModel):
@@ -101,6 +111,20 @@ class DraftEvent(StreamEvent):
     draft: DraftView
 
 
+class LinkEvent(StreamEvent):
+    """A link to a page of Keep the user may click; nothing opens by itself. Sent after
+    the tool row that holds it is committed: `id` is that row's, as the conversation's
+    `link` item has it. `path` is built by navigation.py from `page` and `param`, never
+    written by the model; `label` is the model's text, cleaned."""
+
+    event: ClassVar[str] = "link"
+    id: UUID
+    page: LinkPage
+    param: Optional[str]
+    path: str
+    label: str
+
+
 class ErrorEvent(StreamEvent):
     event: ClassVar[str] = "error"
     code: StreamErrorCode
@@ -123,6 +147,7 @@ STREAM_EVENTS: Tuple[Type[StreamEvent], ...] = (
     DraftEvent,
     ErrorEvent,
     DoneEvent,
+    LinkEvent,
 )
 
 # code -> (fixed message, retryable)

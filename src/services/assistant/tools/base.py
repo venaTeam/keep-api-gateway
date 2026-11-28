@@ -103,11 +103,23 @@ class NewDraft:
 
 
 @dataclass(frozen=True)
+class NewLink:
+    """A link the turn sends once its tool row is committed (a `link` event)."""
+
+    page: str
+    param: str | None
+    # From navigation.build only.
+    path: str
+    label: str
+
+
+@dataclass(frozen=True)
 class ToolOutcome:
     code: ToolOutcomeCode
     # For the model. Text from alerts in it is already cleaned.
     result: dict[str, Any]
     draft: NewDraft | None = None
+    link: NewLink | None = None
     # Set when the turn cannot sensibly go on.
     stream_error: StreamErrorCode | None = None
 

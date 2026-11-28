@@ -61,12 +61,13 @@ def assistant_environment(monkeypatch):
 
 @pytest.fixture()
 def no_read_tools(monkeypatch):
-    """Only the tools a turn caps (drafts, links): with a read tool offered there is
-    always one left, so a turn never runs out of tools by its caps alone."""
+    """Only the draft tools: with a read tool, or open_page, offered there is always
+    one left, so a turn never runs out of tools by its draft cap alone. A test about
+    links adds its own link tool (`links`) after this."""
     from src.services.assistant.tools.registry import TOOLS
 
     for name, spec in list(TOOLS.items()):
-        if spec.draft_kind is None and not spec.makes_link:
+        if spec.draft_kind is None:
             monkeypatch.delitem(TOOLS, name)
 
 

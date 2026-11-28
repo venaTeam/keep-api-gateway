@@ -50,6 +50,8 @@ tool_calls_total = Counter(
     f"{_PREFIX}tool_calls_total", "Tool calls by outcome", ["tool", "outcome"]
 )
 drafts_total = Counter(f"{_PREFIX}drafts_total", "Draft events", ["kind", "event"])
+# Links sent to the user (open_page), by navigation page.
+links_total = Counter(f"{_PREFIX}links_total", "Links made", ["page"])
 draft_outcomes_total = Counter(
     f"{_PREFIX}draft_outcomes_total", "Final draft outcomes", ["kind", "outcome"]
 )

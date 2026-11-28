@@ -29,6 +29,7 @@ from src.services.assistant.models.api.confirm import (
 from src.services.assistant.models.api.conversation import (
     ConversationView,
     TimelineDraft,
+    TimelineLink,
     TimelineMessage,
 )
 from src.services.assistant.models.api.draft import (
@@ -50,7 +51,7 @@ from tests.assistant.fakes import TOKEN
 GOLDEN = json.loads(golden_stream.FIXTURE.read_bytes())
 EVENTS_BY_NAME = {event.event: event for event in s.STREAM_EVENTS}
 # keep-ui pins the same blob (sse-parser.test.ts) once it has copied this fixture.
-FIXTURE_BLOB = "fb6d4aa4c2f7e4424f0430d2cdba32ac0d094904"
+FIXTURE_BLOB = "8e4c147c915236f67a739e1ad37ed8528295fa43"
 
 
 def parse_sse(raw: str):
@@ -156,6 +157,11 @@ def message_statuses() -> set:
     return {i["status"] for i in items if i["type"] == "message"}
 
 
+def link_pages() -> set:
+    items = [i for c in GOLDEN["conversations"].values() for i in c["items"]]
+    return {i["page"] for i in items if i["type"] == "link"}
+
+
 # Per Literal: its vocabulary list, and the values the fixture shows.
 SEEN = {
     "DraftState": ("draft_states", lambda: {d["state"] for d in golden_drafts()}),
@@ -188,6 +194,7 @@ SEEN = {
         "discard_reasons",
         lambda: {r["reason"] for r in GOLDEN["requests"]["discard"].values() if r},
     ),
+    "LinkPage": ("link_pages", lambda: seen_in_streams("link", "page") | link_pages()),
 }
 
 
@@ -273,7 +280,11 @@ def test_golden_conversations_validate():
     assert {v.turn_in_progress for v in views} == {True, False}
     assert {v.has_more for v in views} == {True, False}
     items = [item for v in views for item in v.items]
-    assert {type(item) for item in items} == {TimelineMessage, TimelineDraft}
+    assert {type(item) for item in items} == {
+        TimelineMessage,
+        TimelineDraft,
+        TimelineLink,
+    }
     statuses = {i.status for i in items if isinstance(i, TimelineMessage)}
     assert statuses == set(GOLDEN["vocabulary"]["message_statuses"])
 
@@ -366,7 +377,8 @@ def test_golden_search_cel_is_what_the_model_gets():
 
 FUTURE = GOLDEN["future"]
 ITEM_MODELS = {
-    model.__fields__["type"].default: model for model in (TimelineMessage, TimelineDraft)
+    model.__fields__["type"].default: model
+    for model in (TimelineMessage, TimelineDraft, TimelineLink)
 }
 
 

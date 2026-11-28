@@ -28,6 +28,7 @@ from src.services.assistant.llm.client import LlmErrorKind, build_llm_client
 from src.services.assistant.models.api.chat import known_timezones
 from src.services.assistant.models.api.draft import OutcomeCode
 from src.services.assistant.models.api.stream import ToolOutcomeCode
+from src.services.assistant.navigation import PAGES as LINK_PAGES
 from src.services.assistant.tools.registry import TOOLS
 
 logger = logging.getLogger(__name__)
@@ -98,6 +99,8 @@ def _start_series() -> None:
     for tool in TOOLS:
         for outcome in get_args(ToolOutcomeCode):
             metrics.tool_calls_total.labels(tool=tool, outcome=outcome)
+    for page in LINK_PAGES:
+        metrics.links_total.labels(page=page)
 
 
 def _start_loops(work: OngoingWork) -> None:

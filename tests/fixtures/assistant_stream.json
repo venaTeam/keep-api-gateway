@@ -6,7 +6,8 @@
       "tool_status",
       "draft",
       "error",
-      "done"
+      "done",
+      "link"
     ],
     "tool_phases": [
       "started",
@@ -107,6 +108,15 @@
     ],
     "discard_reasons": [
       "opened_in_form"
+    ],
+    "link_pages": [
+      "alerts_feed",
+      "alerts_preset",
+      "alerts_search",
+      "incidents",
+      "rules",
+      "rule",
+      "dashboard"
     ]
   },
   "heartbeat": ": hb\n\n",
@@ -885,6 +895,166 @@
           "data": {
             "message_id": "00000000-0000-4000-8000-000000000004",
             "delta": "You have 3 presets; one correlation rule cannot be read."
+          }
+        },
+        {
+          "event": "done",
+          "data": {
+            "message_id": "00000000-0000-4000-8000-000000000004",
+            "finish_reason": "stop"
+          }
+        }
+      ]
+    },
+    "link_created": {
+      "raw": "event: conversation\ndata: {\"conversation_id\": \"00000000-0000-4000-8000-000000000001\", \"user_message_id\": \"00000000-0000-4000-8000-000000000002\", \"turn_id\": \"00000000-0000-4000-8000-000000000003\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_1\", \"tool\": \"open_page\", \"phase\": \"started\", \"label\": \"Preparing a link\"}\n\nevent: link\ndata: {\"id\": \"00000000-0000-4000-8000-000000000030\", \"page\": \"alerts_preset\", \"param\": \"team a's (prod) ~ 100%\", \"path\": \"/alerts/team%20a's%20(prod)%20~%20100%25\", \"label\": \"Open Team A's (prod) ~ 100%\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_1\", \"tool\": \"open_page\", \"phase\": \"finished\", \"label\": \"Preparing a link\", \"outcome\": \"link_ready\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_2\", \"tool\": \"open_page\", \"phase\": \"started\", \"label\": \"Preparing a link\"}\n\nevent: link\ndata: {\"id\": \"00000000-0000-4000-8000-000000000031\", \"page\": \"alerts_search\", \"param\": \"severity == \\\"critical\\\" && name.contains(\\\"disk\\\")\", \"path\": \"/alerts/feed?cel=severity%20%3D%3D%20%22critical%22%20%26%26%20name.contains(%22disk%22)\", \"label\": \"Critical disk alerts\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_2\", \"tool\": \"open_page\", \"phase\": \"finished\", \"label\": \"Preparing a link\", \"outcome\": \"link_ready\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_3\", \"tool\": \"open_page\", \"phase\": \"started\", \"label\": \"Preparing a link\"}\n\nevent: link\ndata: {\"id\": \"00000000-0000-4000-8000-000000000032\", \"page\": \"dashboard\", \"param\": \"NOC overview / \\u00e9quipe\", \"path\": \"/dashboard/NOC%20overview%20%2F%20%C3%A9quipe\", \"label\": \"Open NOC overview\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_3\", \"tool\": \"open_page\", \"phase\": \"finished\", \"label\": \"Preparing a link\", \"outcome\": \"link_ready\"}\n\nevent: text_delta\ndata: {\"message_id\": \"00000000-0000-4000-8000-000000000004\", \"delta\": \"Here are the preset, the search and the dashboard.\"}\n\nevent: done\ndata: {\"message_id\": \"00000000-0000-4000-8000-000000000004\", \"finish_reason\": \"stop\"}\n\n",
+      "events": [
+        {
+          "event": "conversation",
+          "data": {
+            "conversation_id": "00000000-0000-4000-8000-000000000001",
+            "user_message_id": "00000000-0000-4000-8000-000000000002",
+            "turn_id": "00000000-0000-4000-8000-000000000003"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_1",
+            "tool": "open_page",
+            "phase": "started",
+            "label": "Preparing a link"
+          }
+        },
+        {
+          "event": "link",
+          "data": {
+            "id": "00000000-0000-4000-8000-000000000030",
+            "page": "alerts_preset",
+            "param": "team a's (prod) ~ 100%",
+            "path": "/alerts/team%20a's%20(prod)%20~%20100%25",
+            "label": "Open Team A's (prod) ~ 100%"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_1",
+            "tool": "open_page",
+            "phase": "finished",
+            "label": "Preparing a link",
+            "outcome": "link_ready"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_2",
+            "tool": "open_page",
+            "phase": "started",
+            "label": "Preparing a link"
+          }
+        },
+        {
+          "event": "link",
+          "data": {
+            "id": "00000000-0000-4000-8000-000000000031",
+            "page": "alerts_search",
+            "param": "severity == \"critical\" && name.contains(\"disk\")",
+            "path": "/alerts/feed?cel=severity%20%3D%3D%20%22critical%22%20%26%26%20name.contains(%22disk%22)",
+            "label": "Critical disk alerts"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_2",
+            "tool": "open_page",
+            "phase": "finished",
+            "label": "Preparing a link",
+            "outcome": "link_ready"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_3",
+            "tool": "open_page",
+            "phase": "started",
+            "label": "Preparing a link"
+          }
+        },
+        {
+          "event": "link",
+          "data": {
+            "id": "00000000-0000-4000-8000-000000000032",
+            "page": "dashboard",
+            "param": "NOC overview / \u00e9quipe",
+            "path": "/dashboard/NOC%20overview%20%2F%20%C3%A9quipe",
+            "label": "Open NOC overview"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_3",
+            "tool": "open_page",
+            "phase": "finished",
+            "label": "Preparing a link",
+            "outcome": "link_ready"
+          }
+        },
+        {
+          "event": "text_delta",
+          "data": {
+            "message_id": "00000000-0000-4000-8000-000000000004",
+            "delta": "Here are the preset, the search and the dashboard."
+          }
+        },
+        {
+          "event": "done",
+          "data": {
+            "message_id": "00000000-0000-4000-8000-000000000004",
+            "finish_reason": "stop"
+          }
+        }
+      ]
+    },
+    "not_found": {
+      "raw": "event: conversation\ndata: {\"conversation_id\": \"00000000-0000-4000-8000-000000000001\", \"user_message_id\": \"00000000-0000-4000-8000-000000000002\", \"turn_id\": \"00000000-0000-4000-8000-000000000003\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_1\", \"tool\": \"open_page\", \"phase\": \"started\", \"label\": \"Preparing a link\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_1\", \"tool\": \"open_page\", \"phase\": \"finished\", \"label\": \"Preparing a link\", \"outcome\": \"not_found\"}\n\nevent: text_delta\ndata: {\"message_id\": \"00000000-0000-4000-8000-000000000004\", \"delta\": \"I could not find a preset with that name.\"}\n\nevent: done\ndata: {\"message_id\": \"00000000-0000-4000-8000-000000000004\", \"finish_reason\": \"stop\"}\n\n",
+      "events": [
+        {
+          "event": "conversation",
+          "data": {
+            "conversation_id": "00000000-0000-4000-8000-000000000001",
+            "user_message_id": "00000000-0000-4000-8000-000000000002",
+            "turn_id": "00000000-0000-4000-8000-000000000003"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_1",
+            "tool": "open_page",
+            "phase": "started",
+            "label": "Preparing a link"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_1",
+            "tool": "open_page",
+            "phase": "finished",
+            "label": "Preparing a link",
+            "outcome": "not_found"
+          }
+        },
+        {
+          "event": "text_delta",
+          "data": {
+            "message_id": "00000000-0000-4000-8000-000000000004",
+            "delta": "I could not find a preset with that name."
           }
         },
         {
@@ -3548,6 +3718,84 @@
           "id": "00000000-0000-4000-8000-000000000005",
           "role": "assistant",
           "content": "I drafted the change.",
+          "status": "complete",
+          "created_at": "2026-11-24T10:00:00+00:00"
+        }
+      ]
+    },
+    "with_links": {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "title": "where are the critical alerts",
+      "created_at": "2026-11-24T10:00:00+00:00",
+      "updated_at": "2026-11-24T10:00:00+00:00",
+      "turn_in_progress": false,
+      "has_more": false,
+      "items": [
+        {
+          "type": "message",
+          "id": "00000000-0000-4000-8000-000000000002",
+          "role": "user",
+          "content": "where are the critical alerts",
+          "status": "complete",
+          "created_at": "2026-11-24T10:00:00+00:00"
+        },
+        {
+          "type": "link",
+          "id": "00000000-0000-4000-8000-000000000040",
+          "page": "alerts_feed",
+          "param": null,
+          "path": "/alerts/feed",
+          "label": "Open the feed",
+          "created_at": "2026-11-24T10:00:00+00:00"
+        },
+        {
+          "type": "link",
+          "id": "00000000-0000-4000-8000-000000000041",
+          "page": "incidents",
+          "param": null,
+          "path": "/incidents",
+          "label": "Open incidents",
+          "created_at": "2026-11-24T10:00:00+00:00"
+        },
+        {
+          "type": "message",
+          "id": "00000000-0000-4000-8000-000000000005",
+          "role": "assistant",
+          "content": "The feed and the incidents.",
+          "status": "complete",
+          "created_at": "2026-11-24T10:00:00+00:00"
+        },
+        {
+          "type": "message",
+          "id": "00000000-0000-4000-8000-000000000006",
+          "role": "user",
+          "content": "and the rules?",
+          "status": "complete",
+          "created_at": "2026-11-24T10:00:00+00:00"
+        },
+        {
+          "type": "link",
+          "id": "00000000-0000-4000-8000-000000000042",
+          "page": "rules",
+          "param": null,
+          "path": "/rules",
+          "label": "Open correlation rules",
+          "created_at": "2026-11-24T10:00:00+00:00"
+        },
+        {
+          "type": "link",
+          "id": "00000000-0000-4000-8000-000000000043",
+          "page": "rule",
+          "param": "0b3c2d1e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+          "path": "/rules?id=0b3c2d1e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+          "label": "Open the rule",
+          "created_at": "2026-11-24T10:00:00+00:00"
+        },
+        {
+          "type": "message",
+          "id": "00000000-0000-4000-8000-000000000007",
+          "role": "assistant",
+          "content": "All rules, and the one you asked about.",
           "status": "complete",
           "created_at": "2026-11-24T10:00:00+00:00"
         }

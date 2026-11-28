@@ -52,9 +52,13 @@ NOTE = "canary-note-e08c"
 ANSWER = "canary-answer-1f95"
 EXCEPTION = "canary-exception-84aa"
 SEARCH = "canary-search-cel-3a9d"
+LINK = "canary-link-label-7c2f"
+NAME = "canary-name-d61e"
 SECRET = TOKEN.split(".")[-1]
 
-CONTENT = (MESSAGE, PAGE, ALERT, FINGERPRINT, CEL, NOTE, ANSWER, SECRET, SEARCH)
+CONTENT = (
+    MESSAGE, PAGE, ALERT, FINGERPRINT, CEL, NOTE, ANSWER, SECRET, SEARCH, LINK, NAME
+)  # fmt: skip
 QUERY = ("POST", "/alerts/query")
 COUNT = ("POST", "/alerts/query/count")
 WRITE = ("POST", "/alerts/batch_enrich")
@@ -217,6 +221,64 @@ async def test_a_search_box_that_is_refused_or_dropped(
     assert exchange.status in (200, 400)
     assert SEARCH not in exchange.text
     assert SEARCH not in json.dumps([r.messages for r in llm.requests])
+    assert_not_logged(records, capfd)
+
+
+def link_gateway(**who) -> FakeGateway:
+    return (
+        gateway()
+        .on_json("GET", "/whoami", whoami(**who))
+        .on_json("GET", "/preset", [{"id": "p-1", "name": NAME, "static": False}])
+        .on_json("GET", "/dashboard", [{"id": 1, "dashboard_name": NAME}])
+    )
+
+
+def open_page(page: str, label: str) -> dict:
+    return {"page": page, "param": NAME, "label": label}
+
+
+@pytest.mark.asyncio
+async def test_a_link_label_and_name_reach_only_the_link(app, db, records, capfd):
+    llm = FakeLlm(
+        calls(open_page("alerts_preset", f"Open {LINK}"), name="open_page"),
+        says(ANSWER),
+    )
+    equip(app, llm, link_gateway())
+    exchange = await post_chat(app, MESSAGE, page="/alerts/feed").finish()
+    link = exchange.event("link")
+    assert LINK in link["label"] and NAME in link["path"]
+    for name, data in exchange.events:
+        if name != "link":
+            assert [t for t in (LINK, NAME) if t in json.dumps(data)] == [], name
+    conversation = exchange.event("conversation")["conversation_id"]
+    shown = await view(app, conversation).finish()
+    assert LINK in shown.text
+    assert_not_logged(records, capfd)
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        open_page("dashboard", LINK),  # a NOC user
+        open_page("alerts_preset", LINK * 10),  # too long
+        {**open_page("alerts_preset", LINK), "param": f"{NAME}-missing"},
+        {**open_page("alerts_preset", LINK), "param": f"{NAME}%2F"},
+        {**open_page("alerts_preset", LINK), "page": NAME},
+        {**open_page("alerts_preset", LINK), "path": f"/{NAME}"},
+    ],
+    ids=["noc", "long", "not-found", "unusable", "page", "path"],
+)
+@pytest.mark.asyncio
+async def test_a_link_that_is_not_made(app, db, records, capfd, arguments):
+    llm = FakeLlm(calls(arguments, name="open_page"), says("Sorry."))
+    equip(app, llm, link_gateway())
+    exchange = await post_chat(app, MESSAGE, page="/alerts/feed").finish()
+    assert "link" not in exchange.names
+    for text in (*CONTENT, EXCEPTION):
+        assert text not in exchange.text, text
+    conversation = exchange.event("conversation")["conversation_id"]
+    shown = await view(app, conversation).finish()
+    assert LINK not in shown.text and NAME not in shown.text
     assert_not_logged(records, capfd)
 
 
