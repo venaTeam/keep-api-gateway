@@ -86,7 +86,14 @@ def sent(fake: FakeGateway, method: str, path: str) -> list[dict]:
 
 
 def test_the_registry_and_what_each_read_tool_is():
-    assert list(TOOLS) == ["change_alert_status", *READ_TOOLS]
+    assert list(TOOLS) == [
+        "change_alert_status",
+        *READ_TOOLS,
+        "list_presets",
+        "list_correlation_rules",
+        "list_dashboards",
+        "list_tags",
+    ]
     for name, (spec, label) in READ_TOOLS.items():
         assert TOOLS[name] is spec
         assert (spec.name, spec.label) == (name, label)

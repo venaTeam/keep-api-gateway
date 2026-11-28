@@ -6,6 +6,10 @@ from src.services.assistant.tools import (
     count_alerts,
     get_alerts,
     get_field_values,
+    list_correlation_rules,
+    list_dashboards,
+    list_presets,
+    list_tags,
     search_alerts,
     validate_cel,
 )
@@ -21,6 +25,10 @@ TOOLS: dict[str, ToolSpec] = {
         count_alerts.SPEC,
         search_alerts.SPEC,
         get_alerts.SPEC,
+        list_presets.SPEC,
+        list_correlation_rules.SPEC,
+        list_dashboards.SPEC,
+        list_tags.SPEC,
     )
 }
 

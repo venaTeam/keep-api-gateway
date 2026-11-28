@@ -156,7 +156,7 @@ of many lookups waits for that too. What bounds it:
 | Database threads | 5 per worker, one per connection |
 | Rounds of tool calls per turn | 8 (`ASSISTANT_MAX_TOOL_ROUNDS`) |
 | Tool calls per turn | 12, of any tool (`ASSISTANT_MAX_TOOL_CALLS_PER_TURN`) |
-| Filters the model wrote, per turn | 6: one for each `count_alerts`, `search_alerts` and `get_field_values` (none for `validate_cel` and `get_alerts`); the next one gets the tool error `cel_lookup_limit` |
+| Filters the model wrote, per turn | 6: one for each `count_alerts`, `search_alerts`, `get_field_values` and `list_correlation_rules` (none for `validate_cel`, `get_alerts` and the other lists); the next one gets the tool error `cel_lookup_limit` |
 | The same read twice in a turn (a list of the tenant's, a check) | sent once, and charged once |
 | Links per turn | 3 |
 | Drafts per turn | 3 |
@@ -190,6 +190,12 @@ critical calls at the same moment, with every chat place taken, can still refuse
   gateway's diagnostics about them. A field that names people (`assignee`, `note`,
   `*_by`, `*By`, anything with `email`) is refused, and a value that holds an email
   address is left out. The facets cache holds field names and facet ids, never values.
+- The list tools send OpenAI the names of the tenant's presets, correlation rules,
+  dashboards and tags, with the filters of presets and rules (each cut to 200 chars), how
+  rules group alerts and how many incidents each made, and the title and type of each
+  dashboard widget: at most 20 of each a call, with how many there are. The presets a
+  user cannot see are not among them. Who made or changed an object, a rule's assignee
+  and the tenant are left out; a preset says only whether the user made it.
 - Logs and error bodies of the assistant hold no message text, filter, alert value or
   exception text. The routes it calls log as they do for the UI.
 

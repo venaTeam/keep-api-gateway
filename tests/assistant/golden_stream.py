@@ -39,6 +39,10 @@ from src.services.assistant.tools import (
     count_alerts,
     get_alerts,
     get_field_values,
+    list_correlation_rules,
+    list_dashboards,
+    list_presets,
+    list_tags,
     search_alerts,
     validate_cel,
 )
@@ -672,6 +676,17 @@ def streams() -> dict[str, list]:
             *_read_round("call_5", "error", search_alerts.SPEC),
             *_read_round("call_6", "found", get_alerts.SPEC),
             _text(4, "12 alerts are critical; none of them is firing."),
+            _done("stop", 4),
+        ],
+        # The tools that list the tenant's objects; one rule it cannot read fails
+        # the rules' list with the tool error rules_unreadable.
+        "list_tools": [
+            _conversation_event(),
+            *_read_round("call_1", "found", list_presets.SPEC),
+            *_read_round("call_2", "error", list_correlation_rules.SPEC),
+            *_read_round("call_3", "found", list_dashboards.SPEC),
+            *_read_round("call_4", "found", list_tags.SPEC),
+            _text(4, "You have 3 presets; one correlation rule cannot be read."),
             _done("stop", 4),
         ],
         # The 12th call runs, the 13th of the same round does not; then no tools.

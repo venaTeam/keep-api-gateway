@@ -793,6 +793,109 @@
         }
       ]
     },
+    "list_tools": {
+      "raw": "event: conversation\ndata: {\"conversation_id\": \"00000000-0000-4000-8000-000000000001\", \"user_message_id\": \"00000000-0000-4000-8000-000000000002\", \"turn_id\": \"00000000-0000-4000-8000-000000000003\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_1\", \"tool\": \"list_presets\", \"phase\": \"started\", \"label\": \"Reading presets\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_1\", \"tool\": \"list_presets\", \"phase\": \"finished\", \"label\": \"Reading presets\", \"outcome\": \"found\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_2\", \"tool\": \"list_correlation_rules\", \"phase\": \"started\", \"label\": \"Reading correlation rules\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_2\", \"tool\": \"list_correlation_rules\", \"phase\": \"finished\", \"label\": \"Reading correlation rules\", \"outcome\": \"error\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_3\", \"tool\": \"list_dashboards\", \"phase\": \"started\", \"label\": \"Reading dashboards\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_3\", \"tool\": \"list_dashboards\", \"phase\": \"finished\", \"label\": \"Reading dashboards\", \"outcome\": \"found\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_4\", \"tool\": \"list_tags\", \"phase\": \"started\", \"label\": \"Reading tags\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_4\", \"tool\": \"list_tags\", \"phase\": \"finished\", \"label\": \"Reading tags\", \"outcome\": \"found\"}\n\nevent: text_delta\ndata: {\"message_id\": \"00000000-0000-4000-8000-000000000004\", \"delta\": \"You have 3 presets; one correlation rule cannot be read.\"}\n\nevent: done\ndata: {\"message_id\": \"00000000-0000-4000-8000-000000000004\", \"finish_reason\": \"stop\"}\n\n",
+      "events": [
+        {
+          "event": "conversation",
+          "data": {
+            "conversation_id": "00000000-0000-4000-8000-000000000001",
+            "user_message_id": "00000000-0000-4000-8000-000000000002",
+            "turn_id": "00000000-0000-4000-8000-000000000003"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_1",
+            "tool": "list_presets",
+            "phase": "started",
+            "label": "Reading presets"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_1",
+            "tool": "list_presets",
+            "phase": "finished",
+            "label": "Reading presets",
+            "outcome": "found"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_2",
+            "tool": "list_correlation_rules",
+            "phase": "started",
+            "label": "Reading correlation rules"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_2",
+            "tool": "list_correlation_rules",
+            "phase": "finished",
+            "label": "Reading correlation rules",
+            "outcome": "error"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_3",
+            "tool": "list_dashboards",
+            "phase": "started",
+            "label": "Reading dashboards"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_3",
+            "tool": "list_dashboards",
+            "phase": "finished",
+            "label": "Reading dashboards",
+            "outcome": "found"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_4",
+            "tool": "list_tags",
+            "phase": "started",
+            "label": "Reading tags"
+          }
+        },
+        {
+          "event": "tool_status",
+          "data": {
+            "tool_call_id": "call_4",
+            "tool": "list_tags",
+            "phase": "finished",
+            "label": "Reading tags",
+            "outcome": "found"
+          }
+        },
+        {
+          "event": "text_delta",
+          "data": {
+            "message_id": "00000000-0000-4000-8000-000000000004",
+            "delta": "You have 3 presets; one correlation rule cannot be read."
+          }
+        },
+        {
+          "event": "done",
+          "data": {
+            "message_id": "00000000-0000-4000-8000-000000000004",
+            "finish_reason": "stop"
+          }
+        }
+      ]
+    },
     "past_the_tool_calls": {
       "raw": "event: conversation\ndata: {\"conversation_id\": \"00000000-0000-4000-8000-000000000001\", \"user_message_id\": \"00000000-0000-4000-8000-000000000002\", \"turn_id\": \"00000000-0000-4000-8000-000000000003\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_12\", \"tool\": \"get_alerts\", \"phase\": \"started\", \"label\": \"Reading alerts\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_12\", \"tool\": \"get_alerts\", \"phase\": \"finished\", \"label\": \"Reading alerts\", \"outcome\": \"found\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_13\", \"tool\": \"get_alerts\", \"phase\": \"started\", \"label\": \"Reading alerts\"}\n\nevent: tool_status\ndata: {\"tool_call_id\": \"call_13\", \"tool\": \"get_alerts\", \"phase\": \"finished\", \"label\": \"Reading alerts\", \"outcome\": \"tool_limit\"}\n\nevent: text_delta\ndata: {\"message_id\": \"00000000-0000-4000-8000-000000000005\", \"delta\": \"That took too many steps. Ask me for less at a time.\"}\n\nevent: done\ndata: {\"message_id\": \"00000000-0000-4000-8000-000000000005\", \"finish_reason\": \"tool_limit\"}\n\n",
       "events": [
