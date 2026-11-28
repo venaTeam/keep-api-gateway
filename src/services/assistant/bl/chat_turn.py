@@ -300,6 +300,7 @@ class Turn:
                 self._chat_request.context,
                 self.ref.turn_id,
                 now=self._tools.now,
+                read_once=self._tools.read_once,
             ),
             run_db(history.load, self.ref),
         )

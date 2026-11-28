@@ -118,6 +118,10 @@ async def test_what_the_model_is_sent(app, db, gateway):
         "count_alerts",
         "search_alerts",
         "get_alerts",
+        "list_presets",
+        "list_correlation_rules",
+        "list_dashboards",
+        "list_tags",
     ]
     assert request.tool_choice == "auto"
     me = identity()

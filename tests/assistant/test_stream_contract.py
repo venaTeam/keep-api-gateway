@@ -9,13 +9,18 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, ValidationError
 
+from src.services.assistant.bl import context as context_bl
 from src.services.assistant.bl import outcomes
 from src.services.assistant.config import get_settings
 from src.services.assistant.exceptions import ERRORS, VALIDATION_MESSAGES
 from src.services.assistant.kinds.registry import KINDS, PAYLOAD_MODELS, kind_of
 from src.services.assistant.models import api as api_models
 from src.services.assistant.models.api import stream as s
-from src.services.assistant.models.api.chat import MAX_TIMEZONE_CHARS, ChatRequest
+from src.services.assistant.models.api.chat import (
+    MAX_SEARCH_CEL_CHARS,
+    MAX_TIMEZONE_CHARS,
+    ChatRequest,
+)
 from src.services.assistant.models.api.confirm import (
     ConfirmRequest,
     DerivedInput,
@@ -45,7 +50,7 @@ from tests.assistant.fakes import TOKEN
 GOLDEN = json.loads(golden_stream.FIXTURE.read_bytes())
 EVENTS_BY_NAME = {event.event: event for event in s.STREAM_EVENTS}
 # keep-ui pins the same blob (sse-parser.test.ts) once it has copied this fixture.
-FIXTURE_BLOB = "3910d253f255b306dee042c0eef0a13c0ff209b3"
+FIXTURE_BLOB = "fb6d4aa4c2f7e4424f0430d2cdba32ac0d094904"
 
 
 def parse_sse(raw: str):
@@ -331,6 +336,30 @@ def test_golden_chat_context_is_what_the_gateway_keeps():
     for vector in vectors["timezone"]:
         body = {"message": "hi", "context": {"timezone": vector["sent"]}}
         assert ChatRequest.parse_obj(body).context.timezone == vector["kept"], vector
+
+
+def test_golden_search_cel_is_what_the_model_gets():
+    vectors = GOLDEN["chat_context"]
+    assert vectors["search_cel_chars"] == MAX_SEARCH_CEL_CHARS == 2000
+    outcomes = {(v["accepted"], v["used"] is None) for v in vectors["search_cel"]}
+    assert outcomes == {(True, False), (True, True), (False, True)}
+    for vector in vectors["search_cel"]:
+        body = {
+            "message": "hi",
+            "context": {"page": "/alerts/feed", "search_cel": vector["sent"]},
+        }
+        if not vector["accepted"]:
+            with pytest.raises(ValidationError):
+                ChatRequest.parse_obj(body)
+            continue
+        context = ChatRequest.parse_obj(body).context
+        notes: list[str] = []
+        used = context_bl._search_cel(
+            context.search_cel, context_bl.page_pattern(context.page), notes
+        )
+        assert used == vector["used"], vector
+        # A value that was dropped, not missing, is told.
+        assert bool(notes) == (used is None and bool(vector["sent"].strip())), vector
 
 
 # --- what a newer version may send -------------------------------------------

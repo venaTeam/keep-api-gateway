@@ -14,7 +14,10 @@ from src.services.assistant.models.api import confirm as confirm_models
 from src.services.assistant.models.api import conversation as conversation_models
 from src.services.assistant.models.api import draft as draft_models
 from src.services.assistant.models.api import stream as s
-from src.services.assistant.models.api.chat import MAX_TIMEZONE_CHARS
+from src.services.assistant.models.api.chat import (
+    MAX_SEARCH_CEL_CHARS,
+    MAX_TIMEZONE_CHARS,
+)
 from src.services.assistant.models.api.confirm import DerivedInput, SqlQueryInput
 from src.services.assistant.models.api.conversation import (
     ConversationView,
@@ -863,11 +866,37 @@ TIMEZONES = [
 ]
 
 
+# What keep-ui may send as `context.search_cel` (the `cel` of an alerts page's address),
+# on the page `/alerts/feed`: whether the gateway takes the request (a 400 on `search_cel`
+# when not, so keep-ui leaves such a value out), and the filter the model is then given
+# (None: none, and when the value was dropped the model is told why).
+SEARCH_CELS = [
+    ('severity == "critical"', True, 'severity == "critical"'),
+    ("count < 5 && name.contains(\"disk\")", True, "count < 5 && name.contains(\"disk\")"),
+    ("é" * MAX_SEARCH_CEL_CHARS, True, "é" * MAX_SEARCH_CEL_CHARS),
+    ("x" * (MAX_SEARCH_CEL_CHARS + 1), False, None),
+    ('name == "a"\n', False, None),
+    ('name == "a\tb"', False, None),
+    ('name == "a\x7f"', False, None),
+    ('name == "a\x85"', False, None),
+    ('name == "\u202enimda"', True, None),
+    ('name == "a\u200bb"', True, None),
+    ('name == "\u2066x\u2069"', True, None),
+    ("", True, None),
+    ("   ", True, None),
+]  # fmt: skip
+
+
 def chat_context() -> dict:
     """Context keys keep-ui computes, and what the gateway keeps of each value."""
     return {
         "timezone_chars": MAX_TIMEZONE_CHARS,
         "timezone": [{"sent": sent, "kept": kept} for sent, kept in TIMEZONES],
+        "search_cel_chars": MAX_SEARCH_CEL_CHARS,
+        "search_cel": [
+            {"sent": sent, "accepted": accepted, "used": used}
+            for sent, accepted, used in SEARCH_CELS
+        ],
     }
 
 

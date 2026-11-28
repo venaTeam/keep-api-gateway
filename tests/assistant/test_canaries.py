@@ -51,9 +51,10 @@ CEL = "canary-cel-5b72"
 NOTE = "canary-note-e08c"
 ANSWER = "canary-answer-1f95"
 EXCEPTION = "canary-exception-84aa"
+SEARCH = "canary-search-cel-3a9d"
 SECRET = TOKEN.split(".")[-1]
 
-CONTENT = (MESSAGE, PAGE, ALERT, FINGERPRINT, CEL, NOTE, ANSWER, SECRET)
+CONTENT = (MESSAGE, PAGE, ALERT, FINGERPRINT, CEL, NOTE, ANSWER, SECRET, SEARCH)
 QUERY = ("POST", "/alerts/query")
 COUNT = ("POST", "/alerts/query/count")
 WRITE = ("POST", "/alerts/batch_enrich")
@@ -182,6 +183,41 @@ async def test_a_chat(app, db, records, capfd):
             assert carried == [ANSWER]
         elif name != "draft":
             assert carried == [], name
+
+
+@pytest.mark.asyncio
+async def test_the_search_box_reaches_the_model_only(app, db, records, capfd):
+    llm = FakeLlm(says(ANSWER))
+    equip(app, llm, gateway())
+    cel = f'name == "{SEARCH}" && count < 5'
+    exchange = await post_chat(
+        app, MESSAGE, page="/alerts/feed", search_cel=cel
+    ).finish()
+    assert exchange.status == 200
+    assert "search_cel" in json.dumps([r.messages for r in llm.requests])
+    assert SEARCH in json.dumps([r.messages for r in llm.requests])
+    assert SEARCH not in exchange.text
+    assert_not_logged(records, capfd)
+
+
+@pytest.mark.parametrize(
+    "search_cel",
+    [f"{SEARCH}\n", f"{SEARCH}\x00", SEARCH * 100, f"{SEARCH}\u202e"],
+    ids=["control", "nul", "long", "bidi"],
+)
+@pytest.mark.asyncio
+async def test_a_search_box_that_is_refused_or_dropped(
+    app, db, records, capfd, search_cel
+):
+    llm = FakeLlm(says(ANSWER))
+    equip(app, llm, gateway())
+    exchange = await post_chat(
+        app, MESSAGE, page="/alerts/feed", search_cel=search_cel
+    ).finish()
+    assert exchange.status in (200, 400)
+    assert SEARCH not in exchange.text
+    assert SEARCH not in json.dumps([r.messages for r in llm.requests])
+    assert_not_logged(records, capfd)
 
 
 ASSIGNEE = "canary-assignee-0b6e@example.com"

@@ -196,6 +196,12 @@ critical calls at the same moment, with every chat place taken, can still refuse
   dashboard widget: at most 20 of each a call, with how many there are. The presets a
   user cannot see are not among them. Who made or changed an object, a rule's assignee
   and the tenant are left out; a preset says only whether the user made it.
+- With each message, OpenAI also gets what the user's page shows: the filter in the
+  search box of an alerts page (`search_cel`, at most 2000 chars; one with a control
+  character refuses the message, one with characters that show nothing is left out),
+  the name and filter of the preset of an alerts page, the id of the incident of an
+  incident page, the browser's time zone name, and which kinds of draft the user's
+  scopes allow. Not the user's email, role or tenant.
 - Logs and error bodies of the assistant hold no message text, filter, alert value or
   exception text. The routes it calls log as they do for the UI.
 

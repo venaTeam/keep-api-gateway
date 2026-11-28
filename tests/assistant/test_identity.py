@@ -27,6 +27,7 @@ def app(assistant_router, make_app):
             "token_forwarded": identity.authorization == TOKEN,
             "repr": repr(identity) + repr(identity.caller(uuid.uuid4())),
             "client": identity.caller(uuid.uuid4()).client,
+            "role": identity.role,
         }
 
     return make_app()
@@ -58,6 +59,7 @@ def test_identity_of_a_valid_caller(client, gateway):
     assert body["email"] == "ops@example.com"
     assert body["scopes"] == ["read:*", "write:alert"]
     assert body["token_forwarded"] is True
+    assert body["role"] == "noc"
     # Neither object may carry the token into a log line.
     assert "signature" not in body["repr"]
 
@@ -190,6 +192,22 @@ def test_no_email_is_not_an_old_gateway(client, gateway, email):
 def test_scopes_are_a_hint(client, gateway, scopes, expected):
     gateway.on_json("GET", "/whoami", whoami(scopes=scopes))
     assert call(client).json()["scopes"] == expected
+
+
+@pytest.mark.parametrize(
+    "role, expected",
+    [("noc", "noc"), ("admin", "admin"), ("", None), (None, None), (3, None), (["noc"], None)],
+)
+def test_the_role_is_read(client, gateway, role, expected):
+    gateway.on_json("GET", "/whoami", whoami(role=role))
+    assert call(client).json()["role"] == expected
+
+
+def test_an_absent_role_is_none(client, gateway):
+    body = whoami()
+    del body["role"]
+    gateway.on_json("GET", "/whoami", body)
+    assert call(client).json()["role"] is None
 
 
 def test_absent_scopes_mean_unknown(client, gateway):

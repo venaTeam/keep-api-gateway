@@ -12,6 +12,7 @@ MAX_PAGE_CHARS = 200
 MAX_SELECTED_FINGERPRINTS = 200
 MAX_FINGERPRINT_CHARS = 512
 MAX_TIMEZONE_CHARS = 64
+MAX_SEARCH_CEL_CHARS = 2000
 
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
@@ -53,8 +54,18 @@ class ChatContext(BaseModel):
     # The browser's IANA time zone. One this server has no data for is None (UTC, and
     # the model is told): a zone never fails a request.
     timezone: Optional[str] = None
+    # The CEL in the search box of an alerts page, as typed: "" for none. Not the
+    # facets nor the time range. A control character refuses the request; keep-ui
+    # leaves out a value it would refuse.
+    search_cel: constr(max_length=MAX_SEARCH_CEL_CHARS) = ""
 
     _page_storable = validator("page", allow_reuse=True)(storable)
+
+    @validator("search_cel")
+    def _no_control_characters(cls, value: str) -> str:
+        if has_control_characters(value):
+            raise ValueError("control character")
+        return storable(value)
 
     @validator("timezone", pre=True)
     def _known_or_none(cls, value: Any) -> Optional[str]:

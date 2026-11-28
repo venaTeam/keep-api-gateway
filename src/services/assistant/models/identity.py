@@ -17,6 +17,9 @@ class Identity:
     authorization: str = field(repr=False)
     # The address the request came from.
     client: tuple[str, int] = UNKNOWN_CLIENT
+    # Their role, as whoami names it ("noc", "admin", ...); None when it names none. A
+    # hint, like the scopes: the gateway decides.
+    role: str | None = None
 
     def caller(self, request_id: uuid.UUID | str) -> Caller:
         return Caller(

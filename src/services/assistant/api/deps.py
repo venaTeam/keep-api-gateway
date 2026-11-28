@@ -94,6 +94,7 @@ async def get_identity(request: Request) -> Identity:
         )
         raise AssistantError("identity_unavailable")
     scopes = body.get("scopes")
+    role = body.get("role")
     return Identity(
         tenant_id=tenant_id,
         email=email,
@@ -104,6 +105,7 @@ async def get_identity(request: Request) -> Identity:
         ),
         authorization=authorization,
         client=client,
+        role=role if isinstance(role, str) and role else None,
     )
 
 

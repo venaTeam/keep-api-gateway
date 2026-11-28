@@ -14,7 +14,12 @@ from src.services.assistant.bl.context import (
     page_pattern,
     usable_fields,
 )
-from src.services.assistant.bl.prompt import context_message, system_message
+from src.services.assistant.bl.prompt import (
+    _SYSTEM,
+    MAX_SYSTEM_MESSAGE_CHARS,
+    context_message,
+    system_message,
+)
 from src.services.assistant.models.api.chat import ChatContext
 from src.services.assistant.tools.registry import TOOLS
 from tests.assistant.conftest import OTHER_TENANT
@@ -61,6 +66,35 @@ def test_the_system_message_is_fixed_text_and_the_tools_guidance():
     assert message == system_message(TOOLS.values())
     for rule in ("untrusted_data", "only make drafts", "selected_count", "CEL"):
         assert rule in message["content"]
+
+
+def test_the_system_message_is_the_same_prefix_every_turn_and_bounded(monkeypatch):
+    """Nothing of a user, a tenant, a page or a moment: every turn's prompt opens with
+    the same text, which the model's endpoint can reuse."""
+    every = system_message(TOOLS.values())["content"]
+    assert len(every) <= MAX_SYSTEM_MESSAGE_CHARS
+    # Fewer tools offered (a kind switched off) keep the same opening.
+    fewer = system_message(list(TOOLS.values())[1:])["content"]
+    assert every.startswith(_SYSTEM) and fewer.startswith(_SYSTEM)
+    for dynamic in ("now", "ops@example.com", "keep", "available_fields: ["):
+        assert f'"{dynamic}"' not in every
+    assert "{" not in _SYSTEM and "}" not in _SYSTEM
+
+
+def test_the_system_message_describes_the_readables_and_the_cel_subset():
+    content = system_message(TOOLS.values())["content"]
+    for words in (
+        "search_cel is the CEL in the search box",
+        "the facet filters and the time range",
+        "active_preset",
+        "current_incident_id",
+        "allowed_drafts",
+        '"truncated": true is incomplete',
+        "only by the open_page tool",
+        "! only right before a parenthesis",
+        "no matches()",
+    ):
+        assert words in content, words
 
 
 # --- the ephemeral message -------------------------------------------------------
